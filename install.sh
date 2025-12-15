@@ -58,11 +58,7 @@ SHELL_TYPE=$(detect_shell)
 echo "Detected shell: $SHELL_TYPE"
 
 if [ "$SHELL_TYPE" = "zsh" ]; then
-    # Copy .zshrc instead of symlinking to allow modifications
-    if [ -f "$HOME/.zshrc" ]; then
-        mv "$HOME/.zshrc" "$BACKUP_DIR/.zshrc.$(date +%Y%m%d_%H%M%S)"
-    fi
-    cp "$DOTFILES_DIR/shell/.zshrc" "$HOME/.zshrc"
+    backup_and_symlink "$DOTFILES_DIR/shell/.zshrc" "$HOME/.zshrc"
     echo "Zsh configuration installed"
 elif [ "$SHELL_TYPE" = "bash" ]; then
     backup_and_symlink "$DOTFILES_DIR/shell/.bashrc" "$HOME/.bashrc" 2>/dev/null || true

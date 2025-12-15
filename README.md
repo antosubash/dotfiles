@@ -54,8 +54,7 @@ dotfiles/
 │   ├── .zshrc             # Enhanced Zsh configuration
 │   ├── .bashrc            # Bash configuration (Ubuntu)
 │   ├── .profile           # Shell profile
-│   ├── agnoster.zsh-theme # Agnoster theme
-│   └── agnoster-config.zsh # Theme customizations
+│   └── agnoster.zsh-theme # Agnoster theme
 ├── git/
 │   └── .gitconfig         # Git configuration
 ├── vim/
@@ -195,17 +194,7 @@ replace <search> <replace> <dir>  # Find and replace
 
 ### Customizing Theme
 
-Edit `~/dotfiles/shell/agnoster-config.zsh`:
-
-```bash
-# Disable specific segments
-export VIRTUAL_ENV_DISABLE_PROMPT=1
-export AWS_PROMPT_DISABLE=1
-
-# Custom symbols
-export AGNOSTER_GIT_DIRTY_SYMBOL=" ✗"
-export AGNOSTER_GIT_CLEAN_SYMBOL=" ✓"
-```
+The Agnoster theme uses default Oh My Zsh settings. You can customize it by editing your `.zshrc` file or creating a custom theme file in `~/.oh-my-zsh/custom/themes/`.
 
 ### Terminal Colors
 
