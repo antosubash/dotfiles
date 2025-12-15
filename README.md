@@ -6,11 +6,15 @@ A collection of my personal configuration files for macOS development environmen
 
 ```
 dotfiles/
-├── install.sh          # Installation script
+├── install.sh          # Dotfiles installation script
+├── scripts/
+│   ├── setup-macos.sh  # macOS development environment setup
+│   └── setup-ubuntu.sh # Ubuntu development environment setup
 ├── git/
 │   └── .gitconfig      # Git configuration
 ├── shell/
 │   ├── .zshrc          # Zsh configuration
+│   ├── .bashrc         # Bash configuration (for Ubuntu)
 │   └── .profile        # Shell profile
 ├── vim/
 │   └── .vimrc          # Vim configuration
@@ -62,6 +66,35 @@ This dotfiles setup works on both macOS and Ubuntu/Linux systems:
 - Automatically detects the operating system
 - Adapts to the detected shell (Zsh or Bash)
 - Installs appropriate configuration files for each platform
+
+## Development Environment Setup
+
+For a complete development environment, use the platform-specific setup scripts:
+
+### macOS
+```bash
+cd ~/dotfiles
+./scripts/setup-macos.sh
+```
+
+### Ubuntu/Linux
+```bash
+cd ~/dotfiles
+./scripts/setup-ubuntu.sh
+```
+
+These scripts install:
+- Development tools (Git, Node.js, Python, Java, Go, Rust, .NET)
+- API testing tools (HTTPie, jq, yq, curlie)
+- Security tools (GPG, pass, nmap, Wireshark)
+- VPN tools (Tailscale, Wireguard)
+- Productivity tools (tmux, fzf, ripgrep, fd)
+- Container tools (Docker, Kubernetes, Helm)
+- Database clients (PostgreSQL)
+- Geospatial tools (GDAL, PROJ, GEOS, SpatiaLite)
+- Communication apps (Slack, Discord, Zoom, Thunderbird)
+- Nerd Fonts
+- And much more...
 
 ## Customization
 
