@@ -4,22 +4,36 @@ A comprehensive cross-platform development environment setup with automated inst
 
 ## 🚀 Quick Start
 
-```bash
-# 1. Clone repository
-git clone https://github.com/antosubash/dotfiles ~/dotfiles
+### 1. Clone Repository
 
-# 2. Run installation
+```bash
+git clone https://github.com/antosubash/dotfiles ~/dotfiles
+```
+
+### 2. Run Installation
+
+```bash
 cd ~/dotfiles
 ./install.sh
+```
 
-# 3. Set up your development environment
-# macOS
+### 3. Set Up Development Environment
+
+#### macOS
+
+```bash
 ./scripts/setup-macos.sh
+```
 
-# Ubuntu/Linux  
+#### Ubuntu/Linux
+
+```bash
 ./scripts/setup-ubuntu.sh
+```
 
-# 4. Install update commands
+### 4. Install Update Commands
+
+```bash
 ./scripts/setup-update.sh
 ```
 
