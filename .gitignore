@@ -17,3 +17,6 @@ Thumbs.db
 
 # Ignore logs
 *.log
+
+# Ignore local aliases (machine-specific)
+shell/aliases.local.zsh

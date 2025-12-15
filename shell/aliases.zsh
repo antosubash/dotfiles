@@ -25,6 +25,16 @@ alias grep="grep --color=auto"
 alias egrep="egrep --color=auto"
 alias fgrep="fgrep --color=auto"
 
+# Directory aliases (common)
+alias home="cd $HOME"
+alias downloads="cd $HOME/Downloads"
+alias documents="cd $HOME/Documents"
+
+# Load local aliases if they exist (machine-specific directories)
+if [ -f "$DOTFILES_DIR/shell/aliases.local.zsh" ]; then
+    source "$DOTFILES_DIR/shell/aliases.local.zsh"
+fi
+
 # Development aliases - Git (enhanced)
 alias gs="git status"
 alias ga="git add"
