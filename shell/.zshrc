@@ -355,6 +355,18 @@ if [ -f "$HOME/.zshrc.local" ]; then
     source "$HOME/.zshrc.local"
 fi
 
+# Update command aliases
+if [ -f "$HOME/.update_aliases" ]; then
+    source "$HOME/.update_aliases"
+fi
+
+# Update commands
+alias update='~/.local/bin/update'
+alias update-quick='~/.local/bin/update-quick'
+alias upd='update-quick'
+alias upf='update'
+alias update-manager='~/.local/bin/update-manager'
+
 # Load local environment
 if [ -f "$HOME/.local/bin/env" ]; then
     source "$HOME/.local/bin/env"
@@ -365,6 +377,16 @@ if command -v "neofetch" &> /dev/null; then
     neofetch
 elif command -v "fortune" &> /dev/null && command -v "cowsay" &> /dev/null; then
     fortune | cowsay
+fi
+
+# Daily update reminder
+last_update_file="$HOME/.last_update"
+if [[ -f "$last_update_file" ]]; then
+    last_update=$(cat "$last_update_file")
+    days_since_update=$(( ($(date +%s) - $(date -j -f "%Y-%m-%d" "$last_update" +%s 2>/dev/null || echo 0)) / 86400 ))
+    if [[ $days_since_update -gt 7 ]]; then
+        echo "⚠️  It's been over a week since your last full update. Run 'update' to update everything."
+    fi
 fi
 
 echo "Zsh loaded successfully! $(date)"
