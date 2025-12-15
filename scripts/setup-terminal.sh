@@ -35,6 +35,25 @@ print_error() {
     echo -e "${RED}✗${NC} $1"
 }
 
+# Function to backup and symlink
+backup_and_symlink() {
+    local src="$1"
+    local dest="$2"
+    local dest_dir=$(dirname "$dest")
+    local backup_dir="$HOME/.dotfiles_backup"
+    
+    mkdir -p "$backup_dir"
+    mkdir -p "$dest_dir"
+    
+    if [ -f "$dest" ] || [ -d "$dest" ] || [ -L "$dest" ]; then
+        print_info "Backing up $dest to $backup_dir"
+        mv "$dest" "$backup_dir/" 2>/dev/null || true
+    fi
+    
+    print_info "Creating symlink: $dest -> $src"
+    ln -sf "$src" "$dest"
+}
+
 # Check dependencies
 check_dependencies() {
     print_info "Checking dependencies..."
@@ -113,34 +132,17 @@ install_fonts() {
     fi
 }
 
-# Configure zsh theme
-configure_zsh_theme() {
-    print_info "Configuring Zsh theme..."
+# Configure zsh
+configure_zsh() {
+    print_info "Configuring Zsh..."
     
     local zshrc_file="$HOME/.zshrc"
     local dotfiles_zshrc="$DOTFILES_DIR/shell/.zshrc"
     
-    # Backup existing .zshrc
-    if [[ -f "$zshrc_file" ]]; then
-        local backup_file="$zshrc_file.backup.$(date +%Y%m%d_%H%M%S)"
-        cp "$zshrc_file" "$backup_file"
-        print_status "Current .zshrc backed up to $backup_file"
-    fi
-    
-    # Copy dotfiles .zshrc if it exists
+    # Create symlink for .zshrc
     if [[ -f "$dotfiles_zshrc" ]]; then
-        cp "$dotfiles_zshrc" "$zshrc_file"
-        print_status "Dotfiles .zshrc installed"
-    fi
-    
-    # Ensure theme is set to agnoster
-    if [[ -f "$zshrc_file" ]]; then
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' 's/ZSH_THEME=".*"/ZSH_THEME="agnoster"/g' "$zshrc_file" 2>/dev/null || true
-        else
-            sed -i 's/ZSH_THEME=".*"/ZSH_THEME="agnoster"/g' "$zshrc_file" 2>/dev/null || true
-        fi
-        print_status "Theme configured to 'agnoster'"
+        backup_and_symlink "$dotfiles_zshrc" "$zshrc_file"
+        print_status "Dotfiles .zshrc symlinked"
     fi
 }
 
@@ -218,7 +220,7 @@ main() {
     fi
     
     install_fonts
-    configure_zsh_theme
+    configure_zsh
     install_essential_tools
     
     echo ""

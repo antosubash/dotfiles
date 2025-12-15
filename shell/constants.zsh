@@ -22,7 +22,6 @@ export HISTSIZE=1000000
 export SAVEHIST=1000000
 
 # Oh My Zsh settings
-export ZSH_THEME="agnoster"
 export DISABLE_UPDATE_PROMPT=true
 export COMPLETION_WAITING_DOTS=true
 export DISABLE_UNTRACKED_FILES_DIRTY=true
@@ -55,9 +54,6 @@ export TOOL_HTOP="htop"
 export TOOL_NEOFETCH="neofetch"
 export TOOL_FORTUNE="fortune"
 export TOOL_COWSAY="cowsay"
-
-# Font names
-export FONT_MESLO="Meslo LG Nerd Font"
 
 # File paths
 export ZSHRC_LOCAL="$HOME/.zshrc.local"

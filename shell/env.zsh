@@ -56,6 +56,3 @@ fi
 # Rust (if installed)
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 
-# Virtual environment
-export VIRTUAL_ENV_DISABLE_PROMPT=1
-

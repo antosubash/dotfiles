@@ -39,7 +39,6 @@ fi
 
 # Oh My Zsh configuration
 export ZSH="${ZSH_DIR:-$HOME/.oh-my-zsh}"
-ZSH_THEME="${ZSH_THEME:-agnoster}"
 plugins=(
     git
     zsh-autosuggestions
