@@ -21,19 +21,95 @@ fi
 
 # Install basic system tools
 echo "Installing basic system tools..."
-brew install curl wget htop neofetch vim git
+tools_to_install=()
+for tool in curl wget htop neofetch vim git; do
+    if ! command -v $tool &> /dev/null; then
+        tools_to_install+=($tool)
+    fi
+done
+
+if [ ${#tools_to_install[@]} -gt 0 ]; then
+    echo "Installing missing tools: ${tools_to_install[*]}"
+    brew install ${tools_to_install[@]}
+else
+    echo "All basic system tools are already installed."
+fi
 
 # Install development environments
 echo "Installing development environments..."
-brew install python@3.11 openjdk go rust
+dev_tools_to_install=()
+
+# Check Python
+if ! command -v python3 &> /dev/null; then
+    dev_tools_to_install+=("python@3.11")
+else
+    echo "Python3 is already installed."
+fi
+
+# Check Java
+if ! command -v java &> /dev/null; then
+    dev_tools_to_install+=("openjdk")
+else
+    echo "Java is already installed."
+fi
+
+# Check Go
+if ! command -v go &> /dev/null; then
+    dev_tools_to_install+=("go")
+else
+    echo "Go is already installed."
+fi
+
+# Check Rust
+if ! command -v rustc &> /dev/null; then
+    dev_tools_to_install+=("rust")
+else
+    echo "Rust is already installed."
+fi
+
+if [ ${#dev_tools_to_install[@]} -gt 0 ]; then
+    echo "Installing missing development tools: ${dev_tools_to_install[*]}"
+    brew install ${dev_tools_to_install[@]}
+else
+    echo "All development environments are already installed."
+fi
 
 # Install .NET SDK
 echo "Installing .NET SDK..."
-brew install --cask dotnet
+if ! command -v dotnet &> /dev/null; then
+    brew install --cask dotnet
+else
+    echo ".NET SDK is already installed."
+fi
 
 # Install API and testing tools
 echo "Installing API and testing tools..."
-brew install httpie jq yq
+api_tools_to_install=()
+
+if ! command -v http &> /dev/null; then
+    api_tools_to_install+=("httpie")
+else
+    echo "HTTPie is already installed."
+fi
+
+if ! command -v jq &> /dev/null; then
+    api_tools_to_install+=("jq")
+else
+    echo "jq is already installed."
+fi
+
+if ! command -v yq &> /dev/null; then
+    api_tools_to_install+=("yq")
+else
+    echo "yq is already installed."
+fi
+
+if [ ${#api_tools_to_install[@]} -gt 0 ]; then
+    echo "Installing missing API tools: ${api_tools_to_install[*]}"
+    brew install ${api_tools_to_install[@]}
+else
+    echo "All API testing tools are already installed."
+fi
 
 # Install curlie via go
 if ! command -v curlie &> /dev/null; then
@@ -44,19 +120,92 @@ fi
 
 # Install security tools
 echo "Installing security tools..."
-brew install gnupg pass
+security_tools_to_install=()
+
+if ! command -v gpg &> /dev/null; then
+    security_tools_to_install+=("gnupg")
+else
+    echo "GPG is already installed."
+fi
+
+if ! command -v pass &> /dev/null; then
+    security_tools_to_install+=("pass")
+else
+    echo "pass is already installed."
+fi
+
+if [ ${#security_tools_to_install[@]} -gt 0 ]; then
+    echo "Installing missing security tools: ${security_tools_to_install[*]}"
+    brew install ${security_tools_to_install[@]}
+else
+    echo "All security tools are already installed."
+fi
 
 # Install network security tools
 echo "Installing network security tools..."
-brew install nmap wireshark
+net_tools_to_install=()
+
+if ! command -v nmap &> /dev/null; then
+    net_tools_to_install+=("nmap")
+else
+    echo "nmap is already installed."
+fi
+
+if ! command -v wireshark &> /dev/null; then
+    net_tools_to_install+=("wireshark")
+else
+    echo "Wireshark is already installed."
+fi
+
+if [ ${#net_tools_to_install[@]} -gt 0 ]; then
+    echo "Installing missing network tools: ${net_tools_to_install[*]}"
+    brew install ${net_tools_to_install[@]}
+else
+    echo "All network security tools are already installed."
+fi
 
 # Install VPN tools
 echo "Installing VPN tools..."
-brew install tailscale
+if ! command -v tailscale &> /dev/null; then
+    brew install tailscale
+else
+    echo "Tailscale is already installed."
+fi
 
 # Install productivity tools
 echo "Installing productivity tools..."
-brew install tmux fzf ripgrep fd
+prod_tools_to_install=()
+
+if ! command -v tmux &> /dev/null; then
+    prod_tools_to_install+=("tmux")
+else
+    echo "tmux is already installed."
+fi
+
+if ! command -v fzf &> /dev/null; then
+    prod_tools_to_install+=("fzf")
+else
+    echo "fzf is already installed."
+fi
+
+if ! command -v rg &> /dev/null; then
+    prod_tools_to_install+=("ripgrep")
+else
+    echo "ripgrep is already installed."
+fi
+
+if ! command -v fd &> /dev/null; then
+    prod_tools_to_install+=("fd")
+else
+    echo "fd is already installed."
+fi
+
+if [ ${#prod_tools_to_install[@]} -gt 0 ]; then
+    echo "Installing missing productivity tools: ${prod_tools_to_install[*]}"
+    brew install ${prod_tools_to_install[@]}
+else
+    echo "All productivity tools are already installed."
+fi
 
 # Install Zsh if not already installed (macOS usually comes with it)
 if ! command -v zsh &> /dev/null; then
@@ -81,23 +230,43 @@ fi
 
 # Install Lazygit
 echo "Installing Lazygit..."
-brew install lazygit
+if ! command -v lazygit &> /dev/null; then
+    brew install lazygit
+else
+    echo "Lazygit is already installed."
+fi
 
 # Install Lazydocker
 echo "Installing Lazydocker..."
-brew install lazydocker
+if ! command -v lazydocker &> /dev/null; then
+    brew install lazydocker
+else
+    echo "Lazydocker is already installed."
+fi
 
 # Install GitHub CLI
 echo "Installing GitHub CLI..."
-brew install gh
+if ! command -v gh &> /dev/null; then
+    brew install gh
+else
+    echo "GitHub CLI is already installed."
+fi
 
 # Install Docker
 echo "Installing Docker..."
-brew install --cask docker
+if ! command -v docker &> /dev/null && [ ! -d "/Applications/Docker.app" ]; then
+    brew install --cask docker
+else
+    echo "Docker Desktop is already installed."
+fi
 
 # Install Node.js and npm
 echo "Installing Node.js and npm..."
-brew install node
+if ! command -v node &> /dev/null; then
+    brew install node
+else
+    echo "Node.js is already installed."
+fi
 
 # Install pnpm
 echo "Installing pnpm..."
@@ -117,7 +286,11 @@ fi
 
 # Install Python tools
 echo "Installing Python tools..."
-brew install python3-pip
+if ! command -v pip3 &> /dev/null; then
+    brew install python3-pip
+else
+    echo "Python3 pip is already installed."
+fi
 
 # Install uv (Python package manager)
 echo "Installing uv..."
@@ -135,15 +308,69 @@ fi
 
 # Install Kubernetes tools
 echo "Installing Kubernetes tools..."
-brew install kubectl helm
+k8s_tools_to_install=()
+
+if ! command -v kubectl &> /dev/null; then
+    k8s_tools_to_install+=("kubectl")
+else
+    echo "kubectl is already installed."
+fi
+
+if ! command -v helm &> /dev/null; then
+    k8s_tools_to_install+=("helm")
+else
+    echo "Helm is already installed."
+fi
+
+if [ ${#k8s_tools_to_install[@]} -gt 0 ]; then
+    echo "Installing missing Kubernetes tools: ${k8s_tools_to_install[*]}"
+    brew install ${k8s_tools_to_install[@]}
+else
+    echo "All Kubernetes tools are already installed."
+fi
 
 # Install database clients
 echo "Installing database clients..."
-brew install postgresql
+if ! command -v psql &> /dev/null; then
+    brew install postgresql
+else
+    echo "PostgreSQL client is already installed."
+fi
 
 # Install GDAL and geospatial tools
 echo "Installing GDAL and geospatial tools..."
-brew install gdal proj geos spatialite-tools
+geospatial_tools_to_install=()
+
+if ! command -v gdalinfo &> /dev/null; then
+    geospatial_tools_to_install+=("gdal")
+else
+    echo "GDAL is already installed."
+fi
+
+if ! command -v proj &> /dev/null; then
+    geospatial_tools_to_install+=("proj")
+else
+    echo "PROJ is already installed."
+fi
+
+if ! command -v geos-config &> /dev/null; then
+    geospatial_tools_to_install+=("geos")
+else
+    echo "GEOS is already installed."
+fi
+
+if ! command -v spatialite &> /dev/null; then
+    geospatial_tools_to_install+=("spatialite-tools")
+else
+    echo "SpatiaLite tools are already installed."
+fi
+
+if [ ${#geospatial_tools_to_install[@]} -gt 0 ]; then
+    echo "Installing missing geospatial tools: ${geospatial_tools_to_install[*]}"
+    brew install ${geospatial_tools_to_install[@]}
+else
+    echo "All geospatial tools are already installed."
+fi
 
 # Install Ollama
 echo "Installing Ollama..."
@@ -155,19 +382,65 @@ fi
 
 # Install VLC
 echo "Installing VLC media player..."
-brew install --cask vlc
+if [ ! -d "/Applications/VLC.app" ]; then
+    brew install --cask vlc
+else
+    echo "VLC is already installed."
+fi
 
 # Install communication apps
 echo "Installing communication apps..."
-brew install --cask slack discord zoom
+comm_apps_to_install=()
 
-# Install email client
-echo "Installing email client..."
-brew install --cask thunderbird
+if [ ! -d "/Applications/Slack.app" ]; then
+    comm_apps_to_install+=("slack")
+else
+    echo "Slack is already installed."
+fi
+
+if [ ! -d "/Applications/Discord.app" ]; then
+    comm_apps_to_install+=("discord")
+else
+    echo "Discord is already installed."
+fi
+
+if [ ! -d "/Applications/Zoom.app" ]; then
+    comm_apps_to_install+=("zoom")
+else
+    echo "Zoom is already installed."
+fi
+
+if [ ${#comm_apps_to_install[@]} -gt 0 ]; then
+    echo "Installing missing communication apps: ${comm_apps_to_install[*]}"
+    brew install --cask ${comm_apps_to_install[@]}
+else
+    echo "All communication apps are already installed."
+fi
+
+
 
 # Install Nerd Fonts
 echo "Installing Nerd Fonts..."
-brew install font-jetbrains-mono-nerd-font font-fira-code-nerd-font
+nerd_fonts_to_install=()
+
+if ! fc-list | grep -q "JetBrainsMono Nerd Font"; then
+    nerd_fonts_to_install+=("font-jetbrains-mono-nerd-font")
+else
+    echo "JetBrains Mono Nerd Font is already installed."
+fi
+
+if ! fc-list | grep -q "FiraCode Nerd Font"; then
+    nerd_fonts_to_install+=("font-fira-code-nerd-font")
+else
+    echo "FiraCode Nerd Font is already installed."
+fi
+
+if [ ${#nerd_fonts_to_install[@]} -gt 0 ]; then
+    echo "Installing missing Nerd Fonts: ${nerd_fonts_to_install[*]}"
+    brew install ${nerd_fonts_to_install[@]}
+else
+    echo "All Nerd Fonts are already installed."
+fi
 
 # Start services
 echo "Starting services..."
@@ -292,15 +565,34 @@ if command -v tailscale &> /dev/null; then
 else
     echo "Tailscale: Not found in PATH"
 fi
-if command -v wg &> /dev/null; then
-    echo "Wireguard: $(wg --version 2>&1)"
+# Wireguard check not applicable to macOS (built into the OS)
+echo "Wireguard: Built into macOS"
+
+# Check GUI applications
+if [ -d "/Applications/Slack.app" ]; then
+    echo "Slack: Installed in Applications"
 else
-    echo "Wireguard: Not found in PATH"
+    echo "Slack: Not found"
 fi
-if fc-list | grep -q "Nerd Font"; then
-    echo "Nerd Fonts: Installed"
+
+if [ -d "/Applications/Discord.app" ]; then
+    echo "Discord: Installed in Applications"
 else
-    echo "Nerd Fonts: Not found"
+    echo "Discord: Not found"
+fi
+
+if [ -d "/Applications/Zoom.app" ]; then
+    echo "Zoom: Installed in Applications"
+else
+    echo "Zoom: Not found"
+fi
+
+
+
+if [ -d "/Applications/VLC.app" ]; then
+    echo "VLC: Installed in Applications"
+else
+    echo "VLC: Not found"
 fi
 
 echo ""
