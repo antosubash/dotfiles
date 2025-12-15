@@ -1,100 +1,342 @@
 # Dotfiles
 
-A collection of my personal configuration files for macOS development environment.
+A comprehensive cross-platform development environment setup with automated installation, themes, and update management.
 
-## Structure
+## 🚀 Quick Start
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/antosubash/dotfiles ~/dotfiles
+
+# 2. Run the installation
+cd ~/dotfiles
+./install.sh
+
+# 3. Set up your development environment
+# macOS
+./scripts/setup-macos.sh
+
+# Ubuntu/Linux  
+./scripts/setup-ubuntu.sh
+
+# 4. Install update commands
+./scripts/setup-update.sh
+```
+
+## 📁 Structure
 
 ```
 dotfiles/
-├── install.sh          # Dotfiles installation script
+├── install.sh              # Main dotfiles installation
 ├── scripts/
-│   ├── setup-macos.sh  # macOS development environment setup
-│   └── setup-ubuntu.sh # Ubuntu development environment setup
-├── git/
-│   └── .gitconfig      # Git configuration
+│   ├── setup-macos.sh      # macOS full development setup
+│   ├── setup-ubuntu.sh     # Ubuntu full development setup
+│   ├── setup-agnoster.sh   # Agnoster theme installer
+│   ├── setup-terminal.sh    # Terminal theme configuration
+│   ├── setup-update.sh     # Update command installer
+│   ├── update-all.sh       # Full system updater
+│   └── update-quick.sh     # Quick daily updater
 ├── shell/
-│   ├── .zshrc          # Zsh configuration
-│   ├── .bashrc         # Bash configuration (for Ubuntu)
-│   └── .profile        # Shell profile
+│   ├── .zshrc             # Enhanced Zsh configuration
+│   ├── .bashrc            # Bash configuration (Ubuntu)
+│   ├── .profile           # Shell profile
+│   ├── agnoster.zsh-theme # Agnoster theme
+│   └── agnoster-config.zsh # Theme customizations
+├── git/
+│   └── .gitconfig         # Git configuration
 ├── vim/
-│   └── .vimrc          # Vim configuration
-└── config/             # Application-specific configs
+│   └── .vimrc             # Vim configuration
+└── config/
+    └── terminal-colors.md  # Terminal color schemes
 ```
 
-## Installation
+## 🛠️ Installation Guide
 
-1. Clone this repository:
+### 1. Basic Dotfiles Setup
+
 ```bash
+# Clone repository
 git clone https://github.com/antosubash/dotfiles ~/dotfiles
-```
 
-2. Run the installation script:
-```bash
+# Install dotfiles (creates symlinks)
 cd ~/dotfiles
 ./install.sh
+
+# Restart your terminal or run:
+source ~/.zshrc  # or ~/.bashrc on Ubuntu
 ```
 
-2. Run the installation script:
+### 2. Development Environment Setup
+
+Choose your platform:
+
+#### macOS
 ```bash
-cd ~/dotfiles
-chmod +x install.sh
-./install.sh
-```
-
-The script will:
-- Backup any existing dotfiles to `~/.dotfiles_backup`
-- Create symbolic links to the new configuration files
-- Restart your shell to apply changes
-
-## Features
-
-- **Git**: Personal configuration with LFS support
-- **Zsh**: Oh My Zsh setup with useful plugins and aliases
-- **Vim**: Clean configuration with syntax highlighting and custom mappings
-- **Shell aliases**: Common development shortcuts
-
-## Requirements
-
-- macOS or Linux (Ubuntu/Debian)
-- Zsh or Bash shell
-- Git
-- Vim (optional)
-
-## Cross-Platform Compatibility
-
-This dotfiles setup works on both macOS and Ubuntu/Linux systems:
-- Automatically detects the operating system
-- Adapts to the detected shell (Zsh or Bash)
-- Installs appropriate configuration files for each platform
-
-## Development Environment Setup
-
-For a complete development environment, use the platform-specific setup scripts:
-
-### macOS
-```bash
-cd ~/dotfiles
 ./scripts/setup-macos.sh
 ```
 
-### Ubuntu/Linux
+#### Ubuntu/Linux
 ```bash
-cd ~/dotfiles
 ./scripts/setup-ubuntu.sh
 ```
 
-These scripts install:
-- Development tools (Git, Node.js, Python, Java, Go, Rust, .NET)
-- API testing tools (HTTPie, jq, yq, curlie)
-- Security tools (GPG, pass, nmap, Wireshark)
-- VPN tools (Tailscale, Wireguard)
-- Productivity tools (tmux, fzf, ripgrep, fd)
-- Container tools (Docker, Kubernetes, Helm)
-- Database clients (PostgreSQL)
-- Geospatial tools (GDAL, PROJ, GEOS, SpatiaLite)
-- Communication apps (Slack, Discord, Zoom, Thunderbird)
-- Nerd Fonts
-- And much more...
+**What gets installed:**
+- 📦 Package managers (Homebrew/apt)
+- 💻 Languages (Node.js, Python, Java, Go, Rust, .NET)
+- 🐳 Container tools (Docker, Kubernetes, Helm)
+- 🔧 Productivity tools (tmux, fzf, ripgrep, fd)
+- 🌐 API tools (HTTPie, jq, yq, curlie)
+- 🔐 Security tools (GPG, pass, nmap, Wireshark)
+- 📱 Communication apps (Slack, Discord, Zoom)
+- 🗺️ Geospatial tools (GDAL, PROJ, GEOS)
+- 🔤 Nerd Fonts
+
+### 3. Shell Theme Setup
+
+#### Agnoster Theme (Recommended)
+```bash
+# Install Agnoster theme with fonts
+./scripts/setup/setup-agnoster.sh
+
+# Set terminal font to "Meslo LG Nerd Font"
+# Restart terminal
+```
+
+#### Custom Terminal Themes
+```bash
+# Configure terminal colors
+./scripts/setup-terminal.sh
+```
+
+### 4. Update System Setup
+
+```bash
+# Install update commands
+./scripts/setup-update.sh
+
+# Available commands after installation:
+update          # Full system update
+update-quick    # Fast daily update
+update-manager  # Interactive manager
+```
+
+## 🎯 Available Commands
+
+### Update Commands
+```bash
+update              # Full update of all tools
+update-quick        # Fast daily updates (package managers only)
+update-manager      # Interactive update interface
+update --cleanup    # Clean caches and old files
+
+# Aliases
+upd                 # Quick update alias
+upf                 # Full update alias
+upc                 # Cleanup alias
+```
+
+### Development Shortcuts
+```bash
+# Git
+gs, ga, gc, gp, gl  # Git status, add, commit, push, log
+gd, gco             # Git diff, checkout
+
+# Docker
+d, dc, dps, di       # Docker, docker-compose, ps, images
+
+# Node.js
+ns, nr, ni, nb       # npm start, run, install, build
+
+# Navigation & Files
+ll, la, lt           # Enhanced ls commands
+mkcd                 # Make and enter directory
+extract              # Universal archive extractor
+```
+
+### Utility Functions
+```bash
+backup <file>        # Create timestamped backup
+server [port]        # Start quick web server
+checkport <port>     # Check what's using a port
+replace <search> <replace> <dir>  # Find and replace
+```
+
+## 🎨 Shell Customization
+
+### Agnoster Theme Features
+- **Smart Context**: Shows user@host only for SSH
+- **Git Integration**: Branch status, dirty/clean indicators  
+- **Development Tools**: Node.js, Rust, Go detection
+- **Cloud Tools**: Kubernetes, Docker, AWS profiles
+- **Execution Time**: Command duration tracking
+- **Status Indicators**: Error codes, background jobs
+
+### Customizing Theme
+Edit `~/dotfiles/shell/agnoster-config.zsh`:
+
+```bash
+# Disable specific segments
+export VIRTUAL_ENV_DISABLE_PROMPT=1
+export AWS_PROMPT_DISABLE=1
+
+# Custom symbols
+export AGNOSTER_GIT_DIRTY_SYMBOL=" ✗"
+export AGNOSTER_GIT_CLEAN_SYMBOL=" ✓"
+```
+
+### Terminal Colors
+Use the Nordic color scheme in `config/terminal-colors.md` for consistency.
+
+## 🔄 Maintenance
+
+### Daily Usage
+```bash
+# Quick daily update
+update-quick
+
+# Check what's outdated
+update-manager status
+```
+
+### Weekly Maintenance  
+```bash
+# Full system update
+update
+
+# Clean up system
+update --cleanup
+```
+
+### Manual Updates
+```bash
+# Package managers only
+brew update && brew upgrade    # macOS
+sudo apt update && sudo apt upgrade  # Ubuntu
+
+# Language-specific
+npm update -g                 # Node.js
+pip3 list --outdated          # Python
+rustup update                 # Rust
+```
+
+## 🌍 Cross-Platform Support
+
+This dotfiles setup works seamlessly on:
+
+### macOS
+- 🍎 Homebrew package management
+- 🖥️ Terminal.app and iTerm2 support
+- 💼 Cocoa application installation
+- 🔤 Native font management
+
+### Ubuntu/Linux
+- 🐧 APT package management
+- 📦 Snap and Flatpak support
+- 🔧 System service management
+- 🎯 Desktop environment integration
+
+**Automatic Detection:**
+- OS type (macOS/Linux)
+- Shell type (Zsh/Bash)
+- Package manager availability
+- Installed applications
+
+## 🛠️ Troubleshooting
+
+### Common Issues
+
+**Font Issues with Agnoster:**
+```bash
+# Install required fonts
+./scripts/setup-agnoster.sh
+# Set terminal font to "Meslo LG Nerd Font"
+```
+
+**Command Not Found:**
+```bash
+# Reinstall update commands
+./scripts/setup-update.sh
+# Restart terminal or source shell config
+source ~/.zshrc
+```
+
+**Permission Denied:**
+```bash
+# Make scripts executable
+chmod +x ~/dotfiles/scripts/*.sh
+```
+
+**Oh My Zsh Issues:**
+```bash
+# Reinstall Oh My Zsh
+sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+```
+
+### Getting Help
+
+**Update Manager:**
+```bash
+update-manager help  # Show all update options
+```
+
+**Script Help:**
+```bash
+./scripts/setup-macos.sh --help
+./scripts/update-all.sh --help
+```
+
+**Check Versions:**
+```bash
+update-manager status  # Check all tool versions
+```
+
+## 📚 Advanced Usage
+
+### Custom Aliases
+Add to `~/.zshrc.local`:
+
+```bash
+# Your custom aliases
+alias myproject="cd ~/projects/myapp"
+alias test="./scripts/test.sh"
+```
+
+### Environment Variables
+Add to `~/.local/bin/env`:
+
+```bash
+# Custom environment variables
+export API_KEY="your-key-here"
+export DATABASE_URL="postgresql://..."
+```
+
+### Project Templates
+Create project templates in `~/dotfiles/templates/` for quick scaffolding.
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create feature branch
+3. Make your changes
+4. Test on both platforms if possible
+5. Submit pull request
+
+## 📄 License
+
+This repository follows the MIT License - feel free to use and modify for your own needs.
+
+---
+
+## 🎉 Enjoy Your New Development Environment!
+
+You now have a powerful, cross-platform development setup with:
+- ⚡ Automated updates
+- 🎨 Beautiful themes
+- 🛠️ Rich tooling
+- 🔄 Cross-platform compatibility
+- 📦 Intelligent package management
+
+Happy coding! 🚀
 
 ## Customization
 
