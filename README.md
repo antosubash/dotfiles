@@ -45,10 +45,17 @@ The script will:
 
 ## Requirements
 
-- macOS
-- Zsh shell
+- macOS or Linux (Ubuntu/Debian)
+- Zsh or Bash shell
 - Git
 - Vim (optional)
+
+## Cross-Platform Compatibility
+
+This dotfiles setup works on both macOS and Ubuntu/Linux systems:
+- Automatically detects the operating system
+- Adapts to the detected shell (Zsh or Bash)
+- Installs appropriate configuration files for each platform
 
 ## Customization
 
