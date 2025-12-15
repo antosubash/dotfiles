@@ -11,7 +11,7 @@ sudo apt update
 # Install basic system tools
 echo "Installing basic system tools..."
 if ! command -v git &> /dev/null || ! command -v curl &> /dev/null || ! command -v wget &> /dev/null; then
-    sudo apt install -y curl wget htop neofetch vim nano build-essential net-tools openssl git
+    sudo apt install -y curl wget htop fastfetch vim nano build-essential net-tools openssl git
 else
     echo "Basic system tools are already installed."
 fi
@@ -90,7 +90,7 @@ else
 fi
 if ! command -v curlie &> /dev/null; then
     if command -v go &> /dev/null; then
-        go install github.com/rs/curlie@latest
+        go install github.com/rs/curlie@v1.6.0
         if ! grep -q 'export PATH=$PATH:~/go/bin' ~/.zshrc 2>/dev/null; then
             echo 'export PATH=$PATH:~/go/bin' >> ~/.zshrc
         fi

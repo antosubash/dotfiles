@@ -22,7 +22,7 @@ fi
 # Install basic system tools
 echo "Installing basic system tools..."
 tools_to_install=()
-for tool in curl wget htop neofetch vim git; do
+for tool in curl wget htop fastfetch vim git; do
     if ! command -v $tool &> /dev/null; then
         tools_to_install+=($tool)
     fi
@@ -113,7 +113,7 @@ fi
 
 # Install curlie via go
 if ! command -v curlie &> /dev/null; then
-    go install github.com/rs/curlie@latest
+    go install github.com/rs/curlie@v1.6.0
 else
     echo "curlie is already installed."
 fi

@@ -3,7 +3,8 @@
 # Dotfiles installation script (cross-platform)
 set -e
 
-DOTFILES_DIR="$HOME/dotfiles"
+# Get the directory where this script is located
+DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR="$HOME/.dotfiles_backup"
 
 # Detect OS
@@ -57,7 +58,11 @@ SHELL_TYPE=$(detect_shell)
 echo "Detected shell: $SHELL_TYPE"
 
 if [ "$SHELL_TYPE" = "zsh" ]; then
-    backup_and_symlink "$DOTFILES_DIR/shell/.zshrc" "$HOME/.zshrc"
+    # Copy .zshrc instead of symlinking to allow modifications
+    if [ -f "$HOME/.zshrc" ]; then
+        mv "$HOME/.zshrc" "$BACKUP_DIR/.zshrc.$(date +%Y%m%d_%H%M%S)"
+    fi
+    cp "$DOTFILES_DIR/shell/.zshrc" "$HOME/.zshrc"
     echo "Zsh configuration installed"
 elif [ "$SHELL_TYPE" = "bash" ]; then
     backup_and_symlink "$DOTFILES_DIR/shell/.bashrc" "$HOME/.bashrc" 2>/dev/null || true
@@ -73,6 +78,74 @@ backup_and_symlink "$DOTFILES_DIR/vim/.vimrc" "$HOME/.vimrc"
 # Create directories for vim
 mkdir -p "$HOME/.vim/autoload" "$HOME/.vim/bundle"
 
+# Zsh and Oh My Zsh setup
+setup_zsh() {
+    if [ "$SHELL_TYPE" = "zsh" ]; then
+        # Install Oh My Zsh if not installed
+        if [ ! -d "$HOME/.oh-my-zsh" ]; then
+            echo "Installing Oh My Zsh..."
+            RUNZSH=no sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+        else
+            echo "Oh My Zsh is already installed"
+        fi
+        
+        # Install zsh plugins
+        ZSH_CUSTOM="$HOME/.oh-my-zsh/custom"
+        
+        # Install zsh-autosuggestions
+        if [ ! -d "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ]; then
+            echo "Installing zsh-autosuggestions..."
+            git clone https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+        fi
+        
+        # Install zsh-syntax-highlighting
+        if [ ! -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]; then
+            echo "Installing zsh-syntax-highlighting..."
+            git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+        fi
+        
+        # Copy custom Agnoster theme
+        if [ -f "$DOTFILES_DIR/shell/agnoster.zsh-theme" ]; then
+            mkdir -p "$ZSH_CUSTOM/themes"
+            cp "$DOTFILES_DIR/shell/agnoster.zsh-theme" "$ZSH_CUSTOM/themes/"
+            echo "Custom Agnoster theme installed"
+        fi
+        
+        # Ensure plugins are properly configured in .zshrc
+        if [ -f "$HOME/.zshrc" ]; then
+            # Update plugins list to include autosuggestions and syntax highlighting
+            sed -i '' 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting)/' "$HOME/.zshrc" || true
+            echo "Zsh plugins configured"
+        fi
+        
+        # Install Powerline fonts for theme
+        install_powerline_fonts
+        
+        # Configure shell to use zsh if not already
+        if [ "$SHELL" != "$(which zsh)" ]; then
+            echo "Changing default shell to zsh..."
+            chsh -s $(which zsh)
+        fi
+    fi
+}
+
+# Install Powerline fonts for themes
+install_powerline_fonts() {
+    FONT_DIR="$HOME/Library/Fonts"
+    
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        mkdir -p "$FONT_DIR"
+        
+        # Install fonts via Homebrew if available
+        if command -v brew &> /dev/null; then
+            if ! fc-list | grep -q "MesloLG Nerd Font"; then
+                echo "Installing Meslo LG Nerd Font..."
+                brew install --cask font-meslo-lg-nerd-font 2>/dev/null || echo "Font installation failed (may already be installed)"
+            fi
+        fi
+    fi
+}
+
 # Platform-specific setup
 if [ "$OS_TYPE" = "linux" ]; then
     echo "Linux-specific setup..."
@@ -86,9 +159,23 @@ if [ "$OS_TYPE" = "linux" ]; then
     fi
 fi
 
+# Setup Zsh and theme
+setup_zsh
+
+# Optional: Run dedicated theme setup if available
+if [ -f "$DOTFILES_DIR/scripts/setup-agnoster.sh" ]; then
+    echo "Would you like to run the dedicated Agnoster theme setup? (y/n)"
+    read -r response
+    if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        echo "Running Agnoster theme setup..."
+        bash "$DOTFILES_DIR/scripts/setup-agnoster.sh"
+    fi
+fi
+
 echo "Dotfiles installation complete!"
 if [ "$SHELL_TYPE" = "zsh" ]; then
     echo "Restart your shell or run 'source ~/.zshrc' to apply changes."
+    echo "Make sure your terminal font is set to 'Meslo LG Nerd Font' for proper theme display."
 else
     echo "Restart your shell or run 'source ~/.bashrc' to apply changes."
 fi

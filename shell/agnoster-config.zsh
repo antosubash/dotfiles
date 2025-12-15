@@ -1,40 +1,47 @@
-# Agnoster Theme Configuration
-# Copy this section to your custom .zshrc.local if you want customizations
+# Enhanced Agnoster Theme Configuration
+# Essential customizations for the enhanced agnoster theme
 
-# Agnoster theme customizations
+# Core Agnoster theme customizations
 export DEFAULT_USER=$USERNAME  # Hide username in local sessions
-export TERM="xterm-256color"  # Ensure 256-color support
+export TERM="xterm-256color"   # Ensure 256-color support
 
-# Customize Agnoster segments (uncomment to disable specific segments)
-# export VIRTUAL_ENV_DISABLE_PROMPT=1  # Hide virtualenv
-# export AWS_PROMPT_DISABLE=1          # Hide AWS profile
+# Enhanced Agnoster display options
+export AGNOSTER_SHOW_USER=${AGNOSTER_SHOW_USER:-false}     # Hide username in local sessions
+export AGNOSTER_SHOW_EXEC_TIME=${AGNOSTER_SHOW_EXEC_TIME:-true}  # Show command execution time
 
-# Custom symbols for Agnoster
-# export AGNOSTER_GIT_DIRTY_SYMBOL=" ✗"
-# export AGNOSTER_GIT_CLEAN_SYMBOL=" ✓"
-# export AGNOSTER_NODE_SYMBOL="⬢ "
-# export AGNOSTER_RUST_SYMBOL="🦀 "
-# export AGNOSTER_GO_SYMBOL="🐹 "
-# export AGNOSTER_K8S_SYMBOL="☸️ "
-# export AGNOSTER_DOCKER_SYMBOL="🐳 "
-# export AGNOSTER_AWS_SYMBOL="☁️ "
+# Development environment detection
+export VIRTUAL_ENV_DISABLE_PROMPT=${VIRTUAL_ENV_DISABLE_PROMPT:-0}  # Show virtualenv by default
 
-# Aliases for better Agnoster experience
-if command -v exa &> /dev/null; then
-    alias ls="exa --icons"
-    alias ll="exa --icons -lah"
-    alias la="exa --icons -lah --git"
+# Modern tool aliases
+if command -v eza &> /dev/null; then
+    alias ls="eza --icons"
+    alias ll="eza -la --git --icons"
+    alias tree="eza --tree --icons"
 fi
 
 if command -v bat &> /dev/null; then
-    alias cat="bat --theme=GitHub"
+    alias cat="bat --style=numbers,changes,header"
 fi
 
 if command -v fd &> /dev/null; then
     alias find="fd"
 fi
 
-# Enhanced prompt for development environments
+if command -v rg &> /dev/null; then
+    alias grep="rg --smart-case"
+fi
+
+# Git aliases
+if command -v git &> /dev/null; then
+    alias gs="git status --short --branch"
+    alias ga="git add"
+    alias gc="git commit"
+    alias gp="git push"
+    alias gl="git pull"
+    alias gd="git diff --color-moved=zebra"
+fi
+
+# Custom configuration loading
 if [[ -f $HOME/.zshrc.local ]]; then
     source $HOME/.zshrc.local
 fi

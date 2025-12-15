@@ -1,19 +1,19 @@
-# Agnoster Theme - Clean, modern Zsh theme
-# Based on original Agnoster with enhanced features
+# Enhanced Agnoster Theme - Clean, modern Zsh theme
+# Based on original Agnoster with essential enhancements
 
 # Segments to display
 CURRENT_BG='NONE'
 SEGMENT_SEPARATOR=''
-RIGHT_SEPARATOR=''
-LEFT_SEGMENT_SEPARATOR=''
-RIGHT_SEGMENT_SEPARATOR=''
 
 # Special powerline characters
 () {
   local LC_ALL="" LC_CTYPE="en_US.UTF-8"
   SEGMENT_SEPARATOR=$''
-  RIGHT_SEPARATOR=$''
 }
+
+# Configuration options
+export AGNOSTER_SHOW_USER=${AGNOSTER_SHOW_USER:-false}
+export AGNOSTER_SHOW_EXEC_TIME=${AGNOSTER_SHOW_EXEC_TIME:-true}
 
 # Begin a segment
 prompt_segment() {
@@ -40,22 +40,20 @@ prompt_end() {
   CURRENT_BG=''
 }
 
-### Prompt components
-# Each component will draw itself, and hide itself if no information needs to be shown
+### Essential prompt components
 
-# Context: user@hostname (for remote sessions)
+# Context: user@hostname (for remote sessions only)
 prompt_context() {
   if [[ -n $SSH_CONNECTION ]]; then
     prompt_segment black default "%n@%m"
-  else
-    # Local session - just show user
+  elif [[ "$AGNOSTER_SHOW_USER" == "true" ]]; then
     prompt_segment black default "%n"
   fi
 }
 
 # Git: branch/detached head, dirty status
 prompt_git() {
-  local color ref
+  local color ref status_symbols
   is_dirty() {
     test -n "$(git status --porcelain --ignore-submodules 2>/dev/null)"
     [[ $? -eq 1 ]] && return 0
@@ -64,116 +62,75 @@ prompt_git() {
   
   ref="$vcs_info_msg_0_"
   if [[ -n "$ref" ]]; then
-    if is_dirty; then
+    status_symbols=()
+    
+    local untracked=$(git ls-files --other --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+    local modified=$(git ls-files --modified 2>/dev/null | wc -l | tr -d ' ')
+    local staged=$(git diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
+    
+    [[ $staged -gt 0 ]] && status_symbols+="%F{green}▲%f"
+    [[ $modified -gt 0 ]] && status_symbols+="%F{yellow}●%f"
+    [[ $untracked -gt 0 ]] && status_symbols+="%F{red}+%f"
+    
+    if is_dirty || [[ $untracked -gt 0 ]]; then
       color=yellow
-      ref="${ref} $✗"
     else
       color=green
-      ref="${ref} ✓"
     fi
-    if [[ "${ref/.../}" == "$ref" ]]; then
-      ref="$BRANCH $ref"
-    else
-      ref="$DETACHED ${ref/.../}"
+    
+    local git_symbol="⎇ "
+    ref="$git_symbol$ref"
+    
+    if [[ ${#status_symbols[@]} -gt 0 ]]; then
+      ref="$ref ${status_symbols[@]}"
     fi
-    prompt_segment $color $ref
+    
+    prompt_segment $color "$ref"
   fi
 }
 
-# Dir: current working directory
+# Directory: current working directory
 prompt_dir() {
   prompt_segment blue '%~'
 }
 
-# Virtualenv: current working virtualenv
+# Virtualenv: current virtual environment
 prompt_virtualenv() {
-  local virtualenv_path="$VIRTUAL_ENV"
-  if [[ -n $virtualenv_path && -n $VIRTUAL_ENV_DISABLE_PROMPT ]]; then
-    prompt_segment magenta "(`basename $virtualenv_path`)"
+  if [[ -n $VIRTUAL_ENV && -z $VIRTUAL_ENV_DISABLE_PROMPT ]]; then
+    prompt_segment magenta "🐍 `basename $VIRTUAL_ENV`"
   fi
 }
 
-# Node.js: current node version, project name
-prompt_nodejs() {
-  if [[ -f package.json ]] || [[ -d node_modules ]]; then
-    local node_version=$(node --version 2>/dev/null)
-    prompt_segment green "⬢ $node_version"
-  fi
-}
-
-# Rust: current rust project
-prompt_rust() {
-  if [[ -f Cargo.toml ]]; then
-    local rust_version=$(rustc --version | cut -d' ' -f2 2>/dev/null)
-    prompt_segment red "🦀 $rust_version"
-  fi
-}
-
-# Go: current go module
-prompt_go() {
-  if [[ -f go.mod ]]; then
-    local module_name=$(grep '^module' go.mod | cut -d' ' -f2)
-    prompt_segment cyan "🐹 $module_name"
-  fi
-}
-
-# Kubernetes: current context and namespace
-prompt_k8s() {
-  if command -v kubectl &> /dev/null; then
-    local context=$(kubectl config current-context 2>/dev/null)
-    local namespace=$(kubectl config view --minify --output 'jsonpath={..namespace}' 2>/dev/null)
-    if [[ -n $context ]]; then
-      if [[ $namespace == "default" ]] || [[ -z $namespace ]]; then
-        prompt_segment magenta "☸️ $context"
-      else
-        prompt_segment magenta "☸️ $context/$namespace"
-      fi
-    fi
-  fi
-}
-
-# Docker: current context
-prompt_docker() {
-  if command -v docker &> /dev/null; then
-    local context=$(docker context inspect --format '{{.Name}}' 2>/dev/null)
-    if [[ -n $context ]] && [[ $context != "default" ]]; then
-      prompt_segment blue "🐳 $context"
-    fi
-  fi
-}
-
-# AWS: current profile
-prompt_aws() {
-  if [[ -n $AWS_PROFILE ]]; then
-    prompt_segment yellow "☁️ $AWS_PROFILE"
-  fi
-}
-
-# Status: 
-# - was there an error
-# - am I root
-# - are there background jobs?
+# Status: exit code, root indicator, background jobs
 prompt_status() {
   local symbols
   symbols=()
-  [[ $RETVAL -ne 0 ]] && symbols+="%{%F{red}%}✘"
-  [[ $UID -eq 0 ]] && symbols+="%{%F{yellow}%}⚡"
-  [[ $(jobs -l | wc -l) -gt 0 ]] && symbols+="%{%F{cyan}%}⚙"
+  [[ $RETVAL -ne 0 ]] && symbols+="%F{red}$RETVAL✘"
+  [[ $UID -eq 0 ]] && symbols+="%F{yellow}⚡"
+  [[ $(jobs -l | wc -l) -gt 0 ]] && symbols+="%F{cyan}⚙"
 
   [[ -n "$symbols" ]] && prompt_segment black "$symbols"
 }
 
 # Command execution time
-prompt_time() {
+prompt_exec_time() {
+  if [[ "$AGNOSTER_SHOW_EXEC_TIME" != "true" ]]; then
+    return
+  fi
+  
   if [[ $CMD_EXEC_TIME -gt 5 ]]; then
     local human_time
     local hours=$(( CMD_EXEC_TIME / 3600 ))
     local minutes=$(( (CMD_EXEC_TIME % 3600) / 60 ))
     local seconds=$(( CMD_EXEC_TIME % 60 ))
     
-    (( hours > 0 )) && human_time+="${hours}h "
-    (( minutes > 0 )) && human_time+="${minutes}m "
-    human_time+="${seconds}s"
+    if (( hours > 0 )); then
+      human_time="${hours}h${minutes}m${seconds}s"
+    elif (( minutes > 0 )); then
+      human_time="${minutes}m${seconds}s"
+    else
+      human_time="${seconds}s"
+    fi
     
     prompt_segment black "⏱ $human_time"
   fi
@@ -182,33 +139,19 @@ prompt_time() {
 ## Main prompt
 prompt_agnoster_main() {
   RETVAL=$?
-  local status_code=$RETVAL
-  
-  # Reset command execution time
   CMD_EXEC_TIME=0
-  
-  # Print status code if non-zero
-  if [[ $status_code -ne 0 ]]; then
-    prompt_segment red "$status_code"
-  fi
   
   prompt_status
   prompt_context
   prompt_dir
   prompt_git
-  prompt_nodejs
-  prompt_rust
-  prompt_go
-  prompt_k8s
-  prompt_docker
-  prompt_aws
   prompt_virtualenv
   prompt_end
 }
 
 # Right prompt
 prompt_agnoster_right() {
-  prompt_time
+  prompt_exec_time
   prompt_end
 }
 
@@ -234,8 +177,6 @@ prompt_agnoster_setup() {
 
   zstyle ':vcs_info:*' enable git
   zstyle ':vcs_info:*' check-for-changes false
-  zstyle ':vcs_info:*' stagedstr '✓'
-  zstyle ':vcs_info:*' unstagedstr '✗'
   zstyle ':vcs_info:*' formats '%b'
   zstyle ':vcs_info:*' actionformats '%b'
 
