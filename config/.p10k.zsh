@@ -1,229 +1,131 @@
-# Powerlevel10k Configuration
-# Generated for informative display with modern aesthetics
-# To customize: run `p10k configure` or manually edit this file
+# Powerlevel10k Simple Configuration - Rainbow Style
+# Simplified config using P10k presets with minimal customization
+# To reconfigure interactively: run `p10k configure`
 
-# Instant prompt mode: quiet
-typeset -g POWERLEVEL9K_INSTANT_PROMPT=quiet
+# Enable instant prompt for faster startup
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
 
-# Basic prompt style
+# ============================================================================
+# STYLE PRESET: Rainbow (each segment gets a different color)
+# ============================================================================
+
 typeset -g POWERLEVEL9K_MODE=nerdfont-complete
+
+# Prompt layout: Single line
 typeset -g POWERLEVEL9K_PROMPT_ADD_NEWLINE=true
-typeset -g POWERLEVEL9K_MULTILINE_FIRST_PROMPT_PREFIX=''
-typeset -g POWERLEVEL9K_MULTILINE_LAST_PROMPT_PREFIX='%F{blue}❯%f '
 typeset -g POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(
-  dir
-  vcs
-  newline
-  prompt_char
-)
-typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(
-  status
-  command_execution_time
-  background_jobs
-  direnv
-  virtualenv
-  anaconda
-  pyenv
-  goenv
-  nodenv
-  nvm
-  nodeenv
-  rbenv
-  rvm
-  kubecontext
-  terraform
-  aws
-  time
+  os_icon       # OS icon
+  context       # user@host
+  dir           # Current directory
+  vcs           # Git status
+  prompt_char   # Prompt symbol (changes color on error)
 )
 
-# Prompt spacing
-typeset -g POWERLEVEL9K_LEFT_SEGMENT_SEPARATOR=''
-typeset -g POWERLEVEL9K_RIGHT_SEGMENT_SEPARATOR=''
+typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(
+  status                    # Exit code
+  command_execution_time    # Duration of last command
+  background_jobs           # Background jobs indicator
+  virtualenv                # Python virtualenv
+  nvm                       # Node version (nvm)
+  pyenv                     # Python version (pyenv)
+  time                      # Current time
+)
+
+# ============================================================================
+# SEGMENT COLORS (Rainbow Style)
+# ============================================================================
+
+# OS Icon: Bold white (no background)
+typeset -g POWERLEVEL9K_OS_ICON_FOREGROUND=white
+typeset -g POWERLEVEL9K_OS_ICON_BACKGROUND=''
+
+# Context (user@host): Yellow (no background)
+typeset -g POWERLEVEL9K_CONTEXT_FOREGROUND=yellow
+typeset -g POWERLEVEL9K_CONTEXT_BACKGROUND=''
+typeset -g POWERLEVEL9K_CONTEXT_ROOT_FOREGROUND=red
+typeset -g POWERLEVEL9K_CONTEXT_ROOT_BACKGROUND=''
+typeset -g POWERLEVEL9K_CONTEXT_TEMPLATE='%n@%m'  # user@hostname
+
+# Directory: Blue (no background)
+typeset -g POWERLEVEL9K_DIR_FOREGROUND=blue
+typeset -g POWERLEVEL9K_DIR_BACKGROUND=''
+
+# Git: Green (clean), Yellow (modified), Magenta (untracked) - no backgrounds
+typeset -g POWERLEVEL9K_VCS_CLEAN_FOREGROUND=green
+typeset -g POWERLEVEL9K_VCS_CLEAN_BACKGROUND=''
+typeset -g POWERLEVEL9K_VCS_MODIFIED_FOREGROUND=yellow
+typeset -g POWERLEVEL9K_VCS_MODIFIED_BACKGROUND=''
+typeset -g POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND=magenta
+typeset -g POWERLEVEL9K_VCS_UNTRACKED_BACKGROUND=''
+
+# Prompt char: Cyan (ok), Red (error) - no background
+typeset -g POWERLEVEL9K_PROMPT_CHAR_OK_{VIINS,VICMD,VIVIS}_FOREGROUND=cyan
+typeset -g POWERLEVEL9K_PROMPT_CHAR_ERROR_{VIINS,VICMD,VIVIS}_FOREGROUND=red
+typeset -g POWERLEVEL9K_PROMPT_CHAR_{OK,ERROR}_VIINS_CONTENT_EXPANSION='❯'
+typeset -g POWERLEVEL9K_PROMPT_CHAR_BACKGROUND=''
+
+# Command execution time: Yellow (no background)
+typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_FOREGROUND=yellow
+typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_BACKGROUND=''
+typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD=3
+
+# Background jobs: Magenta (no background)
+typeset -g POWERLEVEL9K_BACKGROUND_JOBS_FOREGROUND=magenta
+typeset -g POWERLEVEL9K_BACKGROUND_JOBS_BACKGROUND=''
+
+# Python virtualenv: Yellow (no background)
+typeset -g POWERLEVEL9K_VIRTUALENV_FOREGROUND=yellow
+typeset -g POWERLEVEL9K_VIRTUALENV_BACKGROUND=''
+
+# Python pyenv: Yellow (no background)
+typeset -g POWERLEVEL9K_PYENV_FOREGROUND=yellow
+typeset -g POWERLEVEL9K_PYENV_BACKGROUND=''
+
+# Node (nvm): Green (no background)
+typeset -g POWERLEVEL9K_NVM_FOREGROUND=green
+typeset -g POWERLEVEL9K_NVM_BACKGROUND=''
+
+# Time: Blue (no background)
+typeset -g POWERLEVEL9K_TIME_FOREGROUND=blue
+typeset -g POWERLEVEL9K_TIME_BACKGROUND=''
+
+# Status (error code): Red (no background)
+typeset -g POWERLEVEL9K_STATUS_ERROR_FOREGROUND=red
+typeset -g POWERLEVEL9K_STATUS_ERROR_BACKGROUND=''
+typeset -g POWERLEVEL9K_STATUS_OK=false  # Hide status when ok
+
+# ============================================================================
+# ADDITIONAL SETTINGS
+# ============================================================================
+
+# Shorten directory paths intelligently
+typeset -g POWERLEVEL9K_SHORTEN_STRATEGY=truncate_to_unique
+
+# Show execution time format
+typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_FORMAT='%ds'
+
+# Time format
+typeset -g POWERLEVEL9K_TIME_FORMAT='%D{%H:%M:%S}'
+
+# Remove text prefixes for cleaner look
+typeset -g POWERLEVEL9K_DIR_PREFIX=''
+typeset -g POWERLEVEL9K_VCS_PREFIX=''
+typeset -g POWERLEVEL9K_TIME_PREFIX=''
+
+# Segment separators (comfortable spacing for rainbow style)
+typeset -g POWERLEVEL9K_LEFT_SEGMENT_SEPARATOR='  '
+typeset -g POWERLEVEL9K_RIGHT_SEGMENT_SEPARATOR='  '
 typeset -g POWERLEVEL9K_LEFT_SUBSEGMENT_SEPARATOR=' '
 typeset -g POWERLEVEL9K_RIGHT_SUBSEGMENT_SEPARATOR=' '
 
-# Prompt character (❯)
-typeset -g POWERLEVEL9K_PROMPT_CHAR_OK_{VIINS,VICMD,VIVIS,VIOWR}_FOREGROUND=green
-typeset -g POWERLEVEL9K_PROMPT_CHAR_ERROR_{VIINS,VICMD,VIVIS,VIOWR}_FOREGROUND=red
-typeset -g POWERLEVEL9K_PROMPT_CHAR_{OK,ERROR}_VIINS_CONTENT_EXPANSION='❯'
-typeset -g POWERLEVEL9K_PROMPT_CHAR_{OK,ERROR}_VICMD_CONTENT_EXPANSION='❮'
-typeset -g POWERLEVEL9K_PROMPT_CHAR_{OK,ERROR}_VIVIS_CONTENT_EXPANSION='V'
-typeset -g POWERLEVEL9K_PROMPT_CHAR_{OK,ERROR}_VIOWR_CONTENT_EXPANSION='▶'
-typeset -g POWERLEVEL9K_PROMPT_CHAR_OVERWRITE_STATE=true
-typeset -g POWERLEVEL9K_PROMPT_CHAR_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL=''
-
-# Directory configuration
-typeset -g POWERLEVEL9K_DIR_FOREGROUND=blue
-typeset -g POWERLEVEL9K_SHORTEN_STRATEGY=truncate_to_unique
-typeset -g POWERLEVEL9K_SHORTEN_DELIMITER=''
-typeset -g POWERLEVEL9K_DIR_SHORTENED_FOREGROUND=blue
-typeset -g POWERLEVEL9K_DIR_ANCHOR_FOREGROUND=blue
-typeset -g POWERLEVEL9K_DIR_ANCHOR_BOLD=true
-typeset -g POWERLEVEL9K_SHORTEN_DIR_LENGTH=1
-typeset -g POWERLEVEL9K_DIR_MAX_LENGTH=80
-typeset -g POWERLEVEL9K_DIR_MIN_COMMAND_COLUMNS=40
-typeset -g POWERLEVEL9K_DIR_MIN_COMMAND_COLUMNS_PCT=50
-typeset -g POWERLEVEL9K_DIR_HYPERLINK=false
-typeset -g POWERLEVEL9K_DIR_SHOW_WRITABLE=v3
-typeset -g POWERLEVEL9K_DIR_CLASSES=()
-
-# Git status (VCS)
-typeset -g POWERLEVEL9K_VCS_BRANCH_ICON=''
-typeset -g POWERLEVEL9K_VCS_UNTRACKED_ICON='?'
-typeset -g POWERLEVEL9K_VCS_UNSTAGED_ICON='!'
-typeset -g POWERLEVEL9K_VCS_STAGED_ICON='+'
-typeset -g POWERLEVEL9K_VCS_INCOMING_CHANGES_ICON='⇣'
-typeset -g POWERLEVEL9K_VCS_OUTGOING_CHANGES_ICON='⇡'
-typeset -g POWERLEVEL9K_VCS_STASH_ICON='*'
-typeset -g POWERLEVEL9K_VCS_TAG_ICON='#'
-typeset -g POWERLEVEL9K_VCS_CLEAN_FOREGROUND=green
-typeset -g POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_VCS_MODIFIED_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_VCS_REMOTE_BRANCH_ICON=':'
-typeset -g POWERLEVEL9K_VCS_COMMIT_ICON='@'
-typeset -g POWERLEVEL9K_VCS_GIT_HOOKS=(vcs-detect-changes git-untracked git-aheadbehind git-stash git-remotebranch git-tagname)
-typeset -g POWERLEVEL9K_VCS_MAX_SYNC_LATENCY_SECONDS=0.05
-typeset -g POWERLEVEL9K_VCS_BACKENDS=(git)
-typeset -g POWERLEVEL9K_VCS_DISABLE_GITSTATUS_FORMATTING=false
-typeset -g POWERLEVEL9K_VCS_PREFIX='on '
-
-# Command execution time
-typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD=3
-typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_PRECISION=0
-typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_FORMAT='d h m s'
-typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_PREFIX='took '
-
-# Background jobs
-typeset -g POWERLEVEL9K_BACKGROUND_JOBS_VERBOSE=true
-typeset -g POWERLEVEL9K_BACKGROUND_JOBS_FOREGROUND=cyan
-
-# Status (exit code)
-typeset -g POWERLEVEL9K_STATUS_EXTENDED_STATES=true
-typeset -g POWERLEVEL9K_STATUS_OK=false
-typeset -g POWERLEVEL9K_STATUS_ERROR_FOREGROUND=red
-typeset -g POWERLEVEL9K_STATUS_ERROR_SIGNAL_FOREGROUND=red
-typeset -g POWERLEVEL9K_STATUS_ERROR_PIPE_FOREGROUND=red
-
-# Time
-typeset -g POWERLEVEL9K_TIME_FOREGROUND=white
-typeset -g POWERLEVEL9K_TIME_FORMAT='%D{%H:%M:%S}'
-typeset -g POWERLEVEL9K_TIME_UPDATE_ON_COMMAND=false
-
-# Python virtualenv
-typeset -g POWERLEVEL9K_VIRTUALENV_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_VIRTUALENV_SHOW_PYTHON_VERSION=true
-typeset -g POWERLEVEL9K_VIRTUALENV_SHOW_WITH_PYENV=false
-typeset -g POWERLEVEL9K_VIRTUALENV_{LEFT,RIGHT}_DELIMITER=''
-
-# Python anaconda
-typeset -g POWERLEVEL9K_ANACONDA_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_ANACONDA_SHOW_PYTHON_VERSION=true
-typeset -g POWERLEVEL9K_ANACONDA_{LEFT,RIGHT}_DELIMITER=''
-
-# Python pyenv
-typeset -g POWERLEVEL9K_PYENV_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_PYENV_PROMPT_ALWAYS_SHOW=false
-typeset -g POWERLEVEL9K_PYENV_SHOW_SYSTEM=true
-typeset -g POWERLEVEL9K_PYENV_CONTENT_EXPANSION='${P9K_CONTENT}${${P9K_PYENV_PYTHON_VERSION:#$P9K_CONTENT}:+ $P9K_PYENV_PYTHON_VERSION}'
-
-# Go version (goenv)
-typeset -g POWERLEVEL9K_GOENV_FOREGROUND=cyan
-typeset -g POWERLEVEL9K_GOENV_PROMPT_ALWAYS_SHOW=false
-typeset -g POWERLEVEL9K_GOENV_SHOW_SYSTEM=true
-
-# Node version managers
-typeset -g POWERLEVEL9K_NVM_FOREGROUND=green
-typeset -g POWERLEVEL9K_NODENV_FOREGROUND=green
-typeset -g POWERLEVEL9K_NODEENV_FOREGROUND=green
-typeset -g POWERLEVEL9K_NVM_PROMPT_ALWAYS_SHOW=false
-typeset -g POWERLEVEL9K_NODENV_PROMPT_ALWAYS_SHOW=false
-typeset -g POWERLEVEL9K_NODEENV_PROMPT_ALWAYS_SHOW=false
-typeset -g POWERLEVEL9K_NODENV_SHOW_SYSTEM=true
-
-# Ruby version managers
-typeset -g POWERLEVEL9K_RBENV_FOREGROUND=red
-typeset -g POWERLEVEL9K_RVM_FOREGROUND=red
-typeset -g POWERLEVEL9K_RBENV_PROMPT_ALWAYS_SHOW=false
-typeset -g POWERLEVEL9K_RVM_PROMPT_ALWAYS_SHOW=false
-typeset -g POWERLEVEL9K_RBENV_SHOW_SYSTEM=true
-
-# Kubernetes context
-typeset -g POWERLEVEL9K_KUBECONTEXT_SHOW_ON_COMMAND='kubectl|helm|kubens|kubectx|oc|istioctl|kogito|k9s|helmfile|flux|fluxctl|stern|kubeseal|skaffold'
-typeset -g POWERLEVEL9K_KUBECONTEXT_FOREGROUND=blue
-typeset -g POWERLEVEL9K_KUBECONTEXT_SHOW_DEFAULT_NAMESPACE=true
-typeset -g POWERLEVEL9K_KUBECONTEXT_PREFIX='at '
-
-# Terraform version
-typeset -g POWERLEVEL9K_TERRAFORM_SHOW_DEFAULT=false
-typeset -g POWERLEVEL9K_TERRAFORM_FOREGROUND=magenta
-typeset -g POWERLEVEL9K_TERRAFORM_CLASSES=(
-  '*prod*'  PROD
-  '*test*'  TEST
-  '*'       OTHER
-)
-typeset -g POWERLEVEL9K_TERRAFORM_OTHER_FOREGROUND=magenta
-typeset -g POWERLEVEL9K_TERRAFORM_PROD_FOREGROUND=red
-typeset -g POWERLEVEL9K_TERRAFORM_TEST_FOREGROUND=yellow
-
-# AWS profile
-typeset -g POWERLEVEL9K_AWS_SHOW_ON_COMMAND='aws|awless|terraform|pulumi|terragrunt'
-typeset -g POWERLEVEL9K_AWS_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_AWS_CLASSES=(
-  '*prod*'  PROD
-  '*test*'  TEST
-  '*'       OTHER
-)
-typeset -g POWERLEVEL9K_AWS_OTHER_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_AWS_PROD_FOREGROUND=red
-typeset -g POWERLEVEL9K_AWS_TEST_FOREGROUND=green
-
-# Direnv
-typeset -g POWERLEVEL9K_DIRENV_FOREGROUND=yellow
-
-# Transient prompt (show minimal prompt after command execution)
-typeset -g POWERLEVEL9K_TRANSIENT_PROMPT=off
-
-# Instant prompt settings
-typeset -g POWERLEVEL9K_INSTANT_PROMPT_COMMAND_LINES=1
-
-# Icons and glyphs
-typeset -g POWERLEVEL9K_ICON_PADDING=moderate
-typeset -g POWERLEVEL9K_ICON_BEFORE_CONTENT=true
-typeset -g POWERLEVEL9K_DIR_PREFIX='%fin '
-typeset -g POWERLEVEL9K_TIME_PREFIX='%fat '
+# Visual spacing
 typeset -g POWERLEVEL9K_VISUAL_IDENTIFIER_EXPANSION=''
+typeset -g POWERLEVEL9K_ICON_PADDING=none
 
-# Segment colors - using modern palette
-typeset -g POWERLEVEL9K_DIR_BACKGROUND=''
-typeset -g POWERLEVEL9K_VCS_CLEAN_BACKGROUND=''
-typeset -g POWERLEVEL9K_VCS_UNTRACKED_BACKGROUND=''
-typeset -g POWERLEVEL9K_VCS_MODIFIED_BACKGROUND=''
-typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_BACKGROUND=''
-typeset -g POWERLEVEL9K_BACKGROUND_JOBS_BACKGROUND=''
-typeset -g POWERLEVEL9K_TIME_BACKGROUND=''
-typeset -g POWERLEVEL9K_STATUS_ERROR_BACKGROUND=''
-typeset -g POWERLEVEL9K_VIRTUALENV_BACKGROUND=''
-typeset -g POWERLEVEL9K_ANACONDA_BACKGROUND=''
-typeset -g POWERLEVEL9K_PYENV_BACKGROUND=''
-typeset -g POWERLEVEL9K_GOENV_BACKGROUND=''
-typeset -g POWERLEVEL9K_NVM_BACKGROUND=''
-typeset -g POWERLEVEL9K_NODENV_BACKGROUND=''
-typeset -g POWERLEVEL9K_NODEENV_BACKGROUND=''
-typeset -g POWERLEVEL9K_RBENV_BACKGROUND=''
-typeset -g POWERLEVEL9K_RVM_BACKGROUND=''
-typeset -g POWERLEVEL9K_KUBECONTEXT_BACKGROUND=''
-typeset -g POWERLEVEL9K_TERRAFORM_BACKGROUND=''
-typeset -g POWERLEVEL9K_AWS_BACKGROUND=''
-typeset -g POWERLEVEL9K_DIRENV_BACKGROUND=''
-
-# Additional configuration
-typeset -g POWERLEVEL9K_SHOW_RULER=false
-typeset -g POWERLEVEL9K_RULER_CHAR='─'
-typeset -g POWERLEVEL9K_RULER_FOREGROUND=240
-
-# Disable default Oh My Zsh themes
-typeset -g POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=false
+# Transient prompt: off (you can set to 'always' for minimal prompt after execution)
+typeset -g POWERLEVEL9K_TRANSIENT_PROMPT=off
 
 # Apply configuration
 (( ! $+functions[p10k] )) || p10k reload
