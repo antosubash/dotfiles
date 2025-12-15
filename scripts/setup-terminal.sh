@@ -10,6 +10,7 @@ readonly DOTFILES_DIR="${DOTFILES_DIR:-$HOME/dotfiles}"
 readonly ZSH_DIR="$HOME/.oh-my-zsh"
 readonly ZSH_CUSTOM_DIR="$ZSH_DIR/custom"
 readonly P10K_DIR="$ZSH_CUSTOM_DIR/themes/powerlevel10k"
+readonly ALACRITTY_CONFIG_DIR="$HOME/.config/alacritty"
 readonly FONT_MESLO="MesloLGS NF"
 readonly OH_MY_ZSH_URL="https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
 readonly P10K_URL="https://github.com/romkatv/powerlevel10k.git"
@@ -191,6 +192,58 @@ configure_zsh() {
     fi
 }
 
+# Install Alacritty terminal emulator
+install_alacritty() {
+    print_info "Installing Alacritty terminal emulator..."
+    
+    if command -v alacritty &> /dev/null; then
+        print_status "Alacritty already installed"
+        return 0
+    fi
+    
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        if command -v brew &> /dev/null; then
+            print_info "Installing Alacritty via Homebrew..."
+            if brew install --cask alacritty 2>/dev/null; then
+                print_status "Alacritty installed"
+            else
+                print_warning "Failed to install Alacritty (may already be installed)"
+            fi
+        else
+            print_warning "Homebrew not found. Please install Alacritty manually"
+            print_info "Visit: https://github.com/alacritty/alacritty"
+        fi
+    elif command -v apt &> /dev/null; then
+        print_info "Installing Alacritty via apt..."
+        if sudo apt install -y alacritty 2>/dev/null; then
+            print_status "Alacritty installed"
+        else
+            print_warning "Failed to install Alacritty. Please install manually"
+            print_info "Visit: https://github.com/alacritty/alacritty"
+        fi
+    else
+        print_warning "Package manager not found. Please install Alacritty manually"
+        print_info "Visit: https://github.com/alacritty/alacritty"
+    fi
+}
+
+# Configure Alacritty
+configure_alacritty() {
+    print_info "Configuring Alacritty..."
+    
+    local alacritty_config="$ALACRITTY_CONFIG_DIR/alacritty.toml"
+    local dotfiles_alacritty="$DOTFILES_DIR/config/alacritty.toml"
+    
+    # Create symlink for Alacritty config
+    if [[ -f "$dotfiles_alacritty" ]]; then
+        backup_and_symlink "$dotfiles_alacritty" "$alacritty_config"
+        print_status "Alacritty config symlinked"
+    else
+        print_warning "Alacritty config not found in dotfiles"
+        print_info "You can configure Alacritty manually at $alacritty_config"
+    fi
+}
+
 # Install essential CLI tools
 install_essential_tools() {
     print_info "Installing essential CLI tools..."
@@ -266,6 +319,8 @@ main() {
     
     install_fonts
     configure_zsh
+    install_alacritty
+    configure_alacritty
     install_essential_tools
     
     echo ""
@@ -273,11 +328,12 @@ main() {
         print_status "✨ Terminal setup complete!"
         echo ""
         print_info "📋 Next steps:"
-        echo "   1. Set your terminal font to '$FONT_MESLO' (Regular, size 12-14)"
-        echo "   2. Restart your terminal or run: source ~/.zshrc"
-        echo "   3. Run 'p10k configure' to customize your prompt (or use the default)"
-        echo "   4. Apply Catppuccin Mocha colors from config/terminal-colors.md"
-        echo "   5. Enjoy your improved terminal!"
+        echo "   1. If using iTerm2/Terminal: Set font to '$FONT_MESLO' (Regular, size 12-14)"
+        echo "   2. If using Alacritty: Launch it - it's already configured with font & theme!"
+        echo "   3. Restart your terminal or run: source ~/.zshrc"
+        echo "   4. Run 'p10k configure' to customize your prompt (or use the default)"
+        echo "   5. For non-Alacritty terminals: Apply colors from config/terminal-colors.md"
+        echo "   6. Enjoy your improved terminal!"
         echo ""
     else
         print_warning "Setup completed with some issues. Please review the output above."

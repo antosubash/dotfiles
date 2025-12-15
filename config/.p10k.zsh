@@ -34,66 +34,66 @@ typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(
 )
 
 # ============================================================================
-# SEGMENT COLORS (Rainbow Style)
+# SEGMENT COLORS (Rainbow Style with Backgrounds)
 # ============================================================================
 
-# OS Icon: Bold white (no background)
+# OS Icon: White text on dark gray background
 typeset -g POWERLEVEL9K_OS_ICON_FOREGROUND=white
-typeset -g POWERLEVEL9K_OS_ICON_BACKGROUND=''
+typeset -g POWERLEVEL9K_OS_ICON_BACKGROUND=238
 
-# Context (user@host): Yellow (no background)
-typeset -g POWERLEVEL9K_CONTEXT_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_CONTEXT_BACKGROUND=''
-typeset -g POWERLEVEL9K_CONTEXT_ROOT_FOREGROUND=red
-typeset -g POWERLEVEL9K_CONTEXT_ROOT_BACKGROUND=''
+# Context (user@host): Black text on yellow background
+typeset -g POWERLEVEL9K_CONTEXT_FOREGROUND=black
+typeset -g POWERLEVEL9K_CONTEXT_BACKGROUND=yellow
+typeset -g POWERLEVEL9K_CONTEXT_ROOT_FOREGROUND=white
+typeset -g POWERLEVEL9K_CONTEXT_ROOT_BACKGROUND=red
 typeset -g POWERLEVEL9K_CONTEXT_TEMPLATE='%n@%m'  # user@hostname
 
-# Directory: Blue (no background)
-typeset -g POWERLEVEL9K_DIR_FOREGROUND=blue
-typeset -g POWERLEVEL9K_DIR_BACKGROUND=''
+# Directory: Black text on blue background
+typeset -g POWERLEVEL9K_DIR_FOREGROUND=black
+typeset -g POWERLEVEL9K_DIR_BACKGROUND=blue
 
-# Git: Green (clean), Yellow (modified), Magenta (untracked) - no backgrounds
-typeset -g POWERLEVEL9K_VCS_CLEAN_FOREGROUND=green
-typeset -g POWERLEVEL9K_VCS_CLEAN_BACKGROUND=''
-typeset -g POWERLEVEL9K_VCS_MODIFIED_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_VCS_MODIFIED_BACKGROUND=''
-typeset -g POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND=magenta
-typeset -g POWERLEVEL9K_VCS_UNTRACKED_BACKGROUND=''
+# Git: Dark text on colored backgrounds
+typeset -g POWERLEVEL9K_VCS_CLEAN_FOREGROUND=black
+typeset -g POWERLEVEL9K_VCS_CLEAN_BACKGROUND=green
+typeset -g POWERLEVEL9K_VCS_MODIFIED_FOREGROUND=black
+typeset -g POWERLEVEL9K_VCS_MODIFIED_BACKGROUND=yellow
+typeset -g POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND=white
+typeset -g POWERLEVEL9K_VCS_UNTRACKED_BACKGROUND=magenta
 
-# Prompt char: Cyan (ok), Red (error) - no background
+# Prompt char: Colored text, no background
 typeset -g POWERLEVEL9K_PROMPT_CHAR_OK_{VIINS,VICMD,VIVIS}_FOREGROUND=cyan
 typeset -g POWERLEVEL9K_PROMPT_CHAR_ERROR_{VIINS,VICMD,VIVIS}_FOREGROUND=red
 typeset -g POWERLEVEL9K_PROMPT_CHAR_{OK,ERROR}_VIINS_CONTENT_EXPANSION='❯'
 typeset -g POWERLEVEL9K_PROMPT_CHAR_BACKGROUND=''
 
-# Command execution time: Yellow (no background)
-typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_BACKGROUND=''
+# Command execution time: Black text on yellow background
+typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_FOREGROUND=black
+typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_BACKGROUND=yellow
 typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD=3
 
-# Background jobs: Magenta (no background)
-typeset -g POWERLEVEL9K_BACKGROUND_JOBS_FOREGROUND=magenta
-typeset -g POWERLEVEL9K_BACKGROUND_JOBS_BACKGROUND=''
+# Background jobs: White text on magenta background
+typeset -g POWERLEVEL9K_BACKGROUND_JOBS_FOREGROUND=white
+typeset -g POWERLEVEL9K_BACKGROUND_JOBS_BACKGROUND=magenta
 
-# Python virtualenv: Yellow (no background)
-typeset -g POWERLEVEL9K_VIRTUALENV_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_VIRTUALENV_BACKGROUND=''
+# Python virtualenv: Black text on yellow background
+typeset -g POWERLEVEL9K_VIRTUALENV_FOREGROUND=black
+typeset -g POWERLEVEL9K_VIRTUALENV_BACKGROUND=yellow
 
-# Python pyenv: Yellow (no background)
-typeset -g POWERLEVEL9K_PYENV_FOREGROUND=yellow
-typeset -g POWERLEVEL9K_PYENV_BACKGROUND=''
+# Python pyenv: Black text on yellow background
+typeset -g POWERLEVEL9K_PYENV_FOREGROUND=black
+typeset -g POWERLEVEL9K_PYENV_BACKGROUND=yellow
 
-# Node (nvm): Green (no background)
-typeset -g POWERLEVEL9K_NVM_FOREGROUND=green
-typeset -g POWERLEVEL9K_NVM_BACKGROUND=''
+# Node (nvm): Black text on green background
+typeset -g POWERLEVEL9K_NVM_FOREGROUND=black
+typeset -g POWERLEVEL9K_NVM_BACKGROUND=green
 
-# Time: Blue (no background)
-typeset -g POWERLEVEL9K_TIME_FOREGROUND=blue
-typeset -g POWERLEVEL9K_TIME_BACKGROUND=''
+# Time: Black text on blue background
+typeset -g POWERLEVEL9K_TIME_FOREGROUND=black
+typeset -g POWERLEVEL9K_TIME_BACKGROUND=blue
 
-# Status (error code): Red (no background)
-typeset -g POWERLEVEL9K_STATUS_ERROR_FOREGROUND=red
-typeset -g POWERLEVEL9K_STATUS_ERROR_BACKGROUND=''
+# Status (error code): White text on red background
+typeset -g POWERLEVEL9K_STATUS_ERROR_FOREGROUND=white
+typeset -g POWERLEVEL9K_STATUS_ERROR_BACKGROUND=red
 typeset -g POWERLEVEL9K_STATUS_OK=false  # Hide status when ok
 
 # ============================================================================
@@ -114,11 +114,11 @@ typeset -g POWERLEVEL9K_DIR_PREFIX=''
 typeset -g POWERLEVEL9K_VCS_PREFIX=''
 typeset -g POWERLEVEL9K_TIME_PREFIX=''
 
-# Segment separators (comfortable spacing for rainbow style)
-typeset -g POWERLEVEL9K_LEFT_SEGMENT_SEPARATOR='  '
-typeset -g POWERLEVEL9K_RIGHT_SEGMENT_SEPARATOR='  '
-typeset -g POWERLEVEL9K_LEFT_SUBSEGMENT_SEPARATOR=' '
-typeset -g POWERLEVEL9K_RIGHT_SUBSEGMENT_SEPARATOR=' '
+# Segment separators (powerline arrows for classic look)
+typeset -g POWERLEVEL9K_LEFT_SEGMENT_SEPARATOR=''
+typeset -g POWERLEVEL9K_RIGHT_SEGMENT_SEPARATOR=''
+typeset -g POWERLEVEL9K_LEFT_SUBSEGMENT_SEPARATOR='|'
+typeset -g POWERLEVEL9K_RIGHT_SUBSEGMENT_SEPARATOR='|'
 
 # Visual spacing
 typeset -g POWERLEVEL9K_VISUAL_IDENTIFIER_EXPANSION=''

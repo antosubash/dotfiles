@@ -107,11 +107,24 @@ if [[ -f "${ZDOTDIR:-$HOME}/.p10k.zsh" ]]; then
     source "${ZDOTDIR:-$HOME}/.p10k.zsh"
 fi
 
-# Show startup time if significant (only in interactive shells)
+# Show startup time after first prompt (only if instant prompt is not active)
 if [[ -o interactive ]] && [[ -n "$ZSHRC_START_TIME" ]] && command -v bc &> /dev/null; then
-    local end_time=$(date +%s.%N 2>/dev/null || echo "0")
-    local duration=$(echo "$end_time - $ZSHRC_START_TIME" | bc 2>/dev/null || echo "0")
-    if (( $(echo "$duration > 0.1" | bc -l 2>/dev/null || echo 0) )); then
-        echo "⚡ Zsh loaded in ${duration}s"
+    # Skip startup time display when Powerlevel10k instant prompt is active
+    if [[ "${POWERLEVEL9K_INSTANT_PROMPT-}" != "off" ]] && [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+        # Instant prompt is active, skip the startup time display to avoid console output
+        :
+    else
+        _show_startup_time_once() {
+            local end_time=$(date +%s.%N 2>/dev/null || echo "0")
+            local duration=$(echo "$end_time - $ZSHRC_START_TIME" | bc 2>/dev/null || echo "0")
+            if (( $(echo "$duration > 0.1" | bc -l 2>/dev/null || echo 0) )); then
+                echo "⚡ Zsh loaded in ${duration}s"
+            fi
+            # Remove this function after first run
+            unfunction _show_startup_time_once
+            precmd_functions=(${precmd_functions:#_show_startup_time_once})
+        }
+        # Add to precmd hooks to run after first prompt
+        precmd_functions+=(_show_startup_time_once)
     fi
 fi
