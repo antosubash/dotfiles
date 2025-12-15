@@ -16,6 +16,14 @@ else
     echo "Basic system tools are already installed."
 fi
 
+# Install Neovim
+echo "Installing Neovim..."
+if ! command -v nvim &> /dev/null; then
+    sudo apt install -y neovim
+else
+    echo "Neovim is already installed."
+fi
+
 # Install development environments
 echo "Installing development environments..."
 if ! command -v python3 &> /dev/null || ! command -v java &> /dev/null; then
@@ -441,6 +449,11 @@ fi
 echo "ripgrep: $(rg --version)"
 echo "fd: $(fd --version)"
 echo "tmux: $(tmux -V)"
+if command -v nvim &> /dev/null; then
+    echo "Neovim: $(nvim --version | head -n 1)"
+else
+    echo "Neovim: Not found in PATH"
+fi
 if command -v gdalinfo &> /dev/null; then
     echo "GDAL: $(gdalinfo --version)"
 else

@@ -74,6 +74,10 @@ backup_and_symlink "$DOTFILES_DIR/vim/.vimrc" "$HOME/.vimrc"
 # Create directories for vim
 mkdir -p "$HOME/.vim/autoload" "$HOME/.vim/bundle"
 
+# Neovim configuration
+NVIM_CONFIG_DIR="$HOME/.config/nvim"
+backup_and_symlink "$DOTFILES_DIR/nvim/init.lua" "$NVIM_CONFIG_DIR/init.lua"
+
 # Powerlevel10k configuration
 if [ -f "$DOTFILES_DIR/config/.p10k.zsh" ]; then
     backup_and_symlink "$DOTFILES_DIR/config/.p10k.zsh" "$HOME/.p10k.zsh"
