@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Terminal Setup Script with Default Agnoster Theme
+# Terminal Setup Script with Powerlevel10k Theme
 # Essential setup for modern terminal experience
 
 set -e
@@ -9,8 +9,10 @@ set -e
 readonly DOTFILES_DIR="${DOTFILES_DIR:-$HOME/dotfiles}"
 readonly ZSH_DIR="$HOME/.oh-my-zsh"
 readonly ZSH_CUSTOM_DIR="$ZSH_DIR/custom"
-readonly FONT_MESLO="Meslo LG Nerd Font"
+readonly P10K_DIR="$ZSH_CUSTOM_DIR/themes/powerlevel10k"
+readonly FONT_MESLO="MesloLGS NF"
 readonly OH_MY_ZSH_URL="https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
+readonly P10K_URL="https://github.com/romkatv/powerlevel10k.git"
 
 # Colors for output
 readonly GREEN='\033[0;32m'
@@ -103,31 +105,64 @@ check_dependencies() {
         git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUSTOM_DIR/plugins/zsh-syntax-highlighting" 2>/dev/null || print_warning "Failed to install zsh-syntax-highlighting"
     fi
     
+    # Install Powerlevel10k theme
+    if [[ ! -d "$P10K_DIR" ]]; then
+        print_info "Installing Powerlevel10k theme..."
+        if git clone --depth=1 "$P10K_URL" "$P10K_DIR" 2>/dev/null; then
+            print_status "Powerlevel10k installed"
+        else
+            print_warning "Failed to install Powerlevel10k"
+        fi
+    else
+        print_status "Powerlevel10k already installed"
+    fi
+    
     print_status "Dependencies checked"
 }
 
-# Install required fonts for Agnoster
+# Install required fonts for Powerlevel10k
 install_fonts() {
-    print_info "Installing fonts for Agnoster theme..."
+    print_info "Installing fonts for Powerlevel10k theme..."
     
     if [[ "$OSTYPE" == "darwin"* ]]; then
         if command -v brew &> /dev/null; then
+            # Try to install font-meslo-lg-nerd-font (contains MesloLGS NF)
             if brew install --cask font-meslo-lg-nerd-font 2>/dev/null; then
                 print_status "$FONT_MESLO installed via Homebrew"
             else
-                print_warning "Failed to install $FONT_MESLO via Homebrew"
+                print_warning "Failed to install $FONT_MESLO via Homebrew (may already be installed)"
             fi
         else
             print_warning "Homebrew not found. Please install $FONT_MESLO manually"
+            print_info "You can download fonts from: https://github.com/romkatv/powerlevel10k#fonts"
         fi
     else
         # Linux font installation
         FONT_DIR="$HOME/.local/share/fonts"
         mkdir -p "$FONT_DIR"
-        print_info "For Linux, please install $FONT_MESLO manually or use your package manager"
+        
+        print_info "Downloading MesloLGS NF fonts for Linux..."
+        local font_urls=(
+            "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Regular.ttf"
+            "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold.ttf"
+            "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Italic.ttf"
+            "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold%20Italic.ttf"
+        )
+        
+        for url in "${font_urls[@]}"; do
+            local filename=$(basename "$url" | sed 's/%20/ /g')
+            if [[ ! -f "$FONT_DIR/$filename" ]]; then
+                if curl -fLo "$FONT_DIR/$filename" "$url" 2>/dev/null; then
+                    print_status "Downloaded $filename"
+                else
+                    print_warning "Failed to download $filename"
+                fi
+            fi
+        done
     fi
     
     if command -v fc-cache &> /dev/null; then
+        print_info "Refreshing font cache..."
         fc-cache -fv 2>/dev/null || true
     fi
 }
@@ -138,11 +173,21 @@ configure_zsh() {
     
     local zshrc_file="$HOME/.zshrc"
     local dotfiles_zshrc="$DOTFILES_DIR/shell/.zshrc"
+    local p10k_config="$HOME/.p10k.zsh"
+    local dotfiles_p10k="$DOTFILES_DIR/config/.p10k.zsh"
     
     # Create symlink for .zshrc
     if [[ -f "$dotfiles_zshrc" ]]; then
         backup_and_symlink "$dotfiles_zshrc" "$zshrc_file"
         print_status "Dotfiles .zshrc symlinked"
+    fi
+    
+    # Create symlink for .p10k.zsh if it exists
+    if [[ -f "$dotfiles_p10k" ]]; then
+        backup_and_symlink "$dotfiles_p10k" "$p10k_config"
+        print_status "Powerlevel10k config symlinked"
+    else
+        print_warning ".p10k.zsh config not found. You can run 'p10k configure' after setup."
     fi
 }
 
@@ -210,8 +255,8 @@ verify_installation() {
 
 # Main installation
 main() {
-    echo "🎨 Setting up Terminal with Agnoster Theme"
-    echo "=========================================="
+    echo "🎨 Setting up Terminal with Powerlevel10k Theme"
+    echo "================================================"
     echo ""
     
     if ! check_dependencies; then
@@ -228,9 +273,11 @@ main() {
         print_status "✨ Terminal setup complete!"
         echo ""
         print_info "📋 Next steps:"
-        echo "   1. Set your terminal font to '$FONT_MESLO'"
+        echo "   1. Set your terminal font to '$FONT_MESLO' (Regular, size 12-14)"
         echo "   2. Restart your terminal or run: source ~/.zshrc"
-        echo "   3. Enjoy your improved terminal!"
+        echo "   3. Run 'p10k configure' to customize your prompt (or use the default)"
+        echo "   4. Apply Catppuccin Mocha colors from config/terminal-colors.md"
+        echo "   5. Enjoy your improved terminal!"
         echo ""
     else
         print_warning "Setup completed with some issues. Please review the output above."

@@ -74,6 +74,12 @@ backup_and_symlink "$DOTFILES_DIR/vim/.vimrc" "$HOME/.vimrc"
 # Create directories for vim
 mkdir -p "$HOME/.vim/autoload" "$HOME/.vim/bundle"
 
+# Powerlevel10k configuration
+if [ -f "$DOTFILES_DIR/config/.p10k.zsh" ]; then
+    backup_and_symlink "$DOTFILES_DIR/config/.p10k.zsh" "$HOME/.p10k.zsh"
+    echo "Powerlevel10k configuration installed"
+fi
+
 # Zsh and Oh My Zsh setup
 setup_zsh() {
     if [ "$SHELL_TYPE" = "zsh" ]; then
@@ -98,6 +104,15 @@ setup_zsh() {
         if [ ! -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]; then
             echo "Installing zsh-syntax-highlighting..."
             git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+        fi
+        
+        # Install Powerlevel10k theme
+        if [ ! -d "$ZSH_CUSTOM/themes/powerlevel10k" ]; then
+            echo "Installing Powerlevel10k theme..."
+            git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$ZSH_CUSTOM/themes/powerlevel10k"
+            echo "Powerlevel10k installed"
+        else
+            echo "Powerlevel10k already installed"
         fi
         
         # Ensure plugins are properly configured in .zshrc
@@ -132,8 +147,14 @@ fi
 setup_zsh
 
 echo "Dotfiles installation complete!"
+echo ""
+echo "Next steps:"
 if [ "$SHELL_TYPE" = "zsh" ]; then
-    echo "Restart your shell or run 'source ~/.zshrc' to apply changes."
+    echo "  1. Install terminal font 'MesloLGS NF' (run scripts/setup-terminal.sh)"
+    echo "  2. Apply Catppuccin Mocha colors from config/terminal-colors.md"
+    echo "  3. Restart your shell or run 'source ~/.zshrc'"
+    echo "  4. Run 'p10k configure' to customize your prompt (optional)"
 else
-    echo "Restart your shell or run 'source ~/.bashrc' to apply changes."
+    echo "  1. Restart your shell or run 'source ~/.bashrc' to apply changes"
+    echo "  2. Consider switching to Zsh for enhanced features"
 fi

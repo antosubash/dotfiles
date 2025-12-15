@@ -2,6 +2,13 @@
 # Zsh configuration - Optimized for development
 # Modular structure for better maintainability
 
+# Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
+# Initialization code that may require console input (password prompts, [y/n]
+# confirmations, etc.) must go above this block; everything else may go below.
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
 # Track startup time for performance monitoring
 export ZSHRC_START_TIME=$(date +%s.%N 2>/dev/null || echo "0")
 
@@ -39,6 +46,8 @@ fi
 
 # Oh My Zsh configuration
 export ZSH="${ZSH_DIR:-$HOME/.oh-my-zsh}"
+ZSH_THEME="powerlevel10k/powerlevel10k"
+
 plugins=(
     git
     zsh-autosuggestions
@@ -91,6 +100,11 @@ fi
 # Load local environment
 if [[ -f "${ENV_FILE:-$HOME/.local/bin/env}" ]]; then
     source "${ENV_FILE:-$HOME/.local/bin/env}"
+fi
+
+# Load Powerlevel10k configuration
+if [[ -f "${ZDOTDIR:-$HOME}/.p10k.zsh" ]]; then
+    source "${ZDOTDIR:-$HOME}/.p10k.zsh"
 fi
 
 # Show startup time if significant (only in interactive shells)

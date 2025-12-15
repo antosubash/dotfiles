@@ -1,28 +1,77 @@
-# Terminal color schemes
+# Terminal Color Schemes
 
-## macOS Terminal Theme
-# Copy this to Terminal > Preferences > Profiles > Text
+## Catppuccin Mocha (Dark Theme)
+A modern, warm dark theme with excellent readability and syntax highlighting.
+Popular among developers with carefully balanced colors.
 
-# Name: Dev Theme
-# ANSI Colors:
-#   Black:      #2E3440
-#   Red:        #BF616A
-#   Green:      #A3BE8C
-#   Yellow:     #EBCB8B
-#   Blue:       #5E81AC
-#   Magenta:    #B48EAD
-#   Cyan:       #88C0D0
-#   White:      #E5E9F0
-#   Bright Black:  #4C566A
-#   Bright Red:    #D08770
-#   Bright Green:  #8FBCBB
-#   Bright Yellow: #EBCB8B
-#   Bright Blue:   #81A1C1
-#   Bright Magenta:#B48EAD
-#   Bright Cyan:   #8FBCBB
-#   Bright White:  #ECEFF4
+### macOS Terminal / iTerm2
+Copy these values to Terminal > Preferences > Profiles > Colors
 
-# Background: #2E3440
-# Text: #E5E9F0
-# Bold Text: #ECEFF4
-# Cursor: #88C0D0
+**Basic Colors:**
+- Background: `#1E1E2E` (Base)
+- Foreground: `#CDD6F4` (Text)
+- Bold Text: `#CDD6F4`
+- Cursor: `#F5E0DC` (Rosewater)
+- Cursor Text: `#1E1E2E`
+- Selection: `#585B70` (Surface2)
+- Selection Text: `#CDD6F4`
+
+**ANSI Colors:**
+- Black: `#45475A` (Surface1)
+- Red: `#F38BA8` (Red)
+- Green: `#A6E3A1` (Green)
+- Yellow: `#F9E2AF` (Yellow)
+- Blue: `#89B4FA` (Blue)
+- Magenta: `#F5C2E7` (Pink)
+- Cyan: `#94E2D5` (Teal)
+- White: `#BAC2DE` (Subtext1)
+
+**Bright ANSI Colors:**
+- Bright Black: `#585B70` (Surface2)
+- Bright Red: `#F38BA8` (Red)
+- Bright Green: `#A6E3A1` (Green)
+- Bright Yellow: `#F9E2AF` (Yellow)
+- Bright Blue: `#89B4FA` (Blue)
+- Bright Magenta: `#F5C2E7` (Pink)
+- Bright Cyan: `#94E2D5` (Teal)
+- Bright White: `#A6ADC8` (Subtext0)
+
+### For iTerm2 Users
+You can also import the official Catppuccin theme:
+1. Visit: https://github.com/catppuccin/iterm
+2. Download the Mocha variant
+3. Import via iTerm2 > Preferences > Profiles > Colors > Color Presets > Import
+
+### For Alacritty Users
+Add to `~/.config/alacritty/alacritty.yml`:
+```yaml
+colors:
+  primary:
+    background: '#1E1E2E'
+    foreground: '#CDD6F4'
+  cursor:
+    text: '#1E1E2E'
+    cursor: '#F5E0DC'
+  normal:
+    black: '#45475A'
+    red: '#F38BA8'
+    green: '#A6E3A1'
+    yellow: '#F9E2AF'
+    blue: '#89B4FA'
+    magenta: '#F5C2E7'
+    cyan: '#94E2D5'
+    white: '#BAC2DE'
+  bright:
+    black: '#585B70'
+    red: '#F38BA8'
+    green: '#A6E3A1'
+    yellow: '#F9E2AF'
+    blue: '#89B4FA'
+    magenta: '#F5C2E7'
+    cyan: '#94E2D5'
+    white: '#A6ADC8'
+```
+
+### Additional Resources
+- Official Catppuccin website: https://catppuccin.com
+- Full color palette reference: https://github.com/catppuccin/catppuccin
