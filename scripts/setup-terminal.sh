@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Terminal Setup Script with Enhanced Agnoster Theme
+# Terminal Setup Script with Default Agnoster Theme
 # Essential setup for modern terminal experience
 
 set -e
@@ -64,21 +64,13 @@ install_fonts() {
     fi
 }
 
-# Configure zsh to use enhanced agnoster theme
+# Configure zsh to use default agnoster theme
 configure_zsh_theme() {
-    print_info "Configuring Zsh to use enhanced Agnoster theme..."
+    print_info "Configuring Zsh to use default Agnoster theme..."
     
     if [[ -f "$HOME/.zshrc" ]]; then
         cp "$HOME/.zshrc" "$HOME/.zshrc.backup.$(date +%Y%m%d_%H%M%S)"
         print_status "Current .zshrc backed up"
-    fi
-    
-    local custom_themes_dir="$HOME/.oh-my-zsh/custom/themes"
-    mkdir -p "$custom_themes_dir"
-    
-    if [[ -f "$HOME/dotfiles/shell/agnoster.zsh-theme" ]]; then
-        cp "$HOME/dotfiles/shell/agnoster.zsh-theme" "$custom_themes_dir/agnoster.zsh-theme"
-        print_status "Enhanced Agnoster theme installed"
     fi
     
     if [[ -f "$HOME/dotfiles/shell/.zshrc" ]]; then
@@ -94,11 +86,11 @@ configure_zsh_theme() {
         
         if [[ -f "$HOME/.zshrc" ]] && ! grep -q "agnoster-config.zsh" "$HOME/.zshrc"; then
             echo "" >> "$HOME/.zshrc"
-            echo "# Enhanced Agnoster theme configuration" >> "$HOME/.zshrc"
+            echo "# Agnoster theme configuration" >> "$HOME/.zshrc"
             echo "source \$HOME/.oh-my-zsh/custom/agnoster-config.zsh" >> "$HOME/.zshrc"
         fi
         
-        print_status "Enhanced Agnoster configuration copied"
+        print_status "Agnoster configuration copied"
     fi
 }
 
@@ -127,8 +119,8 @@ install_essential_tools() {
 
 # Main installation
 main() {
-    echo "🎨 Setting up Terminal with Enhanced Agnoster Theme"
-    echo "=================================================="
+    echo "🎨 Setting up Terminal with Default Agnoster Theme"
+    echo "===================================================="
     echo ""
     
     check_dependencies
@@ -144,7 +136,7 @@ main() {
     echo "   2. Restart your terminal"
     echo "   3. Run: source ~/.zshrc"
     echo ""
-    print_info "🚀 Enjoy your enhanced terminal!"
+    print_info "🚀 Enjoy your terminal!"
 }
 
 # Run main function
