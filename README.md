@@ -21,7 +21,13 @@ dotfiles/
 
 1. Clone this repository:
 ```bash
-git clone <repository-url> ~/dotfiles
+git clone https://github.com/antosubash/dotfiles ~/dotfiles
+```
+
+2. Run the installation script:
+```bash
+cd ~/dotfiles
+./install.sh
 ```
 
 2. Run the installation script:
