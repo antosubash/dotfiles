@@ -5,10 +5,10 @@ A comprehensive cross-platform development environment setup with automated inst
 ## 🚀 Quick Start
 
 ```bash
-# 1. Clone the repository
+# 1. Clone repository
 git clone https://github.com/antosubash/dotfiles ~/dotfiles
 
-# 2. Run the installation
+# 2. Run installation
 cd ~/dotfiles
 ./install.sh
 
@@ -71,11 +71,13 @@ source ~/.zshrc  # or ~/.bashrc on Ubuntu
 Choose your platform:
 
 #### macOS
+
 ```bash
 ./scripts/setup-macos.sh
 ```
 
 #### Ubuntu/Linux
+
 ```bash
 ./scripts/setup-ubuntu.sh
 ```
@@ -94,15 +96,17 @@ Choose your platform:
 ### 3. Shell Theme Setup
 
 #### Agnoster Theme (Recommended)
+
 ```bash
 # Install Agnoster theme with fonts
-./scripts/setup/setup-agnoster.sh
+./scripts/setup-agnoster.sh
 
 # Set terminal font to "Meslo LG Nerd Font"
 # Restart terminal
 ```
 
 #### Custom Terminal Themes
+
 ```bash
 # Configure terminal colors
 ./scripts/setup-terminal.sh
@@ -123,6 +127,7 @@ update-manager  # Interactive manager
 ## 🎯 Available Commands
 
 ### Update Commands
+
 ```bash
 update              # Full update of all tools
 update-quick        # Fast daily updates (package managers only)
@@ -136,6 +141,7 @@ upc                 # Cleanup alias
 ```
 
 ### Development Shortcuts
+
 ```bash
 # Git
 gs, ga, gc, gp, gl  # Git status, add, commit, push, log
@@ -154,6 +160,7 @@ extract              # Universal archive extractor
 ```
 
 ### Utility Functions
+
 ```bash
 backup <file>        # Create timestamped backup
 server [port]        # Start quick web server
@@ -164,6 +171,7 @@ replace <search> <replace> <dir>  # Find and replace
 ## 🎨 Shell Customization
 
 ### Agnoster Theme Features
+
 - **Smart Context**: Shows user@host only for SSH
 - **Git Integration**: Branch status, dirty/clean indicators  
 - **Development Tools**: Node.js, Rust, Go detection
@@ -172,6 +180,7 @@ replace <search> <replace> <dir>  # Find and replace
 - **Status Indicators**: Error codes, background jobs
 
 ### Customizing Theme
+
 Edit `~/dotfiles/shell/agnoster-config.zsh`:
 
 ```bash
@@ -185,11 +194,13 @@ export AGNOSTER_GIT_CLEAN_SYMBOL=" ✓"
 ```
 
 ### Terminal Colors
-Use the Nordic color scheme in `config/terminal-colors.md` for consistency.
+
+Use Nordic color scheme in `config/terminal-colors.md` for consistency.
 
 ## 🔄 Maintenance
 
 ### Daily Usage
+
 ```bash
 # Quick daily update
 update-quick
@@ -198,7 +209,8 @@ update-quick
 update-manager status
 ```
 
-### Weekly Maintenance  
+### Weekly Maintenance
+
 ```bash
 # Full system update
 update
@@ -208,6 +220,7 @@ update --cleanup
 ```
 
 ### Manual Updates
+
 ```bash
 # Package managers only
 brew update && brew upgrade    # macOS
@@ -224,12 +237,14 @@ rustup update                 # Rust
 This dotfiles setup works seamlessly on:
 
 ### macOS
+
 - 🍎 Homebrew package management
 - 🖥️ Terminal.app and iTerm2 support
 - 💼 Cocoa application installation
 - 🔤 Native font management
 
 ### Ubuntu/Linux
+
 - 🐧 APT package management
 - 📦 Snap and Flatpak support
 - 🔧 System service management
@@ -245,14 +260,16 @@ This dotfiles setup works seamlessly on:
 
 ### Common Issues
 
-**Font Issues with Agnoster:**
+#### Font Issues with Agnoster
+
 ```bash
 # Install required fonts
 ./scripts/setup-agnoster.sh
 # Set terminal font to "Meslo LG Nerd Font"
 ```
 
-**Command Not Found:**
+#### Command Not Found
+
 ```bash
 # Reinstall update commands
 ./scripts/setup-update.sh
@@ -260,13 +277,15 @@ This dotfiles setup works seamlessly on:
 source ~/.zshrc
 ```
 
-**Permission Denied:**
+#### Permission Denied
+
 ```bash
 # Make scripts executable
 chmod +x ~/dotfiles/scripts/*.sh
 ```
 
-**Oh My Zsh Issues:**
+#### Oh My Zsh Issues
+
 ```bash
 # Reinstall Oh My Zsh
 sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
@@ -274,18 +293,21 @@ sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.
 
 ### Getting Help
 
-**Update Manager:**
+#### Update Manager
+
 ```bash
 update-manager help  # Show all update options
 ```
 
-**Script Help:**
+#### Script Help
+
 ```bash
 ./scripts/setup-macos.sh --help
 ./scripts/update-all.sh --help
 ```
 
-**Check Versions:**
+#### Check Versions
+
 ```bash
 update-manager status  # Check all tool versions
 ```
@@ -293,6 +315,7 @@ update-manager status  # Check all tool versions
 ## 📚 Advanced Usage
 
 ### Custom Aliases
+
 Add to `~/.zshrc.local`:
 
 ```bash
@@ -302,6 +325,7 @@ alias test="./scripts/test.sh"
 ```
 
 ### Environment Variables
+
 Add to `~/.local/bin/env`:
 
 ```bash
@@ -311,6 +335,7 @@ export DATABASE_URL="postgresql://..."
 ```
 
 ### Project Templates
+
 Create project templates in `~/dotfiles/templates/` for quick scaffolding.
 
 ## 🤝 Contributing
@@ -337,11 +362,3 @@ You now have a powerful, cross-platform development setup with:
 - 📦 Intelligent package management
 
 Happy coding! 🚀
-
-## Customization
-
-Feel free to modify any configuration files to suit your preferences. After making changes, run the installation script again to update the symlinks.
-
-## Backup
-
-The installation script automatically creates backups of existing configuration files in `~/.dotfiles_backup`.
