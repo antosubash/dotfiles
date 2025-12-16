@@ -113,8 +113,8 @@ update_dev_environments() {
             log_success "npm global packages updated"
         else
             if echo "$npm_output" | grep -q "EACCES\|permission denied"; then
-                log_warning "npm update requires elevated permissions. Skipping npm update."
-                log_info "To update npm, run: sudo npm install -g npm@latest"
+                # Silently skip if permission denied (npm installed system-wide)
+                log_info "Skipping npm update (requires elevated permissions)"
             else
                 log_warning "npm update failed, continuing with other updates..."
             fi
@@ -150,7 +150,7 @@ update_dev_environments() {
     # Python
     if command_exists pip3; then
         log_info "Updating pip3 packages..."
-        pip3 list --outdated --format=freeze | grep -v '^\-e' | cut -d = -f 1 | xargs -r pip3 install -U || true
+        pip3 list --outdated 2>/dev/null | tail -n +3 | awk '{print $1}' | xargs -r pip3 install -U 2>&1 || true
         log_success "pip3 packages updated"
     fi
     
@@ -182,17 +182,7 @@ update_dev_environments() {
             log_success "Go tools updated"
         fi
     fi
-    
-    # .NET
-    if command_exists dotnet; then
-        log_info "Updating .NET tools..."
-        dotnet tool list --global | tail -n +3 | awk '{print $1}' | while read tool; do
-            if [[ -n "$tool" ]]; then
-                dotnet tool update --global "$tool" || true
-            fi
-        done
-        log_success ".NET tools updated"
-    fi
+
 }
 
 # Update container tools
