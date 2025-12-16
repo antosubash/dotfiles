@@ -35,6 +35,9 @@ size = 18.0
 offset = { x = 0, y = 0 }
 glyph_offset = { x = 0, y = 0 }
 
+# Font rendering options
+builtin_box_drawing = true
+
 [colors]
 # Catppuccin Mocha Theme - Dark variant
 [colors.primary]
