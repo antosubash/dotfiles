@@ -48,3 +48,12 @@ fi
 if [ -f /etc/bash_completion ] && ! shopt -oq posix; then
     . /etc/bash_completion
 fi
+# Update command aliases
+if [ -f "$HOME/.update_aliases" ]; then
+    source "$HOME/.update_aliases"
+fi
+
+# Update command aliases
+if [ -f "$HOME/.update_aliases" ]; then
+    source "$HOME/.update_aliases"
+fi

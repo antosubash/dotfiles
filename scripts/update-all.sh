@@ -105,20 +105,46 @@ update_dev_environments() {
     # Node.js and npm
     if command_exists npm; then
         log_info "Updating npm packages..."
-        npm update -g
-        log_success "npm global packages updated"
+        set +e
+        npm_output=$(npm update -g 2>&1)
+        npm_exit_code=$?
+        set -e
+        if [[ $npm_exit_code -eq 0 ]]; then
+            log_success "npm global packages updated"
+        else
+            if echo "$npm_output" | grep -q "EACCES\|permission denied"; then
+                log_warning "npm update requires elevated permissions. Skipping npm update."
+                log_info "To update npm, run: sudo npm install -g npm@latest"
+            else
+                log_warning "npm update failed, continuing with other updates..."
+            fi
+        fi
     fi
     
     if command_exists pnpm; then
         log_info "Updating pnpm..."
-        pnpm self update
-        log_success "pnpm updated"
+        set +e
+        pnpm self update 2>&1
+        pnpm_exit_code=$?
+        set -e
+        if [[ $pnpm_exit_code -eq 0 ]]; then
+            log_success "pnpm updated"
+        else
+            log_warning "pnpm update failed, continuing with other updates..."
+        fi
     fi
     
     if command_exists yarn; then
         log_info "Updating yarn packages..."
-        yarn global upgrade
-        log_success "yarn global packages updated"
+        set +e
+        yarn global upgrade 2>&1
+        yarn_exit_code=$?
+        set -e
+        if [[ $yarn_exit_code -eq 0 ]]; then
+            log_success "yarn global packages updated"
+        else
+            log_warning "yarn update failed, continuing with other updates..."
+        fi
     fi
     
     # Python

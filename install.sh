@@ -150,14 +150,47 @@ fi
 # Setup Zsh
 setup_zsh
 
+echo ""
+echo "Running setup scripts..."
+echo ""
+
+# Run setup-update.sh (fail gracefully)
+if [ -f "$DOTFILES_DIR/scripts/setup-update.sh" ]; then
+    echo "Setting up update commands..."
+    set +e
+    bash "$DOTFILES_DIR/scripts/setup-update.sh"
+    UPDATE_EXIT_CODE=$?
+    set -e
+    if [ $UPDATE_EXIT_CODE -ne 0 ]; then
+        echo "Warning: setup-update.sh encountered errors but continuing installation..."
+    fi
+else
+    echo "Warning: setup-update.sh not found"
+fi
+
+# Run setup-terminal.sh (fail gracefully)
+if [ -f "$DOTFILES_DIR/scripts/setup-terminal.sh" ]; then
+    echo ""
+    echo "Setting up terminal..."
+    set +e
+    bash "$DOTFILES_DIR/scripts/setup-terminal.sh"
+    TERMINAL_EXIT_CODE=$?
+    set -e
+    if [ $TERMINAL_EXIT_CODE -ne 0 ]; then
+        echo "Warning: setup-terminal.sh encountered errors but continuing installation..."
+    fi
+else
+    echo "Warning: setup-terminal.sh not found"
+fi
+
+echo ""
 echo "Dotfiles installation complete!"
 echo ""
 echo "Next steps:"
 if [ "$SHELL_TYPE" = "zsh" ]; then
-    echo "  1. Install terminal font 'MesloLGS NF' (run scripts/setup-terminal.sh)"
-    echo "  2. Apply Catppuccin Mocha colors from config/terminal-colors.md"
-    echo "  3. Restart your shell or run 'source ~/.zshrc'"
-    echo "  4. Run 'p10k configure' to customize your prompt (optional)"
+    echo "  1. Apply Catppuccin Mocha colors from config/terminal-colors.md (if not using Alacritty)"
+    echo "  2. Restart your shell or run 'source ~/.zshrc'"
+    echo "  3. Run 'p10k configure' to customize your prompt (optional)"
 else
     echo "  1. Restart your shell or run 'source ~/.bashrc' to apply changes"
     echo "  2. Consider switching to Zsh for enhanced features"

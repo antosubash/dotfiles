@@ -128,3 +128,25 @@ if [[ -o interactive ]] && [[ -n "$ZSHRC_START_TIME" ]] && command -v bc &> /dev
         precmd_functions+=(_show_startup_time_once)
     fi
 fi
+
+# Update command aliases
+if [ -f "$HOME/.update_aliases" ]; then
+    source "$HOME/.update_aliases"
+fi
+
+# Update commands
+alias update='~/.local/bin/update'
+alias update-quick='~/.local/bin/update-quick'
+alias upd='update-quick'
+alias upf='update'
+
+# Update command aliases
+if [ -f "$HOME/.update_aliases" ]; then
+    source "$HOME/.update_aliases"
+fi
+
+# Update commands
+alias update='~/.local/bin/update'
+alias update-quick='~/.local/bin/update-quick'
+alias upd='update-quick'
+alias upf='update'
