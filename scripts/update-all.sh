@@ -98,124 +98,6 @@ update_package_managers() {
     fi
 }
 
-# Update development environments
-update_dev_environments() {
-    log_section "Updating Development Environments"
-    
-    # Node.js and npm
-    if command_exists npm; then
-        log_info "Updating npm packages..."
-        set +e
-        npm_output=$(npm update -g 2>&1)
-        npm_exit_code=$?
-        set -e
-        if [[ $npm_exit_code -eq 0 ]]; then
-            log_success "npm global packages updated"
-        else
-            if echo "$npm_output" | grep -q "EACCES\|permission denied"; then
-                # Silently skip if permission denied (npm installed system-wide)
-                log_info "Skipping npm update (requires elevated permissions)"
-            else
-                log_warning "npm update failed, continuing with other updates..."
-            fi
-        fi
-    fi
-    
-    if command_exists pnpm; then
-        log_info "Updating pnpm..."
-        set +e
-        pnpm self update 2>&1
-        pnpm_exit_code=$?
-        set -e
-        if [[ $pnpm_exit_code -eq 0 ]]; then
-            log_success "pnpm updated"
-        else
-            log_warning "pnpm update failed, continuing with other updates..."
-        fi
-    fi
-    
-    if command_exists yarn; then
-        log_info "Updating yarn packages..."
-        set +e
-        yarn global upgrade 2>&1
-        yarn_exit_code=$?
-        set -e
-        if [[ $yarn_exit_code -eq 0 ]]; then
-            log_success "yarn global packages updated"
-        else
-            log_warning "yarn update failed, continuing with other updates..."
-        fi
-    fi
-    
-    # Python
-    if command_exists pip3; then
-        log_info "Updating pip3 packages..."
-        pip3 list --outdated 2>/dev/null | tail -n +3 | awk '{print $1}' | xargs -r pip3 install -U 2>&1 || true
-        log_success "pip3 packages updated"
-    fi
-    
-    if command_exists uv; then
-        log_info "Updating uv..."
-        uv self update
-        log_success "uv updated"
-    fi
-    
-    # Rust
-    if command_exists rustup; then
-        log_info "Updating Rust toolchain..."
-        rustup update
-        log_success "Rust updated"
-    fi
-    
-    # Go
-    if command_exists go; then
-        log_info "Updating Go tools..."
-        # Update common Go tools
-        if [[ -d "$HOME/go/bin" ]]; then
-            for tool in "$HOME/go/bin"/*; do
-                if [[ -f "$tool" ]]; then
-                    tool_name=$(basename "$tool")
-                    log_info "Updating Go tool: $tool_name"
-                    go install -a "$tool_name@latest" 2>/dev/null || true
-                fi
-            done
-            log_success "Go tools updated"
-        fi
-    fi
-
-}
-
-# Update container tools
-update_containers() {
-    log_section "Updating Container Tools"
-    
-    if command_exists docker; then
-        log_info "Checking Docker updates..."
-        if [[ "$OS" == "macos" ]]; then
-            log_warning "Docker Desktop updates must be done manually from Applications"
-        else
-            log_info "Docker is managed by package manager"
-        fi
-    fi
-    
-    if command_exists helm; then
-        log_info "Updating Helm..."
-        helm repo update
-        log_success "Helm repos updated"
-    fi
-    
-    # Update Helm plugins
-    if command_exists helm; then
-        log_info "Updating Helm plugins..."
-        helm plugin list | tail -n +2 | awk '{print $1}' | while read plugin; do
-            if [[ -n "$plugin" ]]; then
-                helm plugin update "$plugin" || true
-            fi
-        done
-        log_success "Helm plugins updated"
-    fi
-}
-
 # Update CLI tools
 update_cli_tools() {
     log_section "Updating CLI Tools"
@@ -282,23 +164,6 @@ update_security_tools() {
         fi
         log_success "Tailscale updated"
     fi
-}
-
-# Update databases
-update_databases() {
-    log_section "Updating Database Tools"
-    
-    # PostgreSQL client tools are usually updated by package manager
-    if command_exists psql; then
-        log_info "PostgreSQL tools managed by package manager"
-    fi
-    
-    # Redis tools
-    if command_exists redis-cli; then
-        log_info "Redis tools managed by package manager"
-    fi
-    
-    log_success "Database tools status checked"
 }
 
 # Update dotfiles
@@ -474,11 +339,8 @@ main() {
     update_package_managers
     
     if [[ "$quick_mode" == false ]]; then
-        update_dev_environments
-        update_containers
         update_cli_tools
         update_security_tools
-        update_databases
     fi
     
     cleanup
