@@ -6,6 +6,11 @@ if [[ -z "$DOTFILES_DIR" ]]; then
     export DOTFILES_DIR="${DOTFILES_DIR:-$HOME/dotfiles}"
 fi
 
+# Ensure constants are loaded so path-based aliases work
+if [ -f "$DOTFILES_DIR/shell/constants.zsh" ]; then
+    source "$DOTFILES_DIR/shell/constants.zsh"
+fi
+
 # Navigation & Files
 alias ll="ls -lah"
 alias la="ls -lAh"
@@ -160,14 +165,33 @@ if command -v "$TOOL_HTOP" &> /dev/null; then
     alias top="$TOOL_HTOP"
 fi
 
-# Update command aliases
+# Update command aliases (prefer installed binaries, fallback to repo scripts)
 if [ -f "$UPDATE_ALIASES_FILE" ]; then
     source "$UPDATE_ALIASES_FILE"
 fi
 
-alias update="$LOCAL_BIN_DIR/update"
-alias update-quick="$LOCAL_BIN_DIR/update-quick"
+UPDATE_BIN="$LOCAL_BIN_DIR/update"
+UPDATE_QUICK_BIN="$LOCAL_BIN_DIR/update-quick"
+UPDATE_MANAGER_BIN="$LOCAL_BIN_DIR/update-manager"
+UPDATE_SCRIPT="$DOTFILES_DIR/scripts/update-all.sh"
+UPDATE_QUICK_SCRIPT="$DOTFILES_DIR/scripts/update-quick.sh"
+
+if [[ -x "$UPDATE_BIN" ]]; then
+    alias update="$UPDATE_BIN"
+elif [[ -x "$UPDATE_SCRIPT" ]]; then
+    alias update="$UPDATE_SCRIPT"
+fi
+
+if [[ -x "$UPDATE_QUICK_BIN" ]]; then
+    alias update-quick="$UPDATE_QUICK_BIN"
+elif [[ -x "$UPDATE_QUICK_SCRIPT" ]]; then
+    alias update-quick="$UPDATE_QUICK_SCRIPT"
+fi
+
 alias upd="update-quick"
 alias upf="update"
-alias update-manager="$LOCAL_BIN_DIR/update-manager"
+
+if [[ -x "$UPDATE_MANAGER_BIN" ]]; then
+    alias update-manager="$UPDATE_MANAGER_BIN"
+fi
 
