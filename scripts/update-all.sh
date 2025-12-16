@@ -105,7 +105,11 @@ update_cli_tools() {
     # Oh My Zsh
     if [[ -d "$HOME/.oh-my-zsh" ]]; then
         log_info "Updating Oh My Zsh..."
-        omz update
+        set +e
+        if [[ -d "$HOME/.oh-my-zsh/.git" ]]; then
+            git -C "$HOME/.oh-my-zsh" pull origin master 2>&1 || git -C "$HOME/.oh-my-zsh" pull origin main 2>&1 || true
+        fi
+        set -e
         log_success "Oh My Zsh updated"
     fi
     
