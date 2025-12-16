@@ -359,22 +359,124 @@ fi
 
 # Install Nerd Fonts
 echo "Installing Nerd Fonts..."
-if [ ! -d "$HOME/.local/share/fonts/NerdFonts" ]; then
-    mkdir -p ~/.local/share/fonts/NerdFonts
-    cd ~/.local/share/fonts/NerdFonts
+FONT_DIR="$HOME/.local/share/fonts"
+mkdir -p "$FONT_DIR"
+
+# Move fonts from subdirectory to main directory if they exist
+if [ -d "$FONT_DIR/NerdFonts" ]; then
+    echo "Moving fonts from subdirectory to main fonts directory..."
+    find "$FONT_DIR/NerdFonts" -type f \( -name "*.ttf" -o -name "*.otf" \) | while read -r font; do
+        if [ -f "$font" ]; then
+            mv "$font" "$FONT_DIR/" 2>/dev/null || true
+        fi
+    done
+    # Remove empty subdirectory
+    rmdir "$FONT_DIR/NerdFonts" 2>/dev/null || true
+fi
+
+# Install JetBrainsMono Nerd Font
+JETBRAINS_INSTALLED=true
+if ! find "$FONT_DIR" -type f \( -name "*JetBrainsMono*NerdFont*.ttf" -o -name "*JetBrainsMono*NerdFont*.otf" \) | grep -q .; then
+    JETBRAINS_INSTALLED=false
     echo "Downloading JetBrainsMono Nerd Font..."
-    curl -fLo "JetBrainsMono.zip" https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip
-    unzip -o JetBrainsMono.zip
-    rm JetBrainsMono.zip
-    echo "Downloading FiraCode Nerd Font..."
-    curl -fLo "FiraCode.zip" https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FiraCode.zip
-    unzip -o FiraCode.zip
-    rm FiraCode.zip
-    fc-cache -fv
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
+    if curl -fLo "JetBrainsMono.zip" https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip; then
+        unzip -q -o JetBrainsMono.zip
+        find . -type f \( -name "*.ttf" -o -name "*.otf" \) | while read -r font; do
+            if [ -f "$font" ]; then
+                mv "$font" "$FONT_DIR/" 2>/dev/null || true
+            fi
+        done
+        rm -f JetBrainsMono.zip
+        echo "JetBrainsMono Nerd Font installed."
+    else
+        echo "Failed to download JetBrainsMono Nerd Font."
+    fi
     cd -
-    echo "Nerd Fonts installed."
+    rm -rf "$TEMP_DIR"
 else
-    echo "Nerd Fonts are already installed."
+    echo "JetBrainsMono Nerd Font already installed."
+fi
+
+# Install FiraCode Nerd Font
+FIRACODE_INSTALLED=true
+if ! find "$FONT_DIR" -type f \( -name "*FiraCode*NerdFont*.ttf" -o -name "*FiraCode*NerdFont*.otf" \) | grep -q .; then
+    FIRACODE_INSTALLED=false
+    echo "Downloading FiraCode Nerd Font..."
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
+    if curl -fLo "FiraCode.zip" https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FiraCode.zip; then
+        unzip -q -o FiraCode.zip
+        find . -type f \( -name "*.ttf" -o -name "*.otf" \) | while read -r font; do
+            if [ -f "$font" ]; then
+                mv "$font" "$FONT_DIR/" 2>/dev/null || true
+            fi
+        done
+        rm -f FiraCode.zip
+        echo "FiraCode Nerd Font installed."
+    else
+        echo "Failed to download FiraCode Nerd Font."
+    fi
+    cd -
+    rm -rf "$TEMP_DIR"
+else
+    echo "FiraCode Nerd Font already installed."
+fi
+
+# Refresh font cache if fonts were installed
+if [ "$JETBRAINS_INSTALLED" = false ] || [ "$FIRACODE_INSTALLED" = false ]; then
+    if command -v fc-cache &> /dev/null; then
+        echo "Refreshing font cache..."
+        fc-cache -fv
+    fi
+fi
+
+# Install MesloLGS NF fonts (required for Powerlevel10k)
+echo "Installing MesloLGS NF fonts..."
+FONT_DIR="$HOME/.local/share/fonts"
+mkdir -p "$FONT_DIR"
+
+MESLO_FONTS=(
+    "MesloLGS NF Regular.ttf"
+    "MesloLGS NF Bold.ttf"
+    "MesloLGS NF Italic.ttf"
+    "MesloLGS NF Bold Italic.ttf"
+)
+
+MESLO_URLS=(
+    "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Regular.ttf"
+    "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold.ttf"
+    "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Italic.ttf"
+    "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold%20Italic.ttf"
+)
+
+MESLO_INSTALLED=true
+for i in "${!MESLO_FONTS[@]}"; do
+    font_file="$FONT_DIR/${MESLO_FONTS[$i]}"
+    # Check if font exists (handle filenames with spaces)
+    if [[ ! -f "$font_file" ]]; then
+        MESLO_INSTALLED=false
+        echo "Downloading ${MESLO_FONTS[$i]}..."
+        # Use -o with quoted filename to handle spaces correctly
+        if curl -fL "${MESLO_URLS[$i]}" -o "$font_file"; then
+            echo "Downloaded ${MESLO_FONTS[$i]}"
+        else
+            echo "Failed to download ${MESLO_FONTS[$i]}"
+        fi
+    else
+        echo "MesloLGS NF font already exists: ${MESLO_FONTS[$i]}"
+    fi
+done
+
+if [ "$MESLO_INSTALLED" = false ]; then
+    if command -v fc-cache &> /dev/null; then
+        echo "Refreshing font cache..."
+        fc-cache -fv
+    fi
+    echo "MesloLGS NF fonts installed."
+else
+    echo "MesloLGS NF fonts are already installed."
 fi
 
 # Start services

@@ -150,3 +150,12 @@ alias update='~/.local/bin/update'
 alias update-quick='~/.local/bin/update-quick'
 alias upd='update-quick'
 alias upf='update'
+export PATH=$PATH:/usr/local/go/bin
+
+# pnpm
+export PNPM_HOME="/home/anto/.local/share/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) export PATH="$PNPM_HOME:$PATH" ;;
+esac
+# pnpm end
