@@ -12,7 +12,7 @@ export PATH="$HOME/.local/bin:$PATH"
 # Default shell
 export SHELL=/bin/zsh
 
-# Load zsh if available
-if [ -f "$HOME/.zshrc" ]; then
+# Load zsh if available and we're running in zsh
+if [ -n "$ZSH_VERSION" ] && [ -f "$HOME/.zshrc" ]; then
     source "$HOME/.zshrc"
 fi

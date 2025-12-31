@@ -2,6 +2,11 @@
 # Zsh options configuration
 # Performance: Set options first for faster loading
 
+# Only run in zsh
+if [ -z "$ZSH_VERSION" ]; then
+    return 0
+fi
+
 # Navigation
 setopt AUTO_CD              # cd by typing directory name
 setopt AUTO_PUSHD           # Make cd push the old directory onto the directory stack
