@@ -134,22 +134,6 @@ if [ -f "$HOME/.update_aliases" ]; then
     source "$HOME/.update_aliases"
 fi
 
-# Update commands
-alias update='~/.local/bin/update'
-alias update-quick='~/.local/bin/update-quick'
-alias upd='update-quick'
-alias upf='update'
-
-# Update command aliases
-if [ -f "$HOME/.update_aliases" ]; then
-    source "$HOME/.update_aliases"
-fi
-
-# Update commands
-alias update='~/.local/bin/update'
-alias update-quick='~/.local/bin/update-quick'
-alias upd='update-quick'
-alias upf='update'
 export PATH=$PATH:/usr/local/go/bin
 
 # pnpm
