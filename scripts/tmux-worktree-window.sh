@@ -37,8 +37,35 @@ ensure_worktree() {
     fi
 }
 
+# Quote a string for safe inclusion inside single quotes.
+# Replaces every ' with '\''  (close, escaped quote, reopen).
+sq_escape() {
+    printf '%s' "$1" | sed "s/'/'\\\\''/g"
+}
+
 cmd_prompt() {
-    :  # placeholder, filled in later
+    pane_path="${1:-}"
+
+    if ! git -C "$pane_path" rev-parse --git-dir >/dev/null 2>&1; then
+        tmux display-message "not a git repo"
+        return 0
+    fi
+
+    # Resolve this script's absolute path so the callback can locate it
+    # regardless of cwd at the time the prompt is submitted.
+    script_dir=$(cd "$(dirname "$0")" && pwd)
+    script_abs="$script_dir/$(basename "$0")"
+
+    # Build the run-shell command: script_abs spawn <pane_path> <%%>
+    # pane_path is single-quoted (with embedded single quotes escaped).
+    # %% is substituted by tmux as the user's branch input; we wrap it in
+    # double quotes so spaces survive. Branch names are restricted by git
+    # to a safe character set, so this is sufficient.
+    quoted_path=$(sq_escape "$pane_path")
+    inner="$script_abs spawn '$quoted_path' \"%%\""
+    quoted_inner=$(sq_escape "$inner")
+
+    tmux command-prompt -p "branch:" "run-shell '$quoted_inner'"
 }
 
 cmd_spawn() {

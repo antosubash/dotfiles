@@ -347,4 +347,36 @@ test_spawn_outside_repo
 test_spawn_git_failure_displays_error
 test_spawn_reuses_existing_worktree
 
+test_prompt_outside_repo() {
+    setup_test "prompt outside repo shows message"
+    mkdir -p "$TMPDIR_ROOT/plain"
+    "$SCRIPT" prompt "$TMPDIR_ROOT/plain"
+    assert_tmux_log_contains "display-message" "shows message"
+    assert_tmux_log_contains "not a git repo" "specific message"
+    # No command-prompt issued
+    if grep -q "command-prompt" "$TMUX_LOG"; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: should not issue command-prompt")
+    else
+        PASS=$((PASS+1))
+    fi
+    teardown_test
+}
+
+test_prompt_in_repo_issues_command_prompt() {
+    setup_test "prompt in repo issues command-prompt with run-shell callback"
+    make_repo "$TMPDIR_ROOT/repo"
+    "$SCRIPT" prompt "$TMPDIR_ROOT/repo"
+    local log
+    log="$(cat "$TMUX_LOG")"
+    assert_contains "$log" "command-prompt -p branch:" "command-prompt issued"
+    assert_contains "$log" "run-shell"               "run-shell in callback"
+    assert_contains "$log" "$SCRIPT spawn"           "spawn invocation"
+    assert_contains "$log" "$TMPDIR_ROOT/repo"       "pane path baked in"
+    assert_contains "$log" "%%"                      "branch placeholder"
+    teardown_test
+}
+
+test_prompt_outside_repo
+test_prompt_in_repo_issues_command_prompt
+
 summary
