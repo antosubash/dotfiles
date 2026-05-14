@@ -19,6 +19,24 @@ sanitize_name() {
     printf '%s' "$name"
 }
 
+ensure_worktree() {
+    repo_path="$1"
+    branch="$2"
+    worktree_path="$3"
+
+    if [ -d "$worktree_path" ]; then
+        return 0
+    fi
+
+    if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$branch"; then
+        git -C "$repo_path" worktree add "$worktree_path" "$branch" >/dev/null
+    elif git -C "$repo_path" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+        git -C "$repo_path" worktree add -b "$branch" "$worktree_path" "origin/$branch" >/dev/null
+    else
+        git -C "$repo_path" worktree add -b "$branch" "$worktree_path" >/dev/null
+    fi
+}
+
 cmd_prompt() {
     :  # placeholder, filled in later
 }

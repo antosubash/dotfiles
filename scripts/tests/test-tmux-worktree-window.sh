@@ -177,4 +177,101 @@ test_main_toplevel_in_subdir
 test_main_toplevel_from_worktree
 test_main_toplevel_not_repo
 
+test_ensure_worktree_new_branch() {
+    setup_test "ensure_worktree creates a new branch"
+    source_script
+    make_repo "$TMPDIR_ROOT/repo"
+    local wt="$TMPDIR_ROOT/repo/.worktrees/new-feat"
+    ensure_worktree "$TMPDIR_ROOT/repo" "new-feat" "$wt"
+    [ -d "$wt" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: worktree dir missing"); }
+    # Branch should now exist locally
+    if git -C "$TMPDIR_ROOT/repo" show-ref --verify --quiet refs/heads/new-feat; then
+        PASS=$((PASS+1))
+    else
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: new-feat branch not created")
+    fi
+    teardown_test
+}
+
+test_ensure_worktree_existing_local_branch() {
+    setup_test "ensure_worktree uses existing local branch"
+    source_script
+    make_repo "$TMPDIR_ROOT/repo"
+    git -C "$TMPDIR_ROOT/repo" branch existing
+    local wt="$TMPDIR_ROOT/repo/.worktrees/existing"
+    ensure_worktree "$TMPDIR_ROOT/repo" "existing" "$wt"
+    [ -d "$wt" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: worktree dir missing"); }
+    # Branch HEAD in the worktree must match the local branch
+    local wt_head main_head
+    wt_head=$(git -C "$wt" rev-parse HEAD)
+    main_head=$(git -C "$TMPDIR_ROOT/repo" rev-parse existing)
+    assert_eq "$main_head" "$wt_head" "worktree on existing branch"
+    teardown_test
+}
+
+test_ensure_worktree_from_origin() {
+    setup_test "ensure_worktree pulls branch from origin"
+    source_script
+    # Make an "origin" repo with a branch, then clone it
+    make_repo "$TMPDIR_ROOT/origin"
+    git -C "$TMPDIR_ROOT/origin" checkout -q -b remote-feat
+    : > "$TMPDIR_ROOT/origin/file"
+    git -C "$TMPDIR_ROOT/origin" add file
+    git -C "$TMPDIR_ROOT/origin" commit -q -m feat
+    git -C "$TMPDIR_ROOT/origin" checkout -q main
+    git clone -q "$TMPDIR_ROOT/origin" "$TMPDIR_ROOT/clone"
+    git -C "$TMPDIR_ROOT/clone" fetch -q origin
+    local wt="$TMPDIR_ROOT/clone/.worktrees/remote-feat"
+    ensure_worktree "$TMPDIR_ROOT/clone" "remote-feat" "$wt"
+    [ -d "$wt" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: worktree dir missing"); }
+    # Local branch should now exist, tracking origin/remote-feat
+    if git -C "$TMPDIR_ROOT/clone" show-ref --verify --quiet refs/heads/remote-feat; then
+        PASS=$((PASS+1))
+    else
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: local branch not created from origin")
+    fi
+    teardown_test
+}
+
+test_ensure_worktree_idempotent() {
+    setup_test "ensure_worktree is idempotent when path exists"
+    source_script
+    make_repo "$TMPDIR_ROOT/repo"
+    local wt="$TMPDIR_ROOT/repo/.worktrees/x"
+    ensure_worktree "$TMPDIR_ROOT/repo" "x" "$wt"
+    # Second call should succeed without trying to add again
+    if ensure_worktree "$TMPDIR_ROOT/repo" "x" "$wt" 2>"$TMPDIR_ROOT/err"; then
+        PASS=$((PASS+1))
+    else
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: second call failed: $(cat "$TMPDIR_ROOT/err")")
+    fi
+    teardown_test
+}
+
+test_ensure_worktree_failure_surfaces() {
+    setup_test "ensure_worktree surfaces git errors"
+    source_script
+    make_repo "$TMPDIR_ROOT/repo"
+    # main branch is already checked out in the main worktree — adding it again fails
+    local wt="$TMPDIR_ROOT/repo/.worktrees/main"
+    if ensure_worktree "$TMPDIR_ROOT/repo" "main" "$wt" 2>"$TMPDIR_ROOT/err"; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: expected non-zero exit (branch already checked out)")
+    else
+        PASS=$((PASS+1))
+    fi
+    # Stderr should be non-empty
+    if [ -s "$TMPDIR_ROOT/err" ]; then
+        PASS=$((PASS+1))
+    else
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: expected git error on stderr")
+    fi
+    teardown_test
+}
+
+test_ensure_worktree_new_branch
+test_ensure_worktree_existing_local_branch
+test_ensure_worktree_from_origin
+test_ensure_worktree_idempotent
+test_ensure_worktree_failure_surfaces
+
 summary
