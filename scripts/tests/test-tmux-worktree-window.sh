@@ -274,4 +274,77 @@ test_ensure_worktree_from_origin
 test_ensure_worktree_idempotent
 test_ensure_worktree_failure_surfaces
 
+test_spawn_creates_window() {
+    setup_test "spawn creates worktree and tmux window"
+    make_repo "$TMPDIR_ROOT/repo"
+    "$SCRIPT" spawn "$TMPDIR_ROOT/repo" "feature/foo"
+    local wt="$TMPDIR_ROOT/repo/.worktrees/feature-foo"
+    [ -d "$wt" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: worktree dir missing"); }
+    assert_tmux_log_contains "new-window -n feature-foo -c $wt" "new-window call"
+    teardown_test
+}
+
+test_spawn_empty_branch_silent() {
+    setup_test "spawn with empty branch is silent"
+    make_repo "$TMPDIR_ROOT/repo"
+    "$SCRIPT" spawn "$TMPDIR_ROOT/repo" ""
+    assert_eq "" "$(cat "$TMUX_LOG")" "no tmux calls"
+    teardown_test
+}
+
+test_spawn_invalid_sanitized_name() {
+    setup_test "spawn with branch that sanitizes to empty shows message"
+    make_repo "$TMPDIR_ROOT/repo"
+    "$SCRIPT" spawn "$TMPDIR_ROOT/repo" "///"
+    assert_tmux_log_contains "display-message" "shows error"
+    assert_tmux_log_contains "invalid branch name" "specific message"
+    # No new-window call
+    if grep -q "new-window" "$TMUX_LOG"; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: should not call new-window")
+    else
+        PASS=$((PASS+1))
+    fi
+    teardown_test
+}
+
+test_spawn_outside_repo() {
+    setup_test "spawn outside a git repo shows message"
+    mkdir -p "$TMPDIR_ROOT/plain"
+    "$SCRIPT" spawn "$TMPDIR_ROOT/plain" "foo"
+    assert_tmux_log_contains "display-message" "shows error"
+    assert_tmux_log_contains "not a git repo" "specific message"
+    teardown_test
+}
+
+test_spawn_git_failure_displays_error() {
+    setup_test "spawn surfaces git worktree add failure"
+    make_repo "$TMPDIR_ROOT/repo"
+    # main branch is already checked out in the main worktree — adding it again fails
+    "$SCRIPT" spawn "$TMPDIR_ROOT/repo" "main"
+    assert_tmux_log_contains "display-message" "shows error"
+    # No new-window because the add failed
+    if grep -q "new-window" "$TMUX_LOG"; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: should not call new-window")
+    else
+        PASS=$((PASS+1))
+    fi
+    teardown_test
+}
+
+test_spawn_reuses_existing_worktree() {
+    setup_test "spawn opens window when worktree already exists"
+    make_repo "$TMPDIR_ROOT/repo"
+    git -C "$TMPDIR_ROOT/repo" worktree add -b reused "$TMPDIR_ROOT/repo/.worktrees/reused" >/dev/null 2>&1
+    "$SCRIPT" spawn "$TMPDIR_ROOT/repo" "reused"
+    assert_tmux_log_contains "new-window -n reused -c $TMPDIR_ROOT/repo/.worktrees/reused" "opens window"
+    teardown_test
+}
+
+test_spawn_creates_window
+test_spawn_empty_branch_silent
+test_spawn_invalid_sanitized_name
+test_spawn_outside_repo
+test_spawn_git_failure_displays_error
+test_spawn_reuses_existing_worktree
+
 summary

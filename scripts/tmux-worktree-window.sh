@@ -42,7 +42,32 @@ cmd_prompt() {
 }
 
 cmd_spawn() {
-    :  # placeholder, filled in later
+    pane_path="${1:-}"
+    branch="${2:-}"
+
+    if [ -z "$branch" ]; then
+        return 0
+    fi
+
+    sanitized=$(sanitize_name "$branch")
+    if [ -z "$sanitized" ]; then
+        tmux display-message "invalid branch name"
+        return 0
+    fi
+
+    toplevel=$(main_toplevel "$pane_path") || {
+        tmux display-message "not a git repo"
+        return 0
+    }
+
+    worktree_path="$toplevel/.worktrees/$sanitized"
+
+    if ! err=$(ensure_worktree "$pane_path" "$branch" "$worktree_path" 2>&1); then
+        tmux display-message "$err"
+        return 0
+    fi
+
+    tmux new-window -n "$sanitized" -c "$worktree_path"
 }
 
 main() {
