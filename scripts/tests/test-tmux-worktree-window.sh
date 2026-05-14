@@ -96,4 +96,23 @@ test_unknown_subcommand_fails() {
 }
 
 test_unknown_subcommand_fails
+
+test_sanitize_name() {
+    setup_test "sanitize_name"
+    source_script
+
+    assert_eq "feature-foo"      "$(sanitize_name 'feature/foo')"      "slash → dash"
+    assert_eq "a-b-c"            "$(sanitize_name 'a/b/c')"            "multiple slashes"
+    assert_eq "bugfix-ABC-123"   "$(sanitize_name 'bugfix/ABC-123')"   "preserves alnum and dash"
+    assert_eq "ok.v1_x"          "$(sanitize_name 'ok.v1_x')"          "preserves . and _"
+    assert_eq "weird-name"       "$(sanitize_name 'weird   name')"     "collapses runs"
+    assert_eq "trimmed"          "$(sanitize_name '--trimmed--')"      "trims edges"
+    assert_eq ""                 "$(sanitize_name '///')"              "all-bad → empty"
+    assert_eq ""                 "$(sanitize_name '')"                 "empty stays empty"
+    assert_eq "a-b"              "$(sanitize_name 'a$b')"              "special char → dash"
+
+    teardown_test
+}
+
+test_sanitize_name
 summary

@@ -6,6 +6,12 @@
 
 # When sourced with _TMUX_WORKTREE_SOURCE_ONLY=1, only define functions.
 
+sanitize_name() {
+    name="$1"
+    name=$(printf '%s' "$name" | sed 's/[^A-Za-z0-9._-]/-/g; s/--*/-/g; s/^-//; s/-$//')
+    printf '%s' "$name"
+}
+
 cmd_prompt() {
     :  # placeholder, filled in later
 }
