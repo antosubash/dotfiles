@@ -31,6 +31,19 @@ cd ~/dotfiles
 ./scripts/setup-ubuntu.sh
 ```
 
+#### Ubuntu Server (headless)
+
+```bash
+./scripts/setup-server.sh
+```
+
+Headless variant: same dev toolchain as `setup-ubuntu.sh` (Java,
+.NET 7/8/9/10, Go, Rust, Node, Python/uv, Docker, k8s, GDAL/PROJ/GEOS,
+etc.) but drops GUI items (Wireshark, VLC, Thunderbird, snap chat apps,
+terminal fonts) and adds server essentials: `openssh-server`,
+`unattended-upgrades`, `fail2ban`, `sysstat`, `ncdu`, `iotop`, plus a
+UFW default config that allows SSH.
+
 ### 4. Install Update Commands
 
 ```bash
@@ -44,7 +57,8 @@ dotfiles/
 ├── install.sh              # Main dotfiles installation
 ├── scripts/
 │   ├── setup-macos.sh      # macOS full development setup
-│   ├── setup-ubuntu.sh     # Ubuntu full development setup
+│   ├── setup-ubuntu.sh     # Ubuntu desktop development setup
+│   ├── setup-server.sh     # Ubuntu Server (headless) setup
 │   ├── setup-agnoster.sh   # Agnoster theme installer
 │   ├── setup-terminal.sh    # Terminal theme configuration
 │   ├── setup-update.sh     # Update command installer

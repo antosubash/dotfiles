@@ -53,3 +53,43 @@ fi
 if [ -f "$HOME/.update_aliases" ]; then
     source "$HOME/.update_aliases"
 fi
+
+# Update command aliases
+if [ -f "$HOME/.update_aliases" ]; then
+    source "$HOME/.update_aliases"
+fi
+
+# Update command aliases
+if [ -f "$HOME/.update_aliases" ]; then
+    source "$HOME/.update_aliases"
+fi
+. "$HOME/.cargo/env"
+
+# pnpm
+export PNPM_HOME="/root/.local/share/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME/bin:"*) ;;
+  *) export PATH="$PNPM_HOME/bin:$PATH" ;;
+esac
+# pnpm end
+
+# tmux aliases & helpers
+if [ -f "$HOME/dotfiles/shell/tmux-aliases.sh" ]; then
+    . "$HOME/dotfiles/shell/tmux-aliases.sh"
+fi
+
+# atuin — fuzzy, SQLite-backed shell history; rebinds Ctrl-R and Up-arrow.
+# bash-preexec is required for atuin's bash hooks.
+if command -v atuin > /dev/null 2>&1; then
+    if [ ! -f "$HOME/.bash-preexec.sh" ]; then
+        curl -sL https://raw.githubusercontent.com/rcaloras/bash-preexec/master/bash-preexec.sh \
+            -o "$HOME/.bash-preexec.sh" 2>/dev/null
+    fi
+    [ -f "$HOME/.bash-preexec.sh" ] && . "$HOME/.bash-preexec.sh"
+    eval "$(atuin init bash)"
+fi
+export DOTNET_ROOT=$HOME/.dotnet
+export PATH=$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools
+export PATH=$PATH:/usr/local/go/bin
+source ~/.cargo/env
+export PATH=$PATH:~/go/bin

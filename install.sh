@@ -71,12 +71,15 @@ backup_and_symlink "$DOTFILES_DIR/shell/.profile" "$HOME/.profile"
 # Vim configuration
 backup_and_symlink "$DOTFILES_DIR/vim/.vimrc" "$HOME/.vimrc"
 
+# tmux configuration
+backup_and_symlink "$DOTFILES_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
+
 # Create directories for vim
 mkdir -p "$HOME/.vim/autoload" "$HOME/.vim/bundle"
 
-# Neovim configuration
+# Neovim configuration — symlink the whole directory so init.lua + lua/ are picked up.
 NVIM_CONFIG_DIR="$HOME/.config/nvim"
-backup_and_symlink "$DOTFILES_DIR/nvim/init.lua" "$NVIM_CONFIG_DIR/init.lua"
+backup_and_symlink "$DOTFILES_DIR/nvim" "$NVIM_CONFIG_DIR"
 
 # Powerlevel10k configuration
 if [ -f "$DOTFILES_DIR/config/.p10k.zsh" ]; then
@@ -126,11 +129,32 @@ setup_zsh() {
             echo "Zsh plugins configured"
         fi
         
-        # Configure shell to use zsh if not already
-        if [ "$SHELL" != "$(which zsh)" ]; then
-            echo "Changing default shell to zsh..."
-            chsh -s $(which zsh)
-        fi
+    fi
+}
+
+# Make zsh the default login shell if it's installed.
+# This runs regardless of the shell install.sh was invoked from, so users
+# bootstrapping from bash also get switched over.
+set_default_shell_zsh() {
+    if ! command -v zsh > /dev/null 2>&1; then
+        return 0
+    fi
+    local zsh_path
+    zsh_path="$(command -v zsh)"
+
+    # Make sure zsh is listed as a valid login shell.
+    if ! grep -Fxq "$zsh_path" /etc/shells 2>/dev/null; then
+        echo "$zsh_path" | sudo tee -a /etc/shells > /dev/null
+    fi
+
+    local current_shell
+    current_shell="$(getent passwd "$USER" | awk -F: '{print $7}')"
+    if [ "$current_shell" = "$zsh_path" ]; then
+        echo "Default shell is already zsh ($zsh_path)."
+    else
+        echo "Changing default shell from $current_shell to $zsh_path..."
+        sudo chsh -s "$zsh_path" "$USER" || \
+            echo "Warning: chsh failed — run 'sudo chsh -s $zsh_path $USER' manually."
     fi
 }
 
@@ -149,6 +173,9 @@ fi
 
 # Setup Zsh
 setup_zsh
+
+# Make zsh the default shell (works even when invoked from bash)
+set_default_shell_zsh
 
 echo ""
 echo "Running setup scripts..."

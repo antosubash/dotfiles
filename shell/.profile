@@ -16,3 +16,4 @@ export SHELL=/bin/zsh
 if [ -n "$ZSH_VERSION" ] && [ -f "$HOME/.zshrc" ]; then
     source "$HOME/.zshrc"
 fi
+. "$HOME/.cargo/env"

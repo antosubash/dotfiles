@@ -143,3 +143,41 @@ case ":$PATH:" in
   *) export PATH="$PNPM_HOME:$PATH" ;;
 esac
 # pnpm end
+
+# Update command aliases
+if [ -f "$HOME/.update_aliases" ]; then
+    source "$HOME/.update_aliases"
+fi
+
+# Update commands
+alias update='~/.local/bin/update'
+alias update-quick='~/.local/bin/update-quick'
+alias upd='update-quick'
+alias upf='update'
+
+# Update command aliases
+if [ -f "$HOME/.update_aliases" ]; then
+    source "$HOME/.update_aliases"
+fi
+
+# Update commands
+alias update='~/.local/bin/update'
+alias update-quick='~/.local/bin/update-quick'
+alias upd='update-quick'
+alias upf='update'
+source ~/.cargo/env
+export DOTNET_ROOT=$HOME/.dotnet
+export PATH=$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools
+export PATH=$PATH:~/go/bin
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# tmux aliases & helpers
+if [ -f "$HOME/dotfiles/shell/tmux-aliases.sh" ]; then
+    . "$HOME/dotfiles/shell/tmux-aliases.sh"
+fi
+
+# atuin — fuzzy, SQLite-backed shell history; rebinds Ctrl-R and Up-arrow.
+# Disable up-arrow binding by passing `--disable-up-arrow` if you don't want it.
+if command -v atuin > /dev/null 2>&1; then
+    eval "$(atuin init zsh)"
+fi
