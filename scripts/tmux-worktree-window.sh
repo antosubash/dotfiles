@@ -6,6 +6,13 @@
 
 # When sourced with _TMUX_WORKTREE_SOURCE_ONLY=1, only define functions.
 
+main_toplevel() {
+    path="$1"
+    common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+    # common_dir points at "<main>/.git". Its parent is the main toplevel.
+    dirname "$common_dir"
+}
+
 sanitize_name() {
     name="$1"
     name=$(printf '%s' "$name" | sed 's/[^A-Za-z0-9._-]/-/g; s/--*/-/g; s/^-//; s/-$//')

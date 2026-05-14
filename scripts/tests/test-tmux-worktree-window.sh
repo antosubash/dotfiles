@@ -115,4 +115,66 @@ test_sanitize_name() {
 }
 
 test_sanitize_name
+
+make_repo() {
+    # Creates a real git repo with one commit at $1.
+    local dir="$1"
+    mkdir -p "$dir"
+    git -C "$dir" init -q -b main
+    git -C "$dir" config user.email t@t
+    git -C "$dir" config user.name t
+    : > "$dir/README"
+    git -C "$dir" add README
+    git -C "$dir" commit -q -m init
+}
+
+test_main_toplevel_in_repo() {
+    setup_test "main_toplevel in plain repo"
+    source_script
+    make_repo "$TMPDIR_ROOT/repo"
+    local top
+    top=$(main_toplevel "$TMPDIR_ROOT/repo")
+    assert_eq "$TMPDIR_ROOT/repo" "$top" "toplevel matches"
+    teardown_test
+}
+
+test_main_toplevel_in_subdir() {
+    setup_test "main_toplevel from subdir"
+    source_script
+    make_repo "$TMPDIR_ROOT/repo"
+    mkdir -p "$TMPDIR_ROOT/repo/sub/dir"
+    local top
+    top=$(main_toplevel "$TMPDIR_ROOT/repo/sub/dir")
+    assert_eq "$TMPDIR_ROOT/repo" "$top" "toplevel from subdir"
+    teardown_test
+}
+
+test_main_toplevel_from_worktree() {
+    setup_test "main_toplevel from inside a worktree"
+    source_script
+    make_repo "$TMPDIR_ROOT/repo"
+    git -C "$TMPDIR_ROOT/repo" worktree add -b wt "$TMPDIR_ROOT/repo/.worktrees/wt" >/dev/null 2>&1
+    local top
+    top=$(main_toplevel "$TMPDIR_ROOT/repo/.worktrees/wt")
+    assert_eq "$TMPDIR_ROOT/repo" "$top" "toplevel from worktree resolves to main"
+    teardown_test
+}
+
+test_main_toplevel_not_repo() {
+    setup_test "main_toplevel outside a repo"
+    source_script
+    mkdir -p "$TMPDIR_ROOT/plain"
+    if main_toplevel "$TMPDIR_ROOT/plain" >/dev/null 2>&1; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: expected non-zero exit")
+    else
+        PASS=$((PASS+1))
+    fi
+    teardown_test
+}
+
+test_main_toplevel_in_repo
+test_main_toplevel_in_subdir
+test_main_toplevel_from_worktree
+test_main_toplevel_not_repo
+
 summary
