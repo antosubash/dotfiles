@@ -7,16 +7,13 @@
 # When sourced with _TMUX_WORKTREE_SOURCE_ONLY=1, only define functions.
 
 main_toplevel() {
-    path="$1"
-    common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+    common_dir=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
     # common_dir points at "<main>/.git". Its parent is the main toplevel.
     dirname "$common_dir"
 }
 
 sanitize_name() {
-    name="$1"
-    name=$(printf '%s' "$name" | sed 's/[^A-Za-z0-9._-]/-/g; s/--*/-/g; s/^-//; s/-$//')
-    printf '%s' "$name"
+    printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/-/g; s/--*/-/g; s/^-//; s/-$//'
 }
 
 ensure_worktree() {
@@ -46,7 +43,7 @@ sq_escape() {
 cmd_prompt() {
     pane_path="${1:-}"
 
-    if ! git -C "$pane_path" rev-parse --git-dir >/dev/null 2>&1; then
+    if ! main_toplevel "$pane_path" >/dev/null 2>&1; then
         tmux display-message "not a git repo"
         return 0
     fi
@@ -54,9 +51,8 @@ cmd_prompt() {
     # Resolve this script's absolute path so the callback can locate it
     # regardless of cwd at the time the prompt is submitted.
     script_dir=$(cd "$(dirname "$0")" && pwd)
-    script_abs="$script_dir/$(basename "$0")"
+    script_abs="$script_dir/${0##*/}"
 
-    # Build the run-shell command: script_abs spawn <pane_path> <%%>
     # pane_path is single-quoted (with embedded single quotes escaped).
     # %% is substituted by tmux as the user's branch input; we wrap it in
     # double quotes so spaces survive. Branch names are restricted by git
@@ -89,7 +85,7 @@ cmd_spawn() {
 
     worktree_path="$toplevel/.worktrees/$sanitized"
 
-    if ! err=$(ensure_worktree "$pane_path" "$branch" "$worktree_path" 2>&1); then
+    if ! err=$(ensure_worktree "$toplevel" "$branch" "$worktree_path" 2>&1); then
         tmux display-message "$err"
         return 0
     fi

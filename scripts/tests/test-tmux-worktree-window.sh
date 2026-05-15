@@ -212,7 +212,6 @@ test_ensure_worktree_existing_local_branch() {
 test_ensure_worktree_from_origin() {
     setup_test "ensure_worktree pulls branch from origin"
     source_script
-    # Make an "origin" repo with a branch, then clone it
     make_repo "$TMPDIR_ROOT/origin"
     git -C "$TMPDIR_ROOT/origin" checkout -q -b remote-feat
     : > "$TMPDIR_ROOT/origin/file"
