@@ -124,8 +124,12 @@ setup_zsh() {
         
         # Ensure plugins are properly configured in .zshrc
         if [ -f "$HOME/.zshrc" ]; then
-            # Update plugins list to include autosuggestions and syntax highlighting
-            sed -i '' 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting)/' "$HOME/.zshrc" || true
+            # GNU sed (Linux) and BSD sed (macOS) disagree on -i syntax.
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                sed -i '' 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting)/' "$HOME/.zshrc" || true
+            else
+                sed -i 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting)/' "$HOME/.zshrc" || true
+            fi
             echo "Zsh plugins configured"
         fi
         

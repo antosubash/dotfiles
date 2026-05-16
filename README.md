@@ -17,6 +17,12 @@ cd ~/dotfiles
 ./install.sh
 ```
 
+On Windows, the equivalent symlink installer is:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File .\install.ps1
+```
+
 ### 3. Set Up Development Environment
 
 #### macOS
@@ -37,6 +43,40 @@ cd ~/dotfiles
 ./scripts/setup-server.sh
 ```
 
+#### Windows
+
+```powershell
+# From an elevated PowerShell 7+ session:
+pwsh -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1
+```
+
+Uses **winget** for GUI apps (browsers, IDEs, Docker Desktop,
+communication apps) and **scoop** for CLI dev tools (gh, jq, fzf,
+ripgrep, fd, lazygit, kubectl, helm, neovim, etc.). Installs language
+runtimes (Node LTS, Python 3.12, Go, Rust, Temurin JDK 21, .NET SDK
+7/8/9 + preview 10), enables WSL2 + Ubuntu so `setup-ubuntu.sh` can
+run inside WSL, and configures the terminal (Windows Terminal with
+Catppuccin Mocha + MesloLGS NF, oh-my-posh prompt, PSReadLine
+predictions, Alacritty linked to `config/alacritty.toml`). Flags:
+`-SkipWSL`, `-SkipFonts`, `-SkipGUI`, `-SkipTerminal`, `-BootstrapWSL`.
+
+Pass `-BootstrapWSL` once your Ubuntu distro is initialized with a
+user account — it'll clone the dotfiles inside Ubuntu and run
+`install.sh` for you.
+
+To re-run terminal config only:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File .\scripts\setup-windows-terminal.ps1
+```
+
+To update everything later:
+
+```powershell
+pwsh -File .\scripts\update-windows.ps1          # full pass
+pwsh -File .\scripts\update-windows.ps1 -Quick   # winget + scoop + rustup only
+```
+
 Headless variant: same dev toolchain as `setup-ubuntu.sh` (Java,
 .NET 7/8/9/10, Go, Rust, Node, Python/uv, Docker, k8s, GDAL/PROJ/GEOS,
 etc.) but drops GUI items (Wireshark, VLC, Thunderbird, snap chat apps,
@@ -54,11 +94,15 @@ UFW default config that allows SSH.
 
 ```
 dotfiles/
-├── install.sh              # Main dotfiles installation
+├── install.sh              # Main dotfiles installation (macOS / Linux)
+├── install.ps1             # Main dotfiles installation (Windows)
 ├── scripts/
 │   ├── setup-macos.sh      # macOS full development setup
 │   ├── setup-ubuntu.sh     # Ubuntu desktop development setup
 │   ├── setup-server.sh     # Ubuntu Server (headless) setup
+│   ├── setup-windows.ps1   # Windows development setup (winget + scoop)
+│   ├── setup-windows-terminal.ps1 # Windows Terminal + oh-my-posh + Alacritty
+│   ├── update-windows.ps1  # Update winget + scoop + modules + WSL distros
 │   ├── setup-agnoster.sh   # Agnoster theme installer
 │   ├── setup-terminal.sh    # Terminal theme configuration
 │   ├── setup-update.sh     # Update command installer
@@ -110,7 +154,7 @@ Choose your platform:
 ```
 
 **What gets installed:**
-- 📦 Package managers (Homebrew/apt)
+- 📦 Package managers (Homebrew / apt / winget + scoop)
 - 💻 Languages (Node.js, Python, Java, Go, Rust, .NET)
 - 🐳 Container tools (Docker, Kubernetes, Helm)
 - 🔧 Productivity tools (tmux, fzf, ripgrep, fd)
@@ -118,7 +162,8 @@ Choose your platform:
 - 🔐 Security tools (GPG, pass, nmap, Wireshark)
 - 📱 Communication apps (Slack, Discord, Zoom)
 - 🗺️ Geospatial tools (GDAL, PROJ, GEOS)
-- 🔤 Nerd Fonts
+- 🔤 Nerd Fonts (JetBrainsMono, FiraCode, MesloLGS NF)
+- 🪟 Windows extras: Windows Terminal w/ Catppuccin Mocha, oh-my-posh, PSReadLine, Alacritty, WSL2 + Ubuntu (optional auto-bootstrap)
 
 ### 3. Shell Theme Setup
 
