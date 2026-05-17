@@ -93,3 +93,8 @@ export PATH=$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools
 export PATH=$PATH:/usr/local/go/bin
 source ~/.cargo/env
 export PATH=$PATH:~/go/bin
+
+# Update command aliases
+if [ -f "$HOME/.update_aliases" ]; then
+    source "$HOME/.update_aliases"
+fi
