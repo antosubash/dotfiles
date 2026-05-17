@@ -334,6 +334,18 @@ else
     echo "VLC is already installed."
 fi
 
+# Install GNOME Browser Integration (native messaging host for extensions.gnome.org)
+echo "Installing GNOME Browser Integration..."
+if ! dpkg -l 2>/dev/null | grep -qE '^ii\s+(gnome-browser-connector|chrome-gnome-shell)\s'; then
+    if apt-cache show gnome-browser-connector &> /dev/null; then
+        sudo apt install -y gnome-browser-connector
+    else
+        sudo apt install -y chrome-gnome-shell
+    fi
+else
+    echo "GNOME Browser Integration is already installed."
+fi
+
 # Install communication apps
 echo "Installing communication apps..."
 if ! snap list | grep -q slack; then
@@ -629,6 +641,11 @@ if command -v thunderbird &> /dev/null; then
     echo "Thunderbird: $(thunderbird --version 2>&1 | head -n 1)"
 else
     echo "Thunderbird: Not found in PATH"
+fi
+if dpkg -l 2>/dev/null | grep -qE '^ii\s+(gnome-browser-connector|chrome-gnome-shell)\s'; then
+    echo "GNOME Browser Integration: Installed"
+else
+    echo "GNOME Browser Integration: Not installed"
 fi
 if fc-list | grep -q "Nerd Font"; then
     echo "Nerd Fonts: Installed"
