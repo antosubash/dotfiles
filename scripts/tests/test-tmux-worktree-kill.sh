@@ -89,19 +89,27 @@ test_remove_success_kills_window() {
     teardown_test
 }
 
-test_remove_failure_does_not_kill_window() {
-    setup_test "remove fails on dirty worktree, leaves window alive"
+test_remove_force_removes_dirty_worktree() {
+    setup_test "remove force-removes dirty worktree and kills window"
     make_repo "$TMPDIR_ROOT/repo"
     git -C "$TMPDIR_ROOT/repo" worktree add -b feat "$TMPDIR_ROOT/repo/.worktrees/feat" >/dev/null 2>&1
-    # Make the worktree dirty so `git worktree remove` refuses.
+    # Dirty worktree: plain `git worktree remove` would refuse, but --force succeeds.
     echo dirty > "$TMPDIR_ROOT/repo/.worktrees/feat/file"
     "$SCRIPT" remove "$TMPDIR_ROOT/repo" "$TMPDIR_ROOT/repo/.worktrees/feat" "@5"
-    # Worktree should still exist
-    if [ -d "$TMPDIR_ROOT/repo/.worktrees/feat" ]; then
-        PASS=$((PASS+1))
+    if [ -e "$TMPDIR_ROOT/repo/.worktrees/feat" ]; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: dirty worktree was not force-removed")
     else
-        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: worktree was unexpectedly removed")
+        PASS=$((PASS+1))
     fi
+    assert_tmux_log_contains "kill-window -t @5" "kills the right window"
+    assert_tmux_log_not_contains "display-message" "no error displayed"
+    teardown_test
+}
+
+test_remove_failure_does_not_kill_window() {
+    setup_test "remove fails on missing worktree, leaves window alive"
+    make_repo "$TMPDIR_ROOT/repo"
+    "$SCRIPT" remove "$TMPDIR_ROOT/repo" "$TMPDIR_ROOT/repo/.worktrees/nope" "@5"
     assert_tmux_log_contains "display-message" "shows error"
     assert_tmux_log_contains "worktree remove failed" "specific error prefix"
     assert_tmux_log_not_contains "kill-window" "does not kill the window"
@@ -109,6 +117,7 @@ test_remove_failure_does_not_kill_window() {
 }
 
 test_remove_success_kills_window
+test_remove_force_removes_dirty_worktree
 test_remove_failure_does_not_kill_window
 
 summary

@@ -46,7 +46,7 @@ cmd_prompt() {
     inner="$script_abs remove '$q_main' '$q_top' '$q_win'"
     quoted_inner=$(sq_escape "$inner")
 
-    tmux confirm-before -p "remove worktree $toplevel and kill window? (y/n)" "run-shell '$quoted_inner'"
+    tmux confirm-before -p "force-remove worktree $toplevel and kill window? (y/n)" "run-shell '$quoted_inner'"
 }
 
 cmd_remove() {
@@ -54,7 +54,7 @@ cmd_remove() {
     worktree_path="${2:-}"
     window_id="${3:-}"
 
-    if err=$(git -C "$main_top" worktree remove "$worktree_path" 2>&1); then
+    if err=$(git -C "$main_top" worktree remove --force "$worktree_path" 2>&1); then
         tmux kill-window -t "$window_id"
     else
         tmux display-message "worktree remove failed: $err"
