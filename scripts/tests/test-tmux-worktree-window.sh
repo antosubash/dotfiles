@@ -2,84 +2,45 @@
 # Tests for scripts/tmux-worktree-window.sh
 # Run: bash scripts/tests/test-tmux-worktree-window.sh
 
-set -u
-
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$(cd "$HERE/.." && pwd)/tmux-worktree-window.sh"
+# shellcheck disable=SC1091
+. "$HERE/lib.sh"
 
-PASS=0
-FAIL=0
-FAILURES=()
-TEST_NAME=""
-
-cleanup_on_exit() {
-    [ -n "${TMPDIR_ROOT:-}" ] && [ -d "$TMPDIR_ROOT" ] && rm -rf "$TMPDIR_ROOT"
-}
-trap cleanup_on_exit EXIT
-
-setup_test() {
-    TEST_NAME="$1"
-    TMPDIR_ROOT="$(mktemp -d)"
-    FAKE_BIN="$TMPDIR_ROOT/bin"
-    mkdir -p "$FAKE_BIN"
-    TMUX_LOG="$TMPDIR_ROOT/tmux.log"
-    : > "$TMUX_LOG"
-
-    cat > "$FAKE_BIN/tmux" <<EOF
+# Install a fake `gh` that returns canned output for `gh pr view N ...`.
+# Usage: install_fake_gh '<pr_num>:<head_ref>' ...
+# Special: '<pr_num>:!<exit_code>:<msg>' makes that PR fail with msg on stderr.
+# NOTE: the mapping is word-split on whitespace, so values must be single tokens.
+install_fake_gh() {
+    local mapping="$*"
+    cat > "$FAKE_BIN/gh" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$TMUX_LOG"
+if [ "\$1" = "pr" ] && [ "\$2" = "view" ]; then
+    num="\$3"
+    for entry in $mapping; do
+        key="\${entry%%:*}"
+        val="\${entry#*:}"
+        if [ "\$key" = "\$num" ]; then
+            case "\$val" in
+                !*)
+                    code="\${val#!}"; code="\${code%%:*}"
+                    msg="\${val#!*:}"
+                    printf '%s\n' "\$msg" >&2
+                    exit "\$code"
+                    ;;
+                *)
+                    printf '%s\n' "\$val"
+                    exit 0
+                    ;;
+            esac
+        fi
+    done
+    printf 'no such PR: %s\n' "\$num" >&2
+    exit 1
+fi
+exit 0
 EOF
-    chmod +x "$FAKE_BIN/tmux"
-
-    ORIG_PATH="$PATH"
-    export PATH="$FAKE_BIN:$PATH"
-    cd "$TMPDIR_ROOT"
-}
-
-teardown_test() {
-    cd /
-    export PATH="$ORIG_PATH"
-    rm -rf "$TMPDIR_ROOT"
-}
-
-assert_eq() {
-    local expected="$1" actual="$2" label="${3:-}"
-    if [ "$expected" = "$actual" ]; then
-        PASS=$((PASS+1))
-    else
-        FAIL=$((FAIL+1))
-        FAILURES+=("$TEST_NAME: $label: expected [$expected] got [$actual]")
-    fi
-}
-
-assert_contains() {
-    local haystack="$1" needle="$2" label="${3:-}"
-    case "$haystack" in
-        *"$needle"*) PASS=$((PASS+1)) ;;
-        *)
-            FAIL=$((FAIL+1))
-            FAILURES+=("$TEST_NAME: $label: [$haystack] does not contain [$needle]")
-            ;;
-    esac
-}
-
-assert_tmux_log_contains() {
-    assert_contains "$(cat "$TMUX_LOG")" "$1" "${2:-tmux log}"
-}
-
-source_script() {
-    # shellcheck disable=SC1090
-    _TMUX_WORKTREE_SOURCE_ONLY=1 . "$SCRIPT"
-}
-
-summary() {
-    echo "------"
-    echo "PASS: $PASS  FAIL: $FAIL"
-    if [ "$FAIL" -gt 0 ]; then
-        printf '  %s\n' "${FAILURES[@]}"
-        exit 1
-    fi
-    exit 0
+    chmod +x "$FAKE_BIN/gh"
 }
 
 # --- tests ---
@@ -115,18 +76,6 @@ test_sanitize_name() {
 }
 
 test_sanitize_name
-
-make_repo() {
-    # Creates a real git repo with one commit at $1.
-    local dir="$1"
-    mkdir -p "$dir"
-    git -C "$dir" init -q -b main
-    git -C "$dir" config user.email t@t
-    git -C "$dir" config user.name t
-    : > "$dir/README"
-    git -C "$dir" add README
-    git -C "$dir" commit -q -m init
-}
 
 test_main_toplevel_in_repo() {
     setup_test "main_toplevel in plain repo"
@@ -377,5 +326,161 @@ test_prompt_in_repo_issues_command_prompt() {
 
 test_prompt_outside_repo
 test_prompt_in_repo_issues_command_prompt
+
+# --- PR flow ---
+
+# Builds a bare "remote" repo and pushes a commit to refs/pull/N/head so that
+# `git fetch origin refs/pull/N/head:...` works without touching the network.
+# The PR's head ref name is metadata returned by the fake gh; the remote
+# doesn't need a branch by that name for the fetch to succeed.
+make_remote_with_pr() {
+    local remote="$1" pr_num="$2"
+    git init -q --bare "$remote"
+    local seed="$TMPDIR_ROOT/seed-$pr_num"
+    git init -q -b main "$seed"
+    git -C "$seed" config user.email t@t
+    git -C "$seed" config user.name t
+    : > "$seed/README"; git -C "$seed" add README; git -C "$seed" commit -q -m base
+    : > "$seed/feature"; git -C "$seed" add feature; git -C "$seed" commit -q -m feat
+    git -C "$seed" push -q "$remote" "HEAD:refs/pull/$pr_num/head"
+    rm -rf "$seed"
+}
+
+make_clone() {
+    local remote="$1" target="$2"
+    git clone -q "$remote" "$target"
+    git -C "$target" config user.email t@t
+    git -C "$target" config user.name t
+}
+
+test_spawn_pr_rejects_non_numeric() {
+    setup_test "spawn-pr rejects non-numeric input"
+    install_fake_gh "42:feature/foo"
+    make_repo "$TMPDIR_ROOT/repo"
+    "$SCRIPT" spawn-pr "$TMPDIR_ROOT/repo" "abc"
+    assert_tmux_log_contains "display-message" "shows error"
+    assert_tmux_log_contains "invalid PR number" "specific message"
+    if grep -q "new-window" "$TMUX_LOG"; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: should not call new-window")
+    else
+        PASS=$((PASS+1))
+    fi
+    teardown_test
+}
+
+test_spawn_pr_empty_silent() {
+    setup_test "spawn-pr with empty input is silent"
+    install_fake_gh "42:feature/foo"
+    make_repo "$TMPDIR_ROOT/repo"
+    "$SCRIPT" spawn-pr "$TMPDIR_ROOT/repo" ""
+    assert_eq "" "$(cat "$TMUX_LOG")" "no tmux calls"
+    teardown_test
+}
+
+test_spawn_pr_outside_repo() {
+    setup_test "spawn-pr outside a git repo shows message"
+    install_fake_gh "42:feature/foo"
+    mkdir -p "$TMPDIR_ROOT/plain"
+    "$SCRIPT" spawn-pr "$TMPDIR_ROOT/plain" "42"
+    assert_tmux_log_contains "not a git repo" "specific message"
+    teardown_test
+}
+
+test_spawn_pr_gh_failure_surfaces() {
+    setup_test "spawn-pr surfaces gh failure"
+    install_fake_gh "42:!1:PR-unreachable"
+    make_repo "$TMPDIR_ROOT/repo"
+    "$SCRIPT" spawn-pr "$TMPDIR_ROOT/repo" "42"
+    assert_tmux_log_contains "display-message" "shows error"
+    assert_tmux_log_contains "gh pr view #42 failed" "error prefix"
+    assert_tmux_log_contains "PR-unreachable" "gh stderr surfaced"
+    teardown_test
+}
+
+test_spawn_pr_creates_worktree_and_window() {
+    setup_test "spawn-pr fetches PR head and opens window"
+    install_fake_gh "42:feature/foo"
+    make_remote_with_pr "$TMPDIR_ROOT/remote.git" "42"
+    make_clone "$TMPDIR_ROOT/remote.git" "$TMPDIR_ROOT/repo"
+    "$SCRIPT" spawn-pr "$TMPDIR_ROOT/repo" "42"
+    local wt="$TMPDIR_ROOT/repo/.worktrees/pr-42-feature-foo"
+    [ -d "$wt" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: worktree dir missing"); }
+    if git -C "$TMPDIR_ROOT/repo" show-ref --verify --quiet "refs/heads/pr-42-feature-foo"; then
+        PASS=$((PASS+1))
+    else
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: local pr branch not created")
+    fi
+    assert_tmux_log_contains "new-window -n pr-42-feature-foo -c $wt" "opens window"
+    teardown_test
+}
+
+test_spawn_pr_idempotent_when_worktree_exists() {
+    setup_test "spawn-pr reopens window when worktree already exists"
+    install_fake_gh "42:feature/foo"
+    make_remote_with_pr "$TMPDIR_ROOT/remote.git" "42"
+    make_clone "$TMPDIR_ROOT/remote.git" "$TMPDIR_ROOT/repo"
+    "$SCRIPT" spawn-pr "$TMPDIR_ROOT/repo" "42"
+    : > "$TMUX_LOG"
+    "$SCRIPT" spawn-pr "$TMPDIR_ROOT/repo" "42"
+    assert_tmux_log_contains "new-window -n pr-42-feature-foo" "second call still opens window"
+    if grep -q "display-message" "$TMUX_LOG"; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: should not error on second call")
+    else
+        PASS=$((PASS+1))
+    fi
+    teardown_test
+}
+
+test_spawn_pr_sanitizes_head_ref_with_slashes() {
+    setup_test "spawn-pr sanitizes head ref containing slashes"
+    install_fake_gh "7:bugfix/ABC-123"
+    make_remote_with_pr "$TMPDIR_ROOT/remote.git" "7"
+    make_clone "$TMPDIR_ROOT/remote.git" "$TMPDIR_ROOT/repo"
+    "$SCRIPT" spawn-pr "$TMPDIR_ROOT/repo" "7"
+    local wt="$TMPDIR_ROOT/repo/.worktrees/pr-7-bugfix-ABC-123"
+    [ -d "$wt" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: worktree dir missing at $wt"); }
+    assert_tmux_log_contains "new-window -n pr-7-bugfix-ABC-123 -c $wt" "opens window with sanitized name"
+    teardown_test
+}
+
+test_prompt_pr_outside_repo() {
+    setup_test "prompt-pr outside repo shows message"
+    install_fake_gh "1:foo"
+    mkdir -p "$TMPDIR_ROOT/plain"
+    "$SCRIPT" prompt-pr "$TMPDIR_ROOT/plain"
+    assert_tmux_log_contains "display-message" "shows message"
+    assert_tmux_log_contains "not a git repo" "specific message"
+    if grep -q "command-prompt" "$TMUX_LOG"; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: should not issue command-prompt")
+    else
+        PASS=$((PASS+1))
+    fi
+    teardown_test
+}
+
+test_prompt_pr_in_repo_issues_command_prompt() {
+    setup_test "prompt-pr in repo issues command-prompt with run-shell callback"
+    install_fake_gh "1:foo"
+    make_repo "$TMPDIR_ROOT/repo"
+    "$SCRIPT" prompt-pr "$TMPDIR_ROOT/repo"
+    local log
+    log="$(cat "$TMUX_LOG")"
+    assert_contains "$log" "command-prompt -p PR #:" "PR command-prompt issued"
+    assert_contains "$log" "run-shell"                "run-shell in callback"
+    assert_contains "$log" "$SCRIPT spawn-pr"         "spawn-pr invocation"
+    assert_contains "$log" "$TMPDIR_ROOT/repo"        "pane path baked in"
+    assert_contains "$log" "%%"                       "pr-number placeholder"
+    teardown_test
+}
+
+test_spawn_pr_rejects_non_numeric
+test_spawn_pr_empty_silent
+test_spawn_pr_outside_repo
+test_spawn_pr_gh_failure_surfaces
+test_spawn_pr_creates_worktree_and_window
+test_spawn_pr_idempotent_when_worktree_exists
+test_spawn_pr_sanitizes_head_ref_with_slashes
+test_prompt_pr_outside_repo
+test_prompt_pr_in_repo_issues_command_prompt
 
 summary
