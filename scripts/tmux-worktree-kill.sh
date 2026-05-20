@@ -18,6 +18,24 @@ main_toplevel() {
     dirname "$common_dir"
 }
 
+# If git can't recognize the path as a worktree, infer the main repo from the
+# `<main>/.worktrees/<name>[/sub...]` convention used by tmux-worktree-window.
+# Echoes "<main_top> <worktree_path>" if the path matches and <main_top> is a
+# git repo; non-zero otherwise.
+orphan_worktree_paths() {
+    p="$1"
+    case "$p" in
+        */.worktrees/*) ;;
+        *) return 1 ;;
+    esac
+    main="${p%/.worktrees/*}"
+    rest="${p#"$main"/.worktrees/}"
+    name="${rest%%/*}"
+    [ -n "$main" ] && [ -n "$name" ] || return 1
+    git -C "$main" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+    printf '%s %s\n' "$main" "$main/.worktrees/$name"
+}
+
 # Quote a string for safe inclusion inside single quotes.
 sq_escape() {
     printf '%s' "$1" | sed "s/'/'\\\\''/g"
@@ -31,10 +49,15 @@ cmd_prompt() {
     main_top=$(main_toplevel "$pane_path" 2>/dev/null)
 
     if [ -z "$toplevel" ] || [ -z "$main_top" ] || [ "$toplevel" = "$main_top" ]; then
-        # Not in a worktree (no repo, or sitting in the main repo).
-        # Mimic the default kill-window confirmation.
-        tmux confirm-before -p "kill-window #${window_id}? (y/n)" "kill-window -t '$window_id'"
-        return 0
+        # Worktree might still exist as an orphan dir whose .git metadata was
+        # pruned. Detect via the `.worktrees/<name>` convention.
+        if orphan=$(orphan_worktree_paths "$pane_path"); then
+            main_top=${orphan%% *}
+            toplevel=${orphan#* }
+        else
+            tmux confirm-before -p "kill-window #${window_id}? (y/n)" "kill-window -t '$window_id'"
+            return 0
+        fi
     fi
 
     script_dir=$(cd "$(dirname "$0")" && pwd)
@@ -54,11 +77,20 @@ cmd_remove() {
     worktree_path="${2:-}"
     window_id="${3:-}"
 
-    if err=$(git -C "$main_top" worktree remove --force "$worktree_path" 2>&1); then
-        tmux kill-window -t "$window_id"
-    else
-        tmux display-message "worktree remove failed: $err"
+    # Try git first. If the worktree is registered, this also cleans up the
+    # metadata under .git/worktrees/<name>. For an orphan dir whose metadata
+    # was already pruned, git refuses with "not a working tree"; we then fall
+    # back to nuking the directory directly.
+    err=$(git -C "$main_top" worktree remove --force "$worktree_path" 2>&1)
+    if [ -e "$worktree_path" ]; then
+        if ! rm_err=$(rm -rf -- "$worktree_path" 2>&1); then
+            tmux display-message "worktree remove failed: ${err:-$rm_err}"
+            return 0
+        fi
+        # In case the registry still has a stale entry pointing at the now-gone dir.
+        git -C "$main_top" worktree prune >/dev/null 2>&1 || true
     fi
+    tmux kill-window -t "$window_id"
 }
 
 main() {

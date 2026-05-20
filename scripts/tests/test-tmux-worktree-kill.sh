@@ -107,17 +107,51 @@ test_remove_force_removes_dirty_worktree() {
 }
 
 test_remove_failure_does_not_kill_window() {
-    setup_test "remove fails on missing worktree, leaves window alive"
+    setup_test "remove fails on missing worktree dir, leaves window alive"
     make_repo "$TMPDIR_ROOT/repo"
     "$SCRIPT" remove "$TMPDIR_ROOT/repo" "$TMPDIR_ROOT/repo/.worktrees/nope" "@5"
-    assert_tmux_log_contains "display-message" "shows error"
-    assert_tmux_log_contains "worktree remove failed" "specific error prefix"
-    assert_tmux_log_not_contains "kill-window" "does not kill the window"
+    # No directory on disk and git didn't know about it — git errors, the
+    # `[ -e ]` guard skips rm, kill-window runs. That's intentional: there's
+    # nothing left to remove and the user pressed y to confirm.
+    assert_tmux_log_contains "kill-window -t @5" "kills the window"
+    teardown_test
+}
+
+test_remove_orphan_dir_with_no_metadata() {
+    setup_test "remove rm -rfs orphan worktree dir when git metadata is gone"
+    make_repo "$TMPDIR_ROOT/repo"
+    git -C "$TMPDIR_ROOT/repo" worktree add -b feat "$TMPDIR_ROOT/repo/.worktrees/feat" >/dev/null 2>&1
+    echo dirty > "$TMPDIR_ROOT/repo/.worktrees/feat/file"
+    # Simulate user's broken state: nuke .git/worktrees metadata but leave the
+    # working directory on disk.
+    rm -rf "$TMPDIR_ROOT/repo/.git/worktrees"
+    "$SCRIPT" remove "$TMPDIR_ROOT/repo" "$TMPDIR_ROOT/repo/.worktrees/feat" "@5"
+    if [ -e "$TMPDIR_ROOT/repo/.worktrees/feat" ]; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: orphan dir was not removed")
+    else
+        PASS=$((PASS+1))
+    fi
+    assert_tmux_log_contains "kill-window -t @5" "kills the right window"
+    assert_tmux_log_not_contains "display-message" "no error displayed"
+    teardown_test
+}
+
+test_prompt_orphan_dir_offers_remove() {
+    setup_test "prompt on orphan worktree dir still offers force-remove"
+    make_repo "$TMPDIR_ROOT/repo"
+    git -C "$TMPDIR_ROOT/repo" worktree add -b feat "$TMPDIR_ROOT/repo/.worktrees/feat" >/dev/null 2>&1
+    rm -rf "$TMPDIR_ROOT/repo/.git/worktrees"
+    "$SCRIPT" prompt "$TMPDIR_ROOT/repo/.worktrees/feat" "@9"
+    assert_tmux_log_contains "force-remove worktree" "still prompts for worktree removal"
+    assert_tmux_log_contains "$TMPDIR_ROOT/repo/.worktrees/feat" "worktree path baked in"
+    assert_tmux_log_contains "$SCRIPT remove" "callback invokes remove subcommand"
     teardown_test
 }
 
 test_remove_success_kills_window
 test_remove_force_removes_dirty_worktree
 test_remove_failure_does_not_kill_window
+test_remove_orphan_dir_with_no_metadata
+test_prompt_orphan_dir_offers_remove
 
 summary
