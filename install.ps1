@@ -109,6 +109,7 @@ $mappings = @(
     @{ Src = 'vim\.vimrc';     Dest = (Join-Path $env:USERPROFILE '_vimrc') }
     @{ Src = 'tmux\.tmux.conf';Dest = (Join-Path $env:USERPROFILE '.tmux.conf') }
     @{ Src = 'nvim';           Dest = (Join-Path $env:LOCALAPPDATA 'nvim') }
+    @{ Src = '.claude\agents'; Dest = (Join-Path $env:USERPROFILE '.claude\agents') }
 )
 
 foreach ($m in $mappings) {

@@ -175,6 +175,7 @@ fi
 echo "Installing Rust..."
 if ! command -v rustc &> /dev/null; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    # shellcheck source=/dev/null
     source ~/.cargo/env
     if ! grep -q 'source ~/.cargo/env' ~/.zshrc 2>/dev/null; then
         echo 'source ~/.cargo/env' >> ~/.zshrc

@@ -24,13 +24,13 @@ echo "Installing basic system tools..."
 tools_to_install=()
 for tool in curl wget htop fastfetch vim git; do
     if ! command -v $tool &> /dev/null; then
-        tools_to_install+=($tool)
+        tools_to_install+=("$tool")
     fi
 done
 
 if [ ${#tools_to_install[@]} -gt 0 ]; then
     echo "Installing missing tools: ${tools_to_install[*]}"
-    brew install ${tools_to_install[@]}
+    brew install "${tools_to_install[@]}"
 else
     echo "All basic system tools are already installed."
 fi
@@ -77,7 +77,7 @@ fi
 
 if [ ${#dev_tools_to_install[@]} -gt 0 ]; then
     echo "Installing missing development tools: ${dev_tools_to_install[*]}"
-    brew install ${dev_tools_to_install[@]}
+    brew install "${dev_tools_to_install[@]}"
 else
     echo "All development environments are already installed."
 fi
@@ -114,7 +114,7 @@ fi
 
 if [ ${#api_tools_to_install[@]} -gt 0 ]; then
     echo "Installing missing API tools: ${api_tools_to_install[*]}"
-    brew install ${api_tools_to_install[@]}
+    brew install "${api_tools_to_install[@]}"
 else
     echo "All API testing tools are already installed."
 fi
@@ -144,7 +144,7 @@ fi
 
 if [ ${#security_tools_to_install[@]} -gt 0 ]; then
     echo "Installing missing security tools: ${security_tools_to_install[*]}"
-    brew install ${security_tools_to_install[@]}
+    brew install "${security_tools_to_install[@]}"
 else
     echo "All security tools are already installed."
 fi
@@ -167,7 +167,7 @@ fi
 
 if [ ${#net_tools_to_install[@]} -gt 0 ]; then
     echo "Installing missing network tools: ${net_tools_to_install[*]}"
-    brew install ${net_tools_to_install[@]}
+    brew install "${net_tools_to_install[@]}"
 else
     echo "All network security tools are already installed."
 fi
@@ -210,7 +210,7 @@ fi
 
 if [ ${#prod_tools_to_install[@]} -gt 0 ]; then
     echo "Installing missing productivity tools: ${prod_tools_to_install[*]}"
-    brew install ${prod_tools_to_install[@]}
+    brew install "${prod_tools_to_install[@]}"
 else
     echo "All productivity tools are already installed."
 fi
@@ -332,7 +332,7 @@ fi
 
 if [ ${#k8s_tools_to_install[@]} -gt 0 ]; then
     echo "Installing missing Kubernetes tools: ${k8s_tools_to_install[*]}"
-    brew install ${k8s_tools_to_install[@]}
+    brew install "${k8s_tools_to_install[@]}"
 else
     echo "All Kubernetes tools are already installed."
 fi
@@ -375,7 +375,7 @@ fi
 
 if [ ${#geospatial_tools_to_install[@]} -gt 0 ]; then
     echo "Installing missing geospatial tools: ${geospatial_tools_to_install[*]}"
-    brew install ${geospatial_tools_to_install[@]}
+    brew install "${geospatial_tools_to_install[@]}"
 else
     echo "All geospatial tools are already installed."
 fi
@@ -420,7 +420,7 @@ fi
 
 if [ ${#comm_apps_to_install[@]} -gt 0 ]; then
     echo "Installing missing communication apps: ${comm_apps_to_install[*]}"
-    brew install --cask ${comm_apps_to_install[@]}
+    brew install --cask "${comm_apps_to_install[@]}"
 else
     echo "All communication apps are already installed."
 fi
@@ -445,7 +445,7 @@ fi
 
 if [ ${#nerd_fonts_to_install[@]} -gt 0 ]; then
     echo "Installing missing Nerd Fonts: ${nerd_fonts_to_install[*]}"
-    brew install ${nerd_fonts_to_install[@]}
+    brew install "${nerd_fonts_to_install[@]}"
 else
     echo "All Nerd Fonts are already installed."
 fi

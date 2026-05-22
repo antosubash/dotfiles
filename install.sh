@@ -87,6 +87,13 @@ if [ -f "$DOTFILES_DIR/config/.p10k.zsh" ]; then
     echo "Powerlevel10k configuration installed"
 fi
 
+# Claude Code agents — symlink the directory so the whole roster is picked up
+# and stays in sync with the repo.
+if [ -d "$DOTFILES_DIR/.claude/agents" ]; then
+    backup_and_symlink "$DOTFILES_DIR/.claude/agents" "$HOME/.claude/agents"
+    echo "Claude Code agents installed"
+fi
+
 # Zsh and Oh My Zsh setup
 setup_zsh() {
     if [ "$SHELL_TYPE" = "zsh" ]; then
