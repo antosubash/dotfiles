@@ -181,7 +181,7 @@ update_dotfiles() {
         log_success "Dotfiles updated from repository"
         
         # Check if install.sh has been updated
-        if git log --oneline HEAD@{1}..HEAD | grep -q "install.sh"; then
+        if git log --oneline 'HEAD@{1}..HEAD' | grep -q "install.sh"; then
             log_warning "install.sh was updated, consider running: cd ~/dotfiles && ./install.sh"
         fi
     else

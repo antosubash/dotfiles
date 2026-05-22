@@ -33,7 +33,7 @@ EOF
 
     ORIG_PATH="$PATH"
     export PATH="$FAKE_BIN:$PATH"
-    cd "$TMPDIR_ROOT"
+    cd "$TMPDIR_ROOT" || exit 1
 }
 
 teardown_test() {

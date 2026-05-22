@@ -26,6 +26,7 @@ warn() {
 DOTFILES_DIR="$HOME/dotfiles"
 BIN_DIR="$HOME/.local/bin"
 UPDATE_SCRIPT="$DOTFILES_DIR/scripts/update-all.sh"
+# shellcheck disable=SC2034  # referenced by name in commands installed by this script
 QUICK_UPDATE_SCRIPT="$DOTFILES_DIR/scripts/update-quick.sh"
 
 # Create bin directory if it doesn't exist
