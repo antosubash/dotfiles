@@ -93,7 +93,6 @@ alias nt="npm run test"
 # Development aliases - pnpm
 alias ps="pnpm start"
 alias pr="pnpm run"
-alias pi="pnpm install"
 alias pd="pnpm dev"
 alias pb="pnpm build"
 alias pt="pnpm test"

@@ -39,7 +39,8 @@ export TERM="xterm-256color"
 
 # Development paths
 export GOPATH="$HOME/go"
-export DOTNET_ROOT="$HOME/.dotnet"
+export DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}"
+export DOTNET_TOOLS="$HOME/.dotnet/tools"
 export NVM_DIR="$HOME/.nvm"
 export PNPM_HOME="$HOME/.local/share/pnpm"
 export PIP_CACHE_DIR="$HOME/.cache/pip"
