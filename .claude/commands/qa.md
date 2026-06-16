@@ -1,6 +1,6 @@
 ---
 description: Comprehensive QA testing of a feature using Playwright MCP — launches the app, fans out parallel test agents, auto-fixes bugs with developer agents, runs code review, and loops until all issues are resolved. Acts like a Senior QA engineer leading a full QA cycle.
-argument-hint: [feature/page description] [--url URL] [--port N] [--route PATH] [--start CMD] [--no-start] [--depth shallow|normal|deep] [--a11y] [--responsive] [--perf] [--no-fix] [--max-iterations N]
+argument-hint: [feature/page description] [--url URL] [--port N] [--route PATH] [--start CMD] [--no-start] [--depth shallow|normal|deep] [--a11y] [--responsive] [--perf] [--no-fix] [--no-vf] [--max-iterations N]
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Agent, TaskCreate, TaskUpdate, TaskList, mcp__plugin_playwright_playwright__browser_navigate, mcp__plugin_playwright_playwright__browser_snapshot, mcp__plugin_playwright_playwright__browser_click, mcp__plugin_playwright_playwright__browser_type, mcp__plugin_playwright_playwright__browser_hover, mcp__plugin_playwright_playwright__browser_take_screenshot, mcp__plugin_playwright_playwright__browser_fill_form, mcp__plugin_playwright_playwright__browser_select_option, mcp__plugin_playwright_playwright__browser_press_key, mcp__plugin_playwright_playwright__browser_wait_for, mcp__plugin_playwright_playwright__browser_console_messages, mcp__plugin_playwright_playwright__browser_network_requests, mcp__plugin_playwright_playwright__browser_network_request, mcp__plugin_playwright_playwright__browser_evaluate, mcp__plugin_playwright_playwright__browser_tabs, mcp__plugin_playwright_playwright__browser_navigate_back, mcp__plugin_playwright_playwright__browser_close, mcp__plugin_playwright_playwright__browser_resize, mcp__plugin_playwright_playwright__browser_file_upload, mcp__plugin_playwright_playwright__browser_handle_dialog, mcp__plugin_playwright_playwright__browser_drag, mcp__plugin_playwright_playwright__browser_drop, mcp__plugin_playwright_playwright__browser_run_code_unsafe
 ---
 
@@ -32,6 +32,7 @@ Parse into:
 - `--responsive` — test responsive breakpoints (automatic in `deep`)
 - `--perf` — check performance (automatic in `deep`)
 - `--no-fix` — report only, do not auto-fix bugs
+- `--no-vf` — skip the automatic `/vf` invocation in Phase 9. Use when an orchestrator (e.g. `/ship`) runs `/vf` itself and wants `/qa` to fix bugs and loop but NOT open its own PR.
 - `--max-iterations N` — max fix→retest loops (default: 3, prevents infinite loops)
 
 ## Hard Rules
@@ -438,7 +439,7 @@ Read the current iteration from `.qa/current-iteration`. Count the number of P0+
 
 ```
 IF failures == 0:
-    → Jump to Phase 9 (Final Summary). The feature is clean. Phase 9 will invoke /vf.
+    → Jump to Phase 9 (Final Summary). The feature is clean. Phase 9 will invoke /vf (unless `--no-vf` is set).
 
 ELSE IF --no-fix flag was set:
     → Jump to Phase 9 (Final Summary). Report only, no fixing.
@@ -692,7 +693,9 @@ On re-test iterations, the Phase 3 report MUST include a delta section:
    ```
    Do NOT invoke /vf when issues remain.
 
-6. **If ALL CLEAN (0 failures across all categories) and `--no-fix` is NOT set:**
+6. **If `--no-vf` is set:** do NOT invoke `/vf`. An orchestrator (e.g. `/ship`) owns the verification + PR step and will run `/vf` itself. Echo `Phase 9: /vf skipped (--no-vf — orchestrator owns PR)` and report the final QA result (ALL CLEAN or remaining issues). Then fall through to the closing `TaskUpdate` at the end of Phase 9 (do not skip the task audit) — skip only step 7.
+
+7. **If ALL CLEAN (0 failures across all categories) and neither `--no-fix` nor `--no-vf` is set:**
 
    **YOU MUST invoke /vf using the Skill tool.** This is not optional. Do it like this:
 
