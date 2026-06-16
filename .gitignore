@@ -20,3 +20,6 @@ Thumbs.db
 
 # Ignore local aliases (machine-specific)
 shell/aliases.local.zsh
+
+# Ignore Claude Code worktrees
+.worktrees/
