@@ -22,6 +22,11 @@ setopt HIST_SAVE_NO_DUPS    # Don't save duplicate entries
 setopt SHARE_HISTORY        # Share history between all sessions
 setopt HIST_IGNORE_SPACE    # Don't save commands that start with space
 setopt HIST_FIND_NO_DUPS    # Don't display duplicates when searching history
+setopt HIST_FCNTL_LOCK      # Lock history via fcntl() on the file, not a .LOCK file in $HOME
+                            # ($HOME's top level is read-only on this volume; a lock file
+                            #  there fails: "locking failed ...: permission denied")
+unsetopt HIST_SAVE_BY_COPY  # Save in place; the default temp-file+rename can't create its
+                            #  temp in a read-only $HOME and would silently drop history writes
 
 # Completion
 setopt COMPLETE_IN_WORD     # Complete from both sides of cursor

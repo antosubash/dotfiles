@@ -22,6 +22,14 @@ export HISTFILE="$HISTORY_FILE"
 export HISTSIZE="$HISTSIZE"
 export SAVEHIST="$SAVEHIST"
 
+# Completion dump — keep inside the writable cache dir, never the $HOME root.
+# Oh My Zsh defaults this to $HOME/.zcompdump-<host>-<ver>; on this volume the
+# $HOME top level is read-only, so that file can't be created/rotated and errors
+# out during init. Must be set before oh-my-zsh.sh runs (it is: env.zsh is
+# sourced before Oh My Zsh in .zshrc).
+export ZSH_COMPDUMP="${CACHE_DIR:-$HOME/.cache/zsh}/.zcompdump-${HOST%%.*}-${ZSH_VERSION}"
+mkdir -p "${CACHE_DIR:-$HOME/.cache/zsh}" 2>/dev/null
+
 # Development paths
 export PATH="$LOCAL_BIN_DIR:$HOME/.cargo/bin:$PATH"
 export GOPATH="$GOPATH"

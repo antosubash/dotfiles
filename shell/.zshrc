@@ -92,11 +92,6 @@ if [[ -f "$DOTFILES_DIR/shell/performance.zsh" ]]; then
     source "$DOTFILES_DIR/shell/performance.zsh"
 fi
 
-# Load local overrides if they exist
-if [[ -f "${ZSHRC_LOCAL:-$HOME/.zshrc.local}" ]]; then
-    source "${ZSHRC_LOCAL:-$HOME/.zshrc.local}"
-fi
-
 # Load local environment
 if [[ -f "${ENV_FILE:-$HOME/.local/bin/env}" ]]; then
     source "${ENV_FILE:-$HOME/.local/bin/env}"
@@ -134,7 +129,11 @@ if [ -f "$HOME/.update_aliases" ]; then
     source "$HOME/.update_aliases"
 fi
 
-export PATH=$PATH:/usr/local/go/bin
+# Update commands
+alias update='~/.local/bin/update'
+alias update-quick='~/.local/bin/update-quick'
+alias upd='update-quick'
+alias upf='update'
 
 # pnpm
 export PNPM_HOME="$HOME/.local/share/pnpm"
@@ -144,32 +143,16 @@ case ":$PATH:" in
 esac
 # pnpm end
 
-# Update command aliases
-if [ -f "$HOME/.update_aliases" ]; then
-    source "$HOME/.update_aliases"
-fi
-
-# Update commands
-alias update='~/.local/bin/update'
-alias update-quick='~/.local/bin/update-quick'
-alias upd='update-quick'
-alias upf='update'
-
-# Update command aliases
-if [ -f "$HOME/.update_aliases" ]; then
-    source "$HOME/.update_aliases"
-fi
-
-# Update commands
-alias update='~/.local/bin/update'
-alias update-quick='~/.local/bin/update-quick'
-alias upd='update-quick'
-alias upf='update'
-source ~/.cargo/env
-export DOTNET_ROOT=$HOME/.dotnet
-export PATH=$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools
-export PATH=$PATH:~/go/bin
+# Rust / cargo
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 export PATH="$HOME/.cargo/bin:$PATH"
+
+# .NET
+export DOTNET_ROOT="$HOME/.dotnet"
+export PATH="$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools"
+
+# Go
+export PATH="$PATH:/usr/local/go/bin:$HOME/go/bin"
 
 # tmux aliases & helpers
 if [ -f "$HOME/dotfiles/shell/tmux-aliases.sh" ]; then
@@ -181,3 +164,13 @@ fi
 if command -v atuin > /dev/null 2>&1; then
     eval "$(atuin init zsh)"
 fi
+
+# Load local overrides LAST so they can override anything above
+if [[ -f "${ZSHRC_LOCAL:-$HOME/.zshrc.local}" ]]; then
+    source "${ZSHRC_LOCAL:-$HOME/.zshrc.local}"
+fi
+# The following lines have been added by Docker Desktop to enable Docker CLI completions.
+fpath=(/Volumes/ext1/.docker/completions $fpath)
+autoload -Uz compinit
+compinit
+# End of Docker CLI completions
