@@ -46,5 +46,10 @@
   "autoCompactEnabled": true,
   "remoteControlAtStartup": true,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "statusLine": {
+    "type": "command",
+    "command": "python3 ~/.claude/statusline.py",
+    "padding": 0
+  }
 }

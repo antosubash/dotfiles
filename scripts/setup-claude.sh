@@ -39,8 +39,14 @@ backup_and_symlink "$DOTFILES_DIR/.claude/agents" "$CLAUDE_DIR/agents"
 # Commands
 backup_and_symlink "$DOTFILES_DIR/.claude/commands" "$CLAUDE_DIR/commands"
 
+# Status line + session usage report
+backup_and_symlink "$DOTFILES_DIR/.claude/statusline.py" "$CLAUDE_DIR/statusline.py"
+backup_and_symlink "$DOTFILES_DIR/.claude/cc-sessions.py" "$CLAUDE_DIR/cc-sessions.py"
+
 echo ""
 echo "Claude Code setup complete!"
 echo "  Settings:  ~/.claude/settings.json"
 echo "  Agents:    ~/.claude/agents/"
 echo "  Commands:  ~/.claude/commands/"
+echo "  Statusline: ~/.claude/statusline.py"
+echo "  Sessions:  ~/.claude/cc-sessions.py"
