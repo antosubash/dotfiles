@@ -124,16 +124,11 @@ if [[ -o interactive ]] && [[ -n "$ZSHRC_START_TIME" ]] && command -v bc &> /dev
     fi
 fi
 
-# Update command aliases
-if [ -f "$HOME/.update_aliases" ]; then
-    source "$HOME/.update_aliases"
-fi
-
-# Update commands
-alias update='~/.local/bin/update'
-alias update-quick='~/.local/bin/update-quick'
-alias upd='update-quick'
-alias upf='update'
+# Update commands: defined in shell/aliases.zsh, which prefers the installed
+# ~/.local/bin/update binary and falls back to dotfiles/scripts/update-all.sh.
+# Do NOT hardcode `alias update=~/.local/bin/update` here — it runs after
+# aliases.zsh and would clobber that fallback, breaking `update` whenever the
+# binary isn't installed.
 
 # pnpm
 export PNPM_HOME="$HOME/.local/share/pnpm"
