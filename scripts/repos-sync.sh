@@ -92,6 +92,23 @@ is_dirty() {
     [ -n "$(git -C "$1" status --porcelain 2>/dev/null)" ]
 }
 
+has_origin() {
+    git -C "$1" remote get-url origin >/dev/null 2>&1
+}
+
+# Print the repo's default branch (short name), or nothing if undeterminable.
+# Repairs a missing origin/HEAD, which some clones never had set.
+default_branch() {
+    local repo="$1" ref
+    has_origin "$repo" || return 0
+    ref=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+    if [ -z "$ref" ]; then
+        git -C "$repo" remote set-head origin --auto >/dev/null 2>&1
+        ref=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+    fi
+    printf '%s' "${ref#origin/}"
+}
+
 main() {
     parse_args "$@"
     if [ ! -d "$ROOT" ]; then

@@ -73,4 +73,33 @@ is_dirty "$r" && s=dirty || s=clean
 assert_eq "dirty" "$s" "untracked file is dirty"
 teardown_test
 
+setup_test "default_branch reads origin/HEAD for non-main defaults"
+load_script
+make_remote gamma dev
+clone_repo gamma
+assert_eq "dev" "$(default_branch "$TMPDIR_ROOT/ws/gamma")" "dev default"
+make_remote delta master
+clone_repo delta
+assert_eq "master" "$(default_branch "$TMPDIR_ROOT/ws/delta")" "master default"
+teardown_test
+
+setup_test "default_branch repairs a missing origin/HEAD"
+load_script
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+git -C "$r" symbolic-ref --delete refs/remotes/origin/HEAD
+assert_eq "" "$(git -C "$r" symbolic-ref --quiet --short refs/remotes/origin/HEAD)" "head unset"
+assert_eq "main" "$(default_branch "$r")" "recovered"
+assert_eq "origin/main" "$(git -C "$r" symbolic-ref --quiet --short refs/remotes/origin/HEAD)" "head persisted"
+teardown_test
+
+setup_test "has_origin is false for a remote-less repo"
+load_script
+mkdir -p "$TMPDIR_ROOT/ws"
+make_repo "$TMPDIR_ROOT/ws/solo"
+has_origin "$TMPDIR_ROOT/ws/solo" && s=yes || s=no
+assert_eq "no" "$s" "no origin"
+assert_eq "" "$(default_branch "$TMPDIR_ROOT/ws/solo")" "no default branch"
+teardown_test
+
 summary
