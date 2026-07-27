@@ -140,6 +140,22 @@ sync_repo() {
     fi
 
     cur="$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null)"
+
+    # Under --dry-run, report the intent from the refs we already have without
+    # switching or merging anything.
+    if [ "$DRY_RUN" -eq 1 ]; then
+        if [ "$cur" != "$def" ]; then
+            printf 'switched|%s -> %s (would switch)\n' "${cur:-detached}" "$def"
+        elif [ "$(git -C "$repo" rev-parse HEAD)" = "$(git -C "$repo" rev-parse "origin/$def")" ]; then
+            printf 'current|%s\n' "$def"
+        elif git -C "$repo" merge-base --is-ancestor HEAD "origin/$def" 2>/dev/null; then
+            printf 'updated|%s (would fast-forward)\n' "$def"
+        else
+            printf 'diverged|%s has local commits not on origin/%s\n' "$def" "$def"
+        fi
+        return
+    fi
+
     if [ "$cur" != "$def" ]; then
         if git -C "$repo" show-ref --verify --quiet "refs/heads/$def"; then
             git -C "$repo" switch --quiet "$def" 2>/dev/null \
@@ -279,13 +295,106 @@ cleanup_worktrees() {
     done < <(list_worktrees "$repo")
 }
 
+# Fetch every repo, at most JOBS at a time. Pruning here is what makes deleted
+# upstream branches detectable during worktree classification.
+fetch_all() {
+    local repo running=0
+    for repo in "$@"; do
+        git -C "$repo" fetch --all --prune --prune-tags --quiet >/dev/null 2>&1 &
+        running=$((running + 1))
+        if [ "$running" -ge "$JOBS" ]; then
+            wait -n 2>/dev/null || wait
+            running=$((running - 1))
+        fi
+    done
+    wait
+}
+
+report_repo() {
+    local name="$1" status="$2" detail="$3" colour
+    case "$status" in
+        updated)        colour="$C_GREEN" ;;
+        switched)       colour="$C_CYAN" ;;
+        current)        colour="$C_DIM" ;;
+        dirty|locked)   colour="$C_YELLOW" ;;
+        diverged|error) colour="$C_RED" ;;
+        *)              colour="$C_BLUE" ;;
+    esac
+    printf '%s%-34s%s %s%-10s%s %s%s%s\n' \
+        "$C_BOLD" "$name" "$C_RESET" \
+        "$colour" "$status" "$C_RESET" \
+        "$C_DIM" "$detail" "$C_RESET"
+}
+
 main() {
     parse_args "$@"
     if [ ! -d "$ROOT" ]; then
         printf '%sroot not found: %s%s\n' "$C_RED" "$ROOT" "$C_RESET" >&2
         exit 1
     fi
-    discover_repos
+
+    local repos=() repo name def line status detail
+    while IFS= read -r repo; do
+        [ -n "$repo" ] && repos+=("$repo")
+    done < <(discover_repos)
+
+    if [ "${#repos[@]}" -eq 0 ]; then
+        printf 'no git repos found under %s\n' "$ROOT" >&2
+        exit 1
+    fi
+
+    printf '%sfetching %d repos under %s%s\n\n' \
+        "$C_DIM" "${#repos[@]}" "$ROOT" "$C_RESET"
+    [ "$DRY_RUN" -eq 1 ] || fetch_all "${repos[@]}"
+
+    local n_updated=0 n_current=0 n_switched=0 n_dirty=0 n_problem=0
+    local n_removable=0 n_removed=0 n_kept=0
+    local action path reason
+
+    for repo in "${repos[@]}"; do
+        name="${repo##*/}"
+        def="$(default_branch "$repo")"
+        line="$(sync_repo "$repo" "$def")"
+        status="${line%%|*}"
+        detail="${line#*|}"
+        report_repo "$name" "$status" "$detail"
+        case "$status" in
+            updated)  n_updated=$((n_updated + 1)) ;;
+            switched) n_switched=$((n_switched + 1)) ;;
+            current)  n_current=$((n_current + 1)) ;;
+            dirty)    n_dirty=$((n_dirty + 1)) ;;
+            *)        n_problem=$((n_problem + 1)) ;;
+        esac
+
+        [ -n "$def" ] || continue
+        while IFS='|' read -r action path reason; do
+            [ -n "$action" ] || continue
+            case "$action" in
+                removed)
+                    n_removed=$((n_removed + 1))
+                    printf '    %s- worktree removed%s %s %s(%s)%s\n' \
+                        "$C_GREEN" "$C_RESET" "${path##*/}" "$C_DIM" "$reason" "$C_RESET" ;;
+                removable)
+                    n_removable=$((n_removable + 1))
+                    printf '    %s- worktree removable%s %s %s(%s)%s\n' \
+                        "$C_YELLOW" "$C_RESET" "${path##*/}" "$C_DIM" "$reason" "$C_RESET" ;;
+                kept)
+                    n_kept=$((n_kept + 1)) ;;
+            esac
+        done < <(cleanup_worktrees "$repo" "$def")
+    done
+
+    printf '\n%s%d updated · %d switched · %d up to date · %d skipped (dirty) · %d other%s\n' \
+        "$C_BOLD" "$n_updated" "$n_switched" "$n_current" "$n_dirty" "$n_problem" "$C_RESET"
+    if [ "$n_removed" -gt 0 ]; then
+        printf '%s%d worktrees removed · %d kept%s\n' \
+            "$C_BOLD" "$n_removed" "$n_kept" "$C_RESET"
+    elif [ "$n_removable" -gt 0 ]; then
+        printf '%s%d worktrees removable · %d kept%s  %srerun with --prune-worktrees to remove them%s\n' \
+            "$C_BOLD" "$n_removable" "$n_kept" "$C_RESET" "$C_DIM" "$C_RESET"
+    else
+        printf '%s%d worktrees kept, none removable%s\n' "$C_BOLD" "$n_kept" "$C_RESET"
+    fi
 }
 
 if [ -z "${REPOS_SYNC_SOURCE_ONLY:-}" ]; then

@@ -341,4 +341,69 @@ assert_contains "$out" "removable|" "listed only"
 assert_eq "present" "$s" "dry run left it alone"
 teardown_test
 
+setup_test "end to end: syncs, skips dirty, lists removable worktrees"
+load_script
+make_remote alpha; clone_repo alpha
+make_remote beta dev; clone_repo beta
+seed="$TMPDIR_ROOT/seed-alpha"
+echo more > "$seed/file"; git -C "$seed" commit -qam more; git -C "$seed" push -q origin main
+a="$TMPDIR_ROOT/ws/alpha"; b="$TMPDIR_ROOT/ws/beta"
+git -C "$a" switch -q -c feature
+add_worktree "$b" wt1 topic
+echo uncommitted > "$b/file"
+out="$(bash "$SCRIPT" --root "$TMPDIR_ROOT/ws" 2>&1)"
+assert_contains "$out" "alpha" "alpha reported"
+assert_contains "$out" "beta" "beta reported"
+assert_contains "$out" "dirty" "beta flagged dirty"
+assert_contains "$out" "worktree removable" "removable worktree surfaced"
+assert_eq "main" "$(git -C "$a" symbolic-ref --short HEAD)" "alpha moved to main"
+assert_eq "more" "$(cat "$a/file")" "alpha fast-forwarded"
+assert_eq "uncommitted" "$(cat "$b/file")" "beta untouched"
+[ -d "$b/.claude/worktrees/wt1" ] && s=present || s=gone
+assert_eq "present" "$s" "worktree not removed without the flag"
+teardown_test
+
+setup_test "end to end: --prune-worktrees removes the landed worktree"
+load_script
+make_remote alpha; clone_repo alpha
+a="$TMPDIR_ROOT/ws/alpha"
+add_worktree "$a" wt1 topic
+out="$(bash "$SCRIPT" --root "$TMPDIR_ROOT/ws" --prune-worktrees 2>&1)"
+assert_contains "$out" "worktree removed" "removal reported"
+[ -d "$a/.claude/worktrees/wt1" ] && s=present || s=gone
+assert_eq "gone" "$s" "worktree removed"
+teardown_test
+
+setup_test "end to end: --dry-run changes nothing"
+load_script
+make_remote alpha; clone_repo alpha
+a="$TMPDIR_ROOT/ws/alpha"
+git -C "$a" switch -q -c feature
+add_worktree "$a" wt1 topic
+bash "$SCRIPT" --root "$TMPDIR_ROOT/ws" --prune-worktrees --dry-run >/dev/null 2>&1
+assert_eq "feature" "$(git -C "$a" symbolic-ref --short HEAD)" "branch unchanged"
+[ -d "$a/.claude/worktrees/wt1" ] && s=present || s=gone
+assert_eq "present" "$s" "worktree untouched"
+teardown_test
+
+setup_test "end to end: repo filter limits the sweep"
+load_script
+make_remote alpha; clone_repo alpha
+make_remote beta;  clone_repo beta
+a="$TMPDIR_ROOT/ws/alpha"; b="$TMPDIR_ROOT/ws/beta"
+git -C "$a" switch -q -c feature
+git -C "$b" switch -q -c feature
+bash "$SCRIPT" --root "$TMPDIR_ROOT/ws" alpha >/dev/null 2>&1
+assert_eq "main" "$(git -C "$a" symbolic-ref --short HEAD)" "alpha synced"
+assert_eq "feature" "$(git -C "$b" symbolic-ref --short HEAD)" "beta skipped by filter"
+teardown_test
+
+setup_test "--help exits cleanly and --jobs validates"
+load_script
+bash "$SCRIPT" --help >/dev/null 2>&1 && rc=0 || rc=$?
+assert_eq "0" "$rc" "help exit code"
+bash "$SCRIPT" --jobs abc >/dev/null 2>&1 && rc=0 || rc=$?
+assert_eq "2" "$rc" "bad --jobs rejected"
+teardown_test
+
 summary
