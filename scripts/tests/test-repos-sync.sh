@@ -265,4 +265,80 @@ out="$(classify_worktree "$r" "$r/.claude/worktrees/clean" refs/heads/topicc mai
 assert_eq "remove|merged" "$out" "clean merged removable"
 teardown_test
 
+setup_test "cleanup_worktrees only lists when --prune-worktrees is not set"
+load_script
+PRUNE_WORKTREES=0; DRY_RUN=0
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+add_worktree "$r" wt1 topic
+out="$(cleanup_worktrees "$r" main)"
+assert_contains "$out" "removable|" "listed as removable"
+assert_not_contains "$out" "removed|" "nothing removed"
+[ -d "$r/.claude/worktrees/wt1" ] && s=present || s=gone
+assert_eq "present" "$s" "worktree still on disk"
+teardown_test
+
+setup_test "cleanup_worktrees removes the worktree and its branch when pruning"
+load_script
+PRUNE_WORKTREES=1; DRY_RUN=0
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+add_worktree "$r" wt1 topic
+out="$(cleanup_worktrees "$r" main)"
+assert_contains "$out" "removed|" "reported removed"
+[ -d "$r/.claude/worktrees/wt1" ] && s=present || s=gone
+assert_eq "gone" "$s" "directory removed"
+git -C "$r" show-ref --verify --quiet refs/heads/topic && s=present || s=gone
+assert_eq "gone" "$s" "branch deleted"
+teardown_test
+
+setup_test "cleanup_worktrees deletes a squash-merged branch with -D"
+load_script
+PRUNE_WORKTREES=1; DRY_RUN=0
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"; seed="$TMPDIR_ROOT/seed-alpha"
+add_worktree "$r" wt1 topic
+w="$r/.claude/worktrees/wt1"
+printf 'a\n' > "$w/f1"; git -C "$w" add f1; git -C "$w" commit -qm c1
+printf 'a\n' > "$seed/f1"; git -C "$seed" add f1; git -C "$seed" commit -qm squashed
+git -C "$seed" push -q origin main
+git -C "$r" fetch -q origin
+out="$(cleanup_worktrees "$r" main)"
+assert_contains "$out" "removed|" "reported removed"
+git -C "$r" show-ref --verify --quiet refs/heads/topic && s=present || s=gone
+assert_eq "gone" "$s" "squashed branch deleted"
+teardown_test
+
+setup_test "cleanup_worktrees keeps dirty and unmerged worktrees when pruning"
+load_script
+PRUNE_WORKTREES=1; DRY_RUN=0
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+add_worktree "$r" dirty topicd
+echo edit > "$r/.claude/worktrees/dirty/file"
+add_worktree "$r" unmerged topicu
+w="$r/.claude/worktrees/unmerged"
+printf 'x\n' > "$w/only-here"; git -C "$w" add only-here; git -C "$w" commit -qm unlanded
+out="$(cleanup_worktrees "$r" main)"
+assert_contains "$out" "kept|$r/.claude/worktrees/dirty|dirty" "dirty kept"
+assert_contains "$out" "kept|$r/.claude/worktrees/unmerged|unmerged" "unmerged kept"
+[ -d "$r/.claude/worktrees/dirty" ] && s=present || s=gone
+assert_eq "present" "$s" "dirty dir intact"
+assert_eq "edit" "$(cat "$r/.claude/worktrees/dirty/file")" "dirty content intact"
+[ -d "$r/.claude/worktrees/unmerged" ] && s=present || s=gone
+assert_eq "present" "$s" "unmerged dir intact"
+teardown_test
+
+setup_test "cleanup_worktrees changes nothing under --dry-run"
+load_script
+PRUNE_WORKTREES=1; DRY_RUN=1
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+add_worktree "$r" wt1 topic
+out="$(cleanup_worktrees "$r" main)"
+assert_contains "$out" "removable|" "listed only"
+[ -d "$r/.claude/worktrees/wt1" ] && s=present || s=gone
+assert_eq "present" "$s" "dry run left it alone"
+teardown_test
+
 summary

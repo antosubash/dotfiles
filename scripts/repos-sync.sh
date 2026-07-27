@@ -237,6 +237,48 @@ classify_worktree() {
     fi
 }
 
+# Remove one worktree and its now-orphaned branch. Never uses --force on the
+# worktree, so git re-checks for modifications and aborts on its own if the
+# state changed since classification.
+remove_worktree() {
+    local repo="$1" path="$2" branch="$3" reason="$4"
+    git -C "$repo" worktree remove "$path" >/dev/null 2>&1 || return 1
+    # -d refuses branches that are not ancestors, which is exactly the squashed
+    # and upstream-gone cases we already proved safe.
+    git -C "$repo" branch -d "$branch" >/dev/null 2>&1 && return 0
+    case "$reason" in
+        squashed|upstream-gone) git -C "$repo" branch -D "$branch" >/dev/null 2>&1 ;;
+    esac
+    return 0
+}
+
+# Walk a repo's worktrees. Prints "ACTION|path|reason" per worktree, where
+# ACTION is removed, removable or kept.
+cleanup_worktrees() {
+    local repo="$1" def="$2" path branchref branch verdict action reason
+    [ "$DRY_RUN" -eq 1 ] || git -C "$repo" worktree prune >/dev/null 2>&1
+    while IFS=$'\t' read -r path branchref; do
+        [ -n "$path" ] || continue
+        verdict="$(classify_worktree "$repo" "$path" "$branchref" "$def")"
+        action="${verdict%%|*}"
+        reason="${verdict#*|}"
+        if [ "$action" != "remove" ]; then
+            printf 'kept|%s|%s\n' "$path" "$reason"
+            continue
+        fi
+        if [ "$PRUNE_WORKTREES" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
+            branch="${branchref#refs/heads/}"
+            if remove_worktree "$repo" "$path" "$branch" "$reason"; then
+                printf 'removed|%s|%s\n' "$path" "$reason"
+            else
+                printf 'kept|%s|remove-failed\n' "$path"
+            fi
+        else
+            printf 'removable|%s|%s\n' "$path" "$reason"
+        fi
+    done < <(list_worktrees "$repo")
+}
+
 main() {
     parse_args "$@"
     if [ ! -d "$ROOT" ]; then
