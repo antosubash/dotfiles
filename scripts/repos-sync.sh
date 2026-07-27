@@ -167,6 +167,76 @@ sync_repo() {
     fi
 }
 
+# Print "path<TAB>branchref" for every worktree except the main working tree.
+# branchref is empty for a detached worktree.
+list_worktrees() {
+    git -C "$1" worktree list --porcelain 2>/dev/null | awk '
+        /^worktree /{ if (p != "") print p "\t" b; p = substr($0, 10); b = "" }
+        /^branch /  { b = substr($0, 8) }
+        END         { if (p != "") print p "\t" b }
+    ' | tail -n +2
+}
+
+# Exit 0 and print a reason when BRANCH is provably already in DEFAULT.
+worktree_removable() {
+    local repo="$1" branch="$2" def="$3" mb tree dangling upstream remote_ref
+
+    # 1. Ordinary merge or rebase: every commit is already in the default branch.
+    if git -C "$repo" merge-base --is-ancestor "$branch" "origin/$def" 2>/dev/null; then
+        printf 'merged'
+        return 0
+    fi
+
+    # 2. Squash merge: rebuild the branch's tree as one synthetic commit off the
+    #    merge base and ask whether that patch is already applied. git cherry
+    #    prefixes "-" when it is.
+    mb="$(git -C "$repo" merge-base "origin/$def" "$branch" 2>/dev/null)"
+    if [ -n "$mb" ]; then
+        tree="$(git -C "$repo" rev-parse "$branch^{tree}" 2>/dev/null)"
+        if [ -n "$tree" ]; then
+            dangling="$(git -C "$repo" \
+                -c user.name=repos-sync -c user.email=repos-sync@localhost \
+                commit-tree "$tree" -p "$mb" -m _ 2>/dev/null)"
+            if [ -n "$dangling" ] \
+               && git -C "$repo" cherry "origin/$def" "$dangling" 2>/dev/null | grep -q '^-'; then
+                printf 'squashed'
+                return 0
+            fi
+        fi
+    fi
+
+    # 3. Upstream deleted on the remote and nothing lives only here.
+    upstream="$(git -C "$repo" config --get "branch.$branch.merge" 2>/dev/null)"
+    if [ -n "$upstream" ]; then
+        remote_ref="refs/remotes/origin/${upstream#refs/heads/}"
+        if ! git -C "$repo" show-ref --verify --quiet "$remote_ref" \
+           && [ "$(git -C "$repo" rev-list --count "$branch" --not --remotes 2>/dev/null)" = "0" ]; then
+            printf 'upstream-gone'
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Decide the fate of one worktree. Prints "remove|reason" or "keep|reason".
+classify_worktree() {
+    local repo="$1" path="$2" branchref="$3" def="$4" branch reason
+    [ -d "$path" ]        || { printf 'keep|missing\n';  return; }
+    [ -n "$branchref" ]   || { printf 'keep|detached\n'; return; }
+    branch="${branchref#refs/heads/}"
+    [ "$branch" != "$def" ] || { printf 'keep|default-branch\n'; return; }
+    if is_dirty "$path"; then
+        printf 'keep|dirty\n'
+        return
+    fi
+    if reason="$(worktree_removable "$repo" "$branch" "$def")"; then
+        printf 'remove|%s\n' "$reason"
+    else
+        printf 'keep|unmerged\n'
+    fi
+}
+
 main() {
     parse_args "$@"
     if [ ! -d "$ROOT" ]; then

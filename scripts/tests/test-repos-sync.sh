@@ -184,4 +184,85 @@ make_repo "$TMPDIR_ROOT/ws/solo"
 assert_eq "no-remote" "$(status_of "$(sync_repo "$TMPDIR_ROOT/ws/solo" "")")" "no remote"
 teardown_test
 
+# add_worktree REPO NAME BRANCH  — worktree at .claude/worktrees/NAME
+add_worktree() {
+    git -C "$1" worktree add -q -b "$3" "$1/.claude/worktrees/$2" 2>/dev/null
+}
+
+setup_test "list_worktrees skips the main working tree"
+load_script
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+add_worktree "$r" wt1 topic
+out="$(list_worktrees "$r")"
+assert_eq "1" "$(printf '%s\n' "$out" | grep -c .)" "one entry"
+assert_contains "$out" "refs/heads/topic" "branch reported"
+assert_contains "$out" "worktrees/wt1" "path reported"
+teardown_test
+
+setup_test "worktree_removable accepts an ancestor-merged branch"
+load_script
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+add_worktree "$r" wt1 topic
+reason="$(worktree_removable "$r" topic main)" && ok=yes || ok=no
+assert_eq "yes" "$ok" "removable"
+assert_eq "merged" "$reason" "ancestor reason"
+teardown_test
+
+setup_test "worktree_removable accepts a squash-merged branch"
+load_script
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"; seed="$TMPDIR_ROOT/seed-alpha"
+add_worktree "$r" wt1 topic
+w="$r/.claude/worktrees/wt1"
+printf 'a\n' > "$w/f1"; git -C "$w" add f1; git -C "$w" commit -qm c1
+printf 'b\n' > "$w/f2"; git -C "$w" add f2; git -C "$w" commit -qm c2
+# land the same content on the remote default as ONE squashed commit
+printf 'a\n' > "$seed/f1"; printf 'b\n' > "$seed/f2"
+git -C "$seed" add f1 f2; git -C "$seed" commit -qm squashed
+git -C "$seed" push -q origin main
+git -C "$r" fetch -q origin
+git -C "$r" merge-base --is-ancestor topic origin/main 2>/dev/null && anc=yes || anc=no
+assert_eq "no" "$anc" "not an ancestor, so ancestry alone would miss it"
+reason="$(worktree_removable "$r" topic main)" && ok=yes || ok=no
+assert_eq "yes" "$ok" "removable"
+assert_eq "squashed" "$reason" "squash reason"
+teardown_test
+
+setup_test "worktree_removable rejects a genuinely unmerged branch"
+load_script
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+add_worktree "$r" wt1 topic
+w="$r/.claude/worktrees/wt1"
+printf 'unique\n' > "$w/only-here"; git -C "$w" add only-here; git -C "$w" commit -qm unlanded
+worktree_removable "$r" topic main >/dev/null && ok=yes || ok=no
+assert_eq "no" "$ok" "kept"
+teardown_test
+
+setup_test "classify_worktree keeps dirty, untracked-only and detached worktrees"
+load_script
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+
+add_worktree "$r" dirty topicd
+echo edit > "$r/.claude/worktrees/dirty/file"
+out="$(classify_worktree "$r" "$r/.claude/worktrees/dirty" refs/heads/topicd main)"
+assert_eq "keep|dirty" "$out" "tracked edit kept"
+
+add_worktree "$r" untracked topicu
+touch "$r/.claude/worktrees/untracked/stray"
+out="$(classify_worktree "$r" "$r/.claude/worktrees/untracked" refs/heads/topicu main)"
+assert_eq "keep|dirty" "$out" "untracked-only kept"
+
+git -C "$r" worktree add -q --detach "$r/.claude/worktrees/det" main
+out="$(classify_worktree "$r" "$r/.claude/worktrees/det" "" main)"
+assert_eq "keep|detached" "$out" "detached kept"
+
+add_worktree "$r" clean topicc
+out="$(classify_worktree "$r" "$r/.claude/worktrees/clean" refs/heads/topicc main)"
+assert_eq "remove|merged" "$out" "clean merged removable"
+teardown_test
+
 summary
