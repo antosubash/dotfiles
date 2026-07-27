@@ -109,6 +109,64 @@ default_branch() {
     printf '%s' "${ref#origin/}"
 }
 
+# Print the worktree path that currently has BRANCH checked out, if any.
+worktree_holding_branch() {
+    git -C "$1" worktree list --porcelain 2>/dev/null | awk -v want="refs/heads/$2" '
+        /^worktree /{ p = substr($0, 10) }
+        /^branch /  { if (substr($0, 8) == want) { print p; exit } }
+    '
+}
+
+# Bring one repo onto its default branch. Prints "STATUS|detail".
+sync_repo() {
+    local repo="$1" def="$2" cur holder before after
+    has_origin "$repo" || { printf 'no-remote|no origin remote\n'; return; }
+    [ -n "$def" ] || { printf 'no-default|cannot determine default branch\n'; return; }
+
+    if is_dirty "$repo"; then
+        printf 'dirty|%s uncommitted change(s)\n' \
+            "$(git -C "$repo" status --porcelain | wc -l | tr -d ' ')"
+        return
+    fi
+    if ! git -C "$repo" rev-parse --verify --quiet "refs/remotes/origin/$def" >/dev/null; then
+        printf 'no-upstream|origin/%s does not exist\n' "$def"
+        return
+    fi
+
+    holder="$(worktree_holding_branch "$repo" "$def")"
+    if [ -n "$holder" ] && [ "$holder" != "$repo" ]; then
+        printf 'locked|%s is checked out in %s\n' "$def" "${holder##*/}"
+        return
+    fi
+
+    cur="$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null)"
+    if [ "$cur" != "$def" ]; then
+        if git -C "$repo" show-ref --verify --quiet "refs/heads/$def"; then
+            git -C "$repo" switch --quiet "$def" 2>/dev/null \
+                || { printf 'error|could not switch to %s\n' "$def"; return; }
+        else
+            git -C "$repo" switch --quiet --create "$def" --track "origin/$def" 2>/dev/null \
+                || { printf 'error|could not create %s from origin\n' "$def"; return; }
+        fi
+    fi
+
+    before="$(git -C "$repo" rev-parse --short HEAD)"
+    if git -C "$repo" merge --ff-only --quiet "origin/$def" 2>/dev/null; then
+        after="$(git -C "$repo" rev-parse --short HEAD)"
+        if [ "$before" != "$after" ]; then
+            printf 'updated|%s %s..%s\n' "$def" "$before" "$after"
+        elif [ -n "$cur" ] && [ "$cur" != "$def" ]; then
+            printf 'switched|%s -> %s\n' "$cur" "$def"
+        elif [ -z "$cur" ]; then
+            printf 'switched|detached -> %s\n' "$def"
+        else
+            printf 'current|%s\n' "$def"
+        fi
+    else
+        printf 'diverged|%s has local commits not on origin/%s\n' "$def" "$def"
+    fi
+}
+
 main() {
     parse_args "$@"
     if [ ! -d "$ROOT" ]; then

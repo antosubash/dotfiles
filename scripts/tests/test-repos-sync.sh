@@ -28,10 +28,14 @@ make_remote() {
 # clone_repo NAME -> clones into $TMPDIR_ROOT/ws/NAME
 clone_repo() {
     local name="$1"
+    local dir="$TMPDIR_ROOT/ws/$name"
     mkdir -p "$TMPDIR_ROOT/ws"
-    git clone -q "$TMPDIR_ROOT/remotes/$name.git" "$TMPDIR_ROOT/ws/$name"
-    git -C "$TMPDIR_ROOT/ws/$name" config user.email t@t
-    git -C "$TMPDIR_ROOT/ws/$name" config user.name t
+    git clone -q "$TMPDIR_ROOT/remotes/$name.git" "$dir"
+    git -C "$dir" config user.email t@t
+    git -C "$dir" config user.name t
+    # Mirror what Claude Code puts in .git/info/exclude, so worktrees living
+    # under .claude/worktrees/ do not make the parent repo look dirty.
+    echo '**/.claude/worktrees/' >> "$dir/.git/info/exclude"
 }
 
 # --- tests ----------------------------------------------------------------
@@ -100,6 +104,84 @@ make_repo "$TMPDIR_ROOT/ws/solo"
 has_origin "$TMPDIR_ROOT/ws/solo" && s=yes || s=no
 assert_eq "no" "$s" "no origin"
 assert_eq "" "$(default_branch "$TMPDIR_ROOT/ws/solo")" "no default branch"
+teardown_test
+
+status_of() { printf '%s' "${1%%|*}"; }
+
+setup_test "sync_repo leaves a dirty repo untouched"
+load_script
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+git -C "$r" switch -q -c feature
+echo edited > "$r/file"
+out="$(sync_repo "$r" main)"
+assert_eq "dirty" "$(status_of "$out")" "reported dirty"
+assert_eq "feature" "$(git -C "$r" symbolic-ref --short HEAD)" "still on feature"
+assert_eq "edited" "$(cat "$r/file")" "edit preserved"
+teardown_test
+
+setup_test "sync_repo switches a clean feature branch to default and keeps the ref"
+load_script
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+git -C "$r" switch -q -c feature
+echo work > "$r/file"; git -C "$r" commit -qam work
+out="$(sync_repo "$r" main)"
+assert_eq "switched" "$(status_of "$out")" "reported switched"
+assert_eq "main" "$(git -C "$r" symbolic-ref --short HEAD)" "on main"
+git -C "$r" show-ref --verify --quiet refs/heads/feature && s=kept || s=gone
+assert_eq "kept" "$s" "feature branch ref kept"
+teardown_test
+
+setup_test "sync_repo fast-forwards a behind repo"
+load_script
+make_remote alpha; clone_repo alpha
+seed="$TMPDIR_ROOT/seed-alpha"
+echo more > "$seed/file"; git -C "$seed" commit -qam more; git -C "$seed" push -q origin main
+r="$TMPDIR_ROOT/ws/alpha"
+git -C "$r" fetch -q origin
+out="$(sync_repo "$r" main)"
+assert_eq "updated" "$(status_of "$out")" "reported updated"
+assert_eq "more" "$(cat "$r/file")" "content advanced"
+teardown_test
+
+setup_test "sync_repo reports an up-to-date repo as current"
+load_script
+make_remote alpha; clone_repo alpha
+out="$(sync_repo "$TMPDIR_ROOT/ws/alpha" main)"
+assert_eq "current" "$(status_of "$out")" "reported current"
+teardown_test
+
+setup_test "sync_repo refuses to touch a diverged default branch"
+load_script
+make_remote alpha; clone_repo alpha
+seed="$TMPDIR_ROOT/seed-alpha"
+echo remote > "$seed/file"; git -C "$seed" commit -qam remote; git -C "$seed" push -q origin main
+r="$TMPDIR_ROOT/ws/alpha"
+echo local > "$r/other"; git -C "$r" add other; git -C "$r" commit -qm local
+local_head="$(git -C "$r" rev-parse HEAD)"
+git -C "$r" fetch -q origin
+out="$(sync_repo "$r" main)"
+assert_eq "diverged" "$(status_of "$out")" "reported diverged"
+assert_eq "$local_head" "$(git -C "$r" rev-parse HEAD)" "HEAD unmoved"
+teardown_test
+
+setup_test "sync_repo will not fight a worktree holding the default branch"
+load_script
+make_remote alpha; clone_repo alpha
+r="$TMPDIR_ROOT/ws/alpha"
+git -C "$r" switch -q -c feature
+git -C "$r" worktree add -q "$r/.claude/worktrees/wt" main
+out="$(sync_repo "$r" main)"
+assert_eq "locked" "$(status_of "$out")" "reported locked"
+assert_eq "feature" "$(git -C "$r" symbolic-ref --short HEAD)" "left on feature"
+teardown_test
+
+setup_test "sync_repo reports a remote-less repo"
+load_script
+mkdir -p "$TMPDIR_ROOT/ws"
+make_repo "$TMPDIR_ROOT/ws/solo"
+assert_eq "no-remote" "$(status_of "$(sync_repo "$TMPDIR_ROOT/ws/solo" "")")" "no remote"
 teardown_test
 
 summary
