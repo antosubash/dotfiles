@@ -119,7 +119,7 @@ worktree_holding_branch() {
 
 # Bring one repo onto its default branch. Prints "STATUS|detail".
 sync_repo() {
-    local repo="$1" def="$2" cur holder before after
+    local repo="$1" def="$2" cur holder before after ff
     has_origin "$repo" || { printf 'no-remote|no origin remote\n'; return; }
     [ -n "$def" ] || { printf 'no-default|cannot determine default branch\n'; return; }
 
@@ -169,12 +169,16 @@ sync_repo() {
     before="$(git -C "$repo" rev-parse --short HEAD)"
     if git -C "$repo" merge --ff-only --quiet "origin/$def" 2>/dev/null; then
         after="$(git -C "$repo" rev-parse --short HEAD)"
-        if [ "$before" != "$after" ]; then
+        # A checkout that moved reports as "switched" even when it also
+        # fast-forwarded, so the summary never hides a branch move.
+        ff=''
+        [ "$before" != "$after" ] && ff="$(printf ' (ff %s..%s)' "$before" "$after")"
+        if [ -z "$cur" ]; then
+            printf 'switched|detached -> %s%s\n' "$def" "$ff"
+        elif [ "$cur" != "$def" ]; then
+            printf 'switched|%s -> %s%s\n' "$cur" "$def" "$ff"
+        elif [ -n "$ff" ]; then
             printf 'updated|%s %s..%s\n' "$def" "$before" "$after"
-        elif [ -n "$cur" ] && [ "$cur" != "$def" ]; then
-            printf 'switched|%s -> %s\n' "$cur" "$def"
-        elif [ -z "$cur" ]; then
-            printf 'switched|detached -> %s\n' "$def"
         else
             printf 'current|%s\n' "$def"
         fi

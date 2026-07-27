@@ -133,6 +133,21 @@ git -C "$r" show-ref --verify --quiet refs/heads/feature && s=kept || s=gone
 assert_eq "kept" "$s" "feature branch ref kept"
 teardown_test
 
+setup_test "sync_repo reports a switch that also fast-forwards as switched"
+load_script
+make_remote alpha; clone_repo alpha
+seed="$TMPDIR_ROOT/seed-alpha"
+echo more > "$seed/file"; git -C "$seed" commit -qam more; git -C "$seed" push -q origin main
+r="$TMPDIR_ROOT/ws/alpha"
+git -C "$r" switch -q -c feature
+git -C "$r" fetch -q origin
+out="$(sync_repo "$r" main)"
+assert_eq "switched" "$(status_of "$out")" "branch move is not hidden by the ff"
+assert_contains "$out" "feature -> main" "names the branch it moved off"
+assert_contains "$out" "(ff " "still reports the fast-forward"
+assert_eq "more" "$(cat "$r/file")" "content advanced"
+teardown_test
+
 setup_test "sync_repo fast-forwards a behind repo"
 load_script
 make_remote alpha; clone_repo alpha
