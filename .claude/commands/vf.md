@@ -391,6 +391,8 @@ This is required before Stage 4 — running builds while the dev server or worke
 
 Run lint, typecheck, and unit tests as **parallel Bash calls in a single message** — they are independent and none needs the dev server. When all three pass, run the build. On failure, report every failing step from the parallel batch (not just the first), then stop.
 
+**.NET has no standalone typecheck command** (see table — it's only produced by the Build step's analyzers). For .NET, fire just the two real parallel calls (lint + unit tests), skip a separate typecheck call, and run Build sequentially afterward rather than folding it into the parallel batch — `dotnet format` and `dotnet test` (which triggers its own implicit build) can otherwise race on the same project's `obj/`/`bin/` incremental-build cache and fail with a spurious file-lock error unrelated to any real code defect.
+
 | Step | JS/TS | Python | .NET |
 |------|-------|--------|------|
 | Lint / format | `<pm> run lint` | `ruff check` + `ruff format --check` | `dotnet format --verify-no-changes` |
@@ -402,7 +404,7 @@ Run lint, typecheck, and unit tests as **parallel Bash calls in a single message
 **Full e2e suite — only if an e2e setup was detected in auto-detection step 6 AND `--no-e2e` was not passed.** Otherwise skip silently and mark this row `— (no e2e)` in the results table. Never create an e2e setup as a side effect of /vf.
 
 When e2e IS configured: it needs the app running again. Unit tests don't need the dev server, but the e2e suite does. Order:
-1. Run lint + typecheck + unit tests in parallel (single message), then build. Stop on any failure.
+1. Run lint + typecheck + unit tests in parallel (single message, per the .NET caveat above), then build. Stop on any failure.
 2. Restart the app (and worker if Stage 1b ran). Builds may have cleared `dist/`, killed file watchers, etc.
 3. Wait for health, then run the **full e2e suite** (not just the new spec — that ran in Stage 2c).
 4. Stop the app + worker again.

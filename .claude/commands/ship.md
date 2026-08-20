@@ -117,14 +117,19 @@ TaskCreate: "Stage C: Verify + open PR (/vf)"
     { "round": 1,
       "stageA": { "passes": 2, "result": "clean | unresolved | skipped" },
       "stageB": { "result": "clean | bugs-fixed | unresolved | skipped",
-                  "bugs_found": 0, "artifact_url": "…" } }
+                  "iterations": 0, "bugs_found": 0, "bugs_fixed": 0, "artifact_url": "…" } }
   ],
-  "unresolved": [],
+  "unresolved": [
+    { "source": "review", "detail": "file:line — why it needs judgment" },
+    { "source": "qa", "id": "BUG-007", "severity": "P1", "summary": "one line" }
+  ],
   "status": "in-progress | converged | stopped"
 }
 ```
 
-`rounds[].stageB.bugs_found` is that round's `bugs_found_total` from the round's QA `result.json`. Update the file at EVERY stage boundary (Stage A done, Stage B done, convergence decision, Stage C). The convergence check and Stage C read this file, not conversation memory. **If the conversation gets summarized mid-run, re-read `$SHIP_DIR/state.json` and resume from `status` + `outer` — never re-derive loop state from prose.**
+`rounds[].stageB.iterations`, `.bugs_found`, and `.bugs_fixed` are that round's `iterations`, `bugs_found_total`, and `bugs_fixed_total` from the round's QA `result.json` — copy all three, not just `bugs_found`, since the Final Summary needs the iteration count and fixed count too. Update the file at EVERY stage boundary (Stage A done, Stage B done, convergence decision, Stage C). The convergence check and Stage C read this file, not conversation memory. **If the conversation gets summarized mid-run, re-read `$SHIP_DIR/state.json` and resume from `status` + `outer` — never re-derive loop state from prose.**
+
+`unresolved` holds tagged objects, never bare strings — `"source": "review"` for a Stage A finding that survived `--fix` + a dev agent (with a `detail` string), `"source": "qa"` for a QA `remaining` entry (copied through with its `id`/`severity`/`summary` intact). Stage A and Stage B each **append** their own round's entries — a stage never overwrites what the other stage already wrote this round. At the top of each new round, clear entries from the *previous* round before either stage runs (a fresh round re-earns its own unresolved list; stale entries from a round that's being re-attempted must not linger).
 
 ---
 
@@ -150,9 +155,13 @@ REVIEW_TARGET = last_clean_review_sha from state.json, else <base>
     # rounds) only cover the diff SINCE that SHA. Never re-review the whole branch after
     # a recorded clean pass. REVIEW_TARGET stays FIXED within this Stage A loop.
 loop:
-    EFFORT = --review-effort (default high) if review_pass == 1, else "medium"
+    EFFORT = --review-effort (default high) if review_pass == 1,
+             else --review-effort IF the user explicitly passed it, else "medium"
     # Pass 1 already covered this span at full effort; later passes confirm fresh fixes
-    # and catch regressions — medium is enough for that.
+    # and catch regressions — medium is enough for that BY DEFAULT. But an explicit
+    # --review-effort is a user override and must hold for every pass, not just the first —
+    # silently downgrading an explicit `max`/`xhigh` (or upgrading an explicit `low`) on
+    # later passes would ignore what the user asked for.
     Dispatch the review to a Sonnet subagent (NEVER invoke code-review directly in the main session):
       Agent(subagent_type="general-purpose", model="sonnet", prompt="
         Invoke the built-in code-review skill via the Skill tool:
@@ -189,7 +198,7 @@ loop:
 
 Notes:
 - A run that applied fixes is **not** proof of cleanliness — always re-run `/code-review` once more after fixes until a pass comes back with nothing to fix.
-- Record whether Stage A **ended clean** or left findings **UNRESOLVED** in `$SHIP_DIR/state.json` (`rounds[].stageA`, plus `unresolved` and `last_clean_review_sha`) — that is what the convergence check keys on. Review fixes made this round do NOT by themselves force another round: Stage B tests them in this very round.
+- Record whether Stage A **ended clean** or left findings **UNRESOLVED** in `$SHIP_DIR/state.json` (`rounds[].stageA`, plus `last_clean_review_sha`) — that is what the convergence check keys on. If UNRESOLVED, append each surviving finding to `unresolved` as `{ "source": "review", "detail": "file:line — why it needs judgment" }` (append, don't overwrite — Stage B appends its own entries later this round). Review fixes made this round do NOT by themselves force another round: Stage B tests them in this very round.
 
 **→ TaskUpdate:** Mark the Stage A task `completed`.
 
@@ -208,7 +217,7 @@ Pass through only the flags the user actually supplied — except `--run-id ship
 - `qa_issues_remaining` = `status == "issues-remaining"` (the `remaining` array lists them)
 - `artifact_url` — the QA report artifact, for the final summary and PR body.
 
-Do NOT parse the markdown reports for these — `result.json` is the contract. Fall back to `reports/qa-report-iteration-*.md` + `artifact-url.txt` only if `result.json` is missing (older `/qa`). If `qa_issues_remaining` is true, copy `remaining` into `unresolved` in `$SHIP_DIR/state.json`. Record Stage B's outcome in `state.json` (`rounds[].stageB`) either way.
+Do NOT parse the markdown reports for these — `result.json` is the contract. Fall back to `reports/qa-report-iteration-*.md` + `artifact-url.txt` only if `result.json` is missing (older `/qa`). If `qa_issues_remaining` is true, append each `remaining` entry into `$SHIP_DIR/state.json`'s `unresolved` array as `{ "source": "qa", ...entry }` — append, do NOT overwrite the array (Stage A may have already appended its own `source: "review"` entries this round). Record Stage B's outcome in `state.json` (`rounds[].stageB` — including `iterations`, `bugs_found`, `bugs_fixed`) either way.
 
 **→ TaskUpdate:** Mark the Stage B task `completed`.
 
@@ -223,10 +232,11 @@ IF (Stage A skipped OR Stage A ended clean with nothing UNRESOLVED)  AND  (Stage
     re-review pass, and this round's QA already tested those fixes. Only QA changing code
     forces another round, because QA's fixes land AFTER the last clean review.
 
-ELSE IF Stage A left findings UNRESOLVED AND qa_found_bugs == false:
+ELSE IF Stage A left findings UNRESOLVED AND (Stage B skipped OR qa_found_bugs == false):
     → Those findings already survived --max-review-iterations passes WITH dev-agent help,
-      and QA changed no code since — an identical round would just repeat the same failure.
-      Exit NOT-CLEAN → Stage C reports the remaining findings and does NOT open a PR.
+      and either QA never ran or QA changed no code since — an identical round would just
+      repeat the same failure. Exit NOT-CLEAN → Stage C reports the remaining findings and
+      does NOT open a PR.
 
 ELSE IF there are UNRESOLVED findings/bugs AND outer >= --max-outer-iterations:
     → STOP converging. Exit the loop in a NOT-CLEAN state → Stage C will report remaining issues and NOT open a PR.
@@ -256,7 +266,7 @@ To keep cost sane: the default cap of 3 rounds is usually plenty — with this c
 
 ### If the branch did NOT converge clean (UNRESOLVED issues remain after max rounds)
 
-Do **not** open a PR. Read `unresolved` from `$SHIP_DIR/state.json` (the authoritative list), print it clearly, and stop:
+Do **not** open a PR. Read `unresolved` from `$SHIP_DIR/state.json` (the authoritative list), print it clearly — render each `source: "review"` entry as `[review] <detail>` and each `source: "qa"` entry as `[qa <id>] <severity>: <summary>` — and stop:
 
 ```
 /ship STOPPED — branch not clean after {outer} rounds
@@ -300,6 +310,7 @@ Print a compact summary (and run the mandatory TaskList audit — every task in 
   Rounds:        {outer} of {max-outer}
   Stage A:       code-review clean after {passes} pass(es)
   Stage B:       QA clean ({qa iterations}, {bugs} bugs found+fixed) | skipped
+                 (source: rounds[].stageB.iterations / .bugs_found / .bugs_fixed in state.json)
   Result:        ALL CLEAN → PR opened | STOPPED ({X} issues remaining) | verify-only (--no-pr)
   PR:            <url from /vf, or "not opened — see remaining issues">
   Artifacts:     QA report artifact <url per round>  ·  verification artifact <url from /vf>  ·  code reviews

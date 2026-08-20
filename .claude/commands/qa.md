@@ -226,7 +226,7 @@ testing (auth wall, blank page, server error). Do NOT return the snapshot or the
 inventory content.
 ```
 
-Read the returned summary. If it reports a blocker (auth wall, blank page, server error), resolve that before fanning out test agents. Do NOT Read `$QA_DIR/page-inventory.md` into the main session — test agents read it from disk themselves (Phase 2).
+Read the returned summary. If it reports a blocker (auth wall, blank page, server error, or anything else that stopped it — e.g. a cookie-consent modal, a canvas-rendered app, or heavy iframe usage the accessibility-tree snapshot can't describe), resolve that before fanning out test agents. Before fanning out Phase 2, confirm `$QA_DIR/page-inventory.md` exists and is non-trivial in size (e.g. `test -s`) — if it's missing or empty, the recon agent failed silently; re-run Phase 1 once before proceeding. Do NOT Read `$QA_DIR/page-inventory.md` into the main session yourself — test agents read it from disk themselves (Phase 2).
 
 **→ TaskUpdate:** Mark the reconnaissance task as `completed`.
 
@@ -470,7 +470,7 @@ Orchestrators consume a small JSON file instead of parsing the markdown report. 
 }
 ```
 
-`bugs_found_total` counts unique P0+P1+P2 bugs across ALL iterations (P3 observations excluded — they are never bugs anywhere in this file). `remaining` lists bugs still open right now. `status` is `in-progress` mid-cycle, and `clean` or `issues-remaining` once the cycle ends. Keep it accurate — `/ship`'s convergence check and `/vf`'s PR body trust this file over any prose.
+`bugs_found_total` counts unique P0+P1+P2 bugs across ALL iterations (P3 observations excluded — they are never bugs anywhere in this file). `bugs_fixed_total` counts unique bugs from that same set confirmed FIXED in the delta section of the most recent iteration's report (a bug that regresses in a later iteration is removed from this count — it's open again, not fixed). `remaining` lists bugs still open right now — by construction `bugs_found_total - bugs_fixed_total == remaining.length`; if a recount ever disagrees, trust `remaining` and correct the totals. `status` is `in-progress` mid-cycle, and `clean` or `issues-remaining` once the cycle ends. Keep it accurate — `/ship`'s convergence check and `/vf`'s PR body trust this file over any prose.
 
 **DECISION POINT — YOU MUST FOLLOW THIS EXACTLY:**
 
@@ -665,11 +665,17 @@ TaskCreate: "Iteration {NEXT}: Code review"      (will be used if bugs remain)
 Dev servers hot-reload code edits. A kill → cache-clear → rebuild → restart cycle costs minutes per iteration and is almost never needed. Restart ONLY if at least one of these holds:
 
 1. **The server died** — health URL no longer responds, or the PID from `$QA_DIR/server.pid` is gone.
-2. **Fixes touched deps or config** — `git diff --name-only "$(cat "$QA_DIR/pre-fix-sha")" HEAD` matches `package.json`, `*lock*`, `*.config.*`, `.env*`, `*.csproj`, `pyproject.toml`, or `Dockerfile`.
+2. **Fixes touched deps or config** — `git diff --name-only "$(cat "$QA_DIR/pre-fix-sha")" HEAD` matches `package.json`, `*lock*`, `*.config.*`, `.env*`, `*.csproj`, `pyproject.toml`, `requirements*.txt`, or `Dockerfile`.
 3. **The stack has no hot reload** — the server was started with plain `dotnet run`, a compiled binary, or anything without a watcher (`dotnet watch`, `next dev`, `vite`, `uvicorn --reload` all DO hot-reload).
 
-- **Default (none hold):** leave the server running. Confirm it's still healthy with one `curl` of the health URL; the re-test in Phases 1–2 verifies the fixes behaviorally.
-- **Restart needed:** kill it (`kill -9 $(cat $QA_DIR/server.pid 2>/dev/null) 2>/dev/null || true; lsof -ti tcp:<port> | xargs -r kill -9`), restart via `nohup <start-cmd> > $QA_DIR/server.log 2>&1 &` with the PID saved to `$QA_DIR/server.pid`, then poll the health URL every 2s for up to 90 seconds. On failure, STOP. Do NOT clear caches or rebuild.
+- **Default (none hold):** leave the server running, but confirm the reload took AND didn't silently break the build:
+  1. One `curl` of the health URL.
+  2. Tail `$QA_DIR/server.log` for fresh compile errors emitted since the fixes landed — watcher servers print them on reload (`Failed to compile`, `error TS`, `SyntaxError`, `ImportError` / `ModuleNotFoundError`, `CS____` codes).
+  3. If the project has a fast typecheck configured (a `typecheck` script, `tsc --noEmit`, `mypy`/`pyright`), run it once now. Seconds of cost, and it catches type errors that transpile-only dev servers happily serve past — the old always-rebuild caught these; this check keeps that safety without the rebuild.
+
+  Any of these failing means the fixes broke the build: treat that as a bug to fix now (inline if trivial, else next fix round) — do NOT proceed to re-test as if healthy. Otherwise the re-test in Phases 1–2 verifies the fixes behaviorally.
+- **Restart needed (trigger 1 or 3):** kill it (`kill -9 $(cat $QA_DIR/server.pid 2>/dev/null) 2>/dev/null || true; lsof -ti tcp:<port> | xargs -r kill -9`), restart via `nohup <start-cmd> > $QA_DIR/server.log 2>&1 &` with the PID saved to `$QA_DIR/server.pid`, then poll the health URL every 2s for up to 90 seconds. On failure, STOP. Do NOT clear caches or rebuild.
+- **Restart needed (trigger 2 — deps/config changed):** same kill → restart → poll as above, but install the changed deps FIRST (JS/TS: `<pm> install` · Python: `uv sync` / `pip install -r requirements*.txt` / `poetry install` as applicable · .NET: `dotnet restore`). Skipping install here is the whole point of this trigger existing — without it the restarted server still runs against the old dependency tree and any new package/import fails. Still do NOT do a full clean/rebuild beyond that install step.
 - **Stale-behavior fallback ONLY:** if a re-test shows old behavior persisting for a bug whose fix is verifiably in the code (commit present, file content correct), THEN clear build caches (JS/TS: `rm -rf .next dist node_modules/.cache` · Python: remove `__pycache__` dirs · .NET: `dotnet clean --nologo`), rebuild, restart, and re-test once more. This is the exception path — never the loop default.
 
 **Step 4: GO BACK TO PHASE 1 NOW.**
