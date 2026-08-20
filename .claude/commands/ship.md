@@ -283,7 +283,7 @@ Do **not** open a PR. Read `unresolved` from `$SHIP_DIR/state.json` (the authori
   $(git rev-parse --absolute-git-dir)/ship/.
 ```
 
-Run the Task list audit and finish. CI/PR is intentionally skipped — shipping known-broken code is worse than stopping.
+Do NOT stop here — continue to **Final Summary** below, which publishes the pipeline report artifact (this STOPPED run needs it most) and performs the mandatory task list audit as part of printing the closing summary. CI/PR is intentionally skipped — shipping known-broken code is worse than stopping.
 
 ### If the branch converged clean
 
