@@ -408,7 +408,9 @@ async function runSingleAgent(
 				processExited = true;
 				if (killTimer) clearTimeout(killTimer);
 				if (buffer.trim()) processLine(buffer);
-				resolve(code ?? 0);
+				// A null code means the child did not exit normally (for example, it
+				// was terminated by a signal), so it must never be reported as success.
+				resolve(code ?? 1);
 			});
 
 			proc.on("error", () => {
