@@ -31,6 +31,7 @@ import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 
 const MAX_PARALLEL_TASKS = 8;
+export const MAX_CHAIN_STEPS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
@@ -328,6 +329,21 @@ interface DispatchDefaults {
 	thinkingLevel?: ThinkingLevel;
 }
 
+export function buildChildPiArgs(agent: AgentConfig, dispatchDefaults: DispatchDefaults): string[] {
+	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+	const inheritsDispatchConfig = !agent.model;
+	const model = agent.model ?? dispatchDefaults.model;
+	if (model) args.push("--model", model);
+	if (inheritsDispatchConfig && dispatchDefaults.thinkingLevel) {
+		args.push("--thinking", dispatchDefaults.thinkingLevel);
+	}
+	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+	// Keep child extensions (including safety guards), but never expose this
+	// extension's tool to a child, regardless of its agent tools configuration.
+	args.push("--exclude-tools", "subagent");
+	return args;
+}
+
 async function runSingleAgent(
 	defaultCwd: string,
 	dispatchDefaults: DispatchDefaults,
@@ -356,14 +372,8 @@ async function runSingleAgent(
 		};
 	}
 
-	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	const inheritsDispatchConfig = !agent.model;
+	const args = buildChildPiArgs(agent, dispatchDefaults);
 	const model = agent.model ?? dispatchDefaults.model;
-	if (model) args.push("--model", model);
-	if (inheritsDispatchConfig && dispatchDefaults.thinkingLevel) {
-		args.push("--thinking", dispatchDefaults.thinkingLevel);
-	}
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;
@@ -713,6 +723,19 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (params.chain && params.chain.length > 0) {
+				if (params.chain.length > MAX_CHAIN_STEPS) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Too many chain steps (${params.chain.length}). Max is ${MAX_CHAIN_STEPS}.`,
+							},
+						],
+						details: makeDetails("chain")([]),
+						isError: true,
+					};
+				}
+
 				const results: SingleResult[] = [];
 				let previousOutput = "";
 

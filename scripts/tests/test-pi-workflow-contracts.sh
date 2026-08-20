@@ -18,6 +18,10 @@ require_text() {
 
 require_text pi/agent/extensions/subagent/index.ts 'if (code !== 0) fallback();'
 require_text pi/agent/extensions/subagent/index.ts 'const TERMINATION_SETTLEMENT_DEADLINE_MS = 10000;'
+require_text pi/agent/extensions/subagent/index.ts 'export const MAX_CHAIN_STEPS = 8;'
+require_text pi/agent/extensions/subagent/index.ts 'args.push("--exclude-tools", "subagent");'
+require_text pi/agent/extensions/subagent/index.ts 'Keep child extensions (including safety guards)'
+require_text pi/agent/extensions/subagent/index.ts 'Too many chain steps ('
 require_text pi/agent/extensions/subagent/index.ts 'proc.stdout?.destroy();'
 require_text pi/agent/extensions/subagent/index.ts 'proc.stderr?.destroy();'
 require_text pi/agent/extensions/subagent/index.ts 'without charging its serialized form a'

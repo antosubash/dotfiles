@@ -32,7 +32,7 @@ EOF
 cat > "$TMP/probe.ts" <<EOF
 import * as fs from "node:fs";
 import { discoverAgents } from "${ROOT}/pi/agent/extensions/subagent/agents.ts";
-import subagentExtension from "${ROOT}/pi/agent/extensions/subagent/index.ts";
+import subagentExtension, { buildChildPiArgs, MAX_CHAIN_STEPS } from "${ROOT}/pi/agent/extensions/subagent/index.ts";
 
 export default async function () {
   const found = discoverAgents(process.cwd(), "project").agents.find((agent) => agent.name === "runtime-alias");
@@ -40,9 +40,50 @@ export default async function () {
     throw new Error("agent alias/tool discovery failed");
   }
 
+  const baseAgent: any = {
+    name: "runtime-agent",
+    description: "runtime fixture",
+    systemPrompt: "",
+    source: "user",
+    filePath: "",
+  };
+  const unrestrictedChildArgs = buildChildPiArgs(baseAgent, {});
+  const explicitlyRequestedChildArgs = buildChildPiArgs(
+    { ...baseAgent, tools: ["read", "subagent"] },
+    {},
+  );
+  for (const childArgs of [unrestrictedChildArgs, explicitlyRequestedChildArgs]) {
+    const exclusionIndex = childArgs.indexOf("--exclude-tools");
+    if (exclusionIndex < 0 || childArgs[exclusionIndex + 1] !== "subagent") {
+      throw new Error("child subagent tool exclusion missing");
+    }
+    if (childArgs.includes("--no-extensions")) {
+      throw new Error("child extension preservation regressed");
+    }
+  }
+  if (unrestrictedChildArgs.includes("--tools")) {
+    throw new Error("unrestricted child unexpectedly received a tools allowlist");
+  }
+  if (!explicitlyRequestedChildArgs.includes("read,subagent")) {
+    throw new Error("explicit child tools fixture was not preserved");
+  }
+
   let tool: any;
   subagentExtension({ registerTool(value: any) { tool = value; } } as any);
   if (!tool || tool.name !== "subagent") throw new Error("subagent tool registration failed");
+
+  const overBound = await tool.execute(
+    "chain-bound",
+    { chain: Array.from({ length: MAX_CHAIN_STEPS + 1 }, (_, index) => ({ agent: "missing-" + index, task: "must not run" })) },
+    undefined,
+    undefined,
+    { cwd: process.cwd(), model: undefined, thinkingLevel: "off", hasUI: false },
+  );
+  const overBoundText = overBound.content?.[0]?.text ?? "";
+  const expectedBoundMessage = "Too many chain steps (" + (MAX_CHAIN_STEPS + 1) + "). Max is " + MAX_CHAIN_STEPS + ".";
+  if (!overBound.isError || !overBoundText.includes(expectedBoundMessage)) {
+    throw new Error("chain-step bound failed");
+  }
 
   const blocked = await tool.execute(
     "test-call",
