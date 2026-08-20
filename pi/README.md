@@ -20,6 +20,8 @@ Run `~/dotfiles/scripts/setup-pi.sh` to link these resources into `~/.pi/agent/`
 
 Pi's vendored subagent extension discovers `~/.pi/agent/agents/*.md` and supports single, parallel, and chained execution. Specialist definitions are relative links to `.claude/agents/`, so Claude and Pi share one source of truth.
 
+The subagent extension enforces a 256 KiB per-invocation capture budget across event output, stderr, and retained messages. Exceeding it terminates the whole child process tree and returns an explicit failed result.
+
 The extension maps Claude model tiers when loading shared agents:
 
 | Claude tier | Pi model |

@@ -34,6 +34,11 @@ const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
+// This is a retained-capture budget, not just a display limit. It bounds the
+// decoded event stream, stderr, and messages kept in a result before anything
+// is appended to those buffers. A task that exceeds it is terminated.
+const MAX_CAPTURE_BYTES = 256 * 1024;
+const TERMINATION_GRACE_MS = 5000;
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -264,6 +269,41 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
+function signalProcessTree(proc: import("node:child_process").ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
+	if (proc.pid === undefined) return;
+
+	if (process.platform === "win32") {
+		// Windows has no POSIX process groups. taskkill /T is the process-tree
+		// equivalent and is safe to invoke without a shell. The direct kill is a
+		// fallback for restricted environments where taskkill is unavailable.
+		const taskkillArgs = ["/PID", String(proc.pid), "/T"];
+		if (signal === "SIGKILL") taskkillArgs.push("/F");
+		const treeKiller = spawn("taskkill", taskkillArgs, {
+			stdio: "ignore",
+			windowsHide: true,
+		});
+		treeKiller.once("error", () => {
+			try {
+				proc.kill(signal);
+			} catch {
+				/* the process may already have exited */
+			}
+		});
+		return;
+	}
+
+	try {
+		// detached:true below makes the Pi child the process-group leader.
+		process.kill(-proc.pid, signal);
+	} catch {
+		try {
+			proc.kill(signal);
+		} catch {
+			/* the process may already have exited */
+		}
+	}
+}
+
 interface DispatchDefaults {
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
@@ -341,19 +381,69 @@ async function runSingleAgent(
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
 
+		let captureLimitExceeded = false;
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd: cwd ?? defaultCwd,
 				shell: false,
+				// On POSIX this creates a new process group whose leader is the Pi
+				// child. That lets abort/limits terminate descendants holding pipes.
+				detached: process.platform !== "win32",
+				windowsHide: true,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 			let buffer = "";
-			let processExited = false;
+			let settled = false;
+			let terminationRequested = false;
 			let killTimer: ReturnType<typeof setTimeout> | undefined;
+			let capturedBytes = 0;
+			let abortHandler: (() => void) | undefined;
+
+			const cleanup = () => {
+				if (killTimer) {
+					clearTimeout(killTimer);
+					killTimer = undefined;
+				}
+				if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
+			};
+			const finish = (code: number) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				resolve(code);
+			};
+			const requestTermination = (aborted: boolean) => {
+				if (aborted) wasAborted = true;
+				if (terminationRequested) return;
+				terminationRequested = true;
+				// Signal the group/tree even if the leader has emitted `exit`: a
+				// descendant can otherwise keep stdout/stderr pipes open.
+				signalProcessTree(proc, "SIGTERM");
+				killTimer = setTimeout(() => {
+					// `close` waits for inherited stdio to close. If it has not fired,
+					// descendants may still hold the pipes even after the group leader
+					// emitted `exit`, so escalate against the whole process group/tree.
+					if (!settled) signalProcessTree(proc, "SIGKILL");
+				}, TERMINATION_GRACE_MS);
+			};
+			const appendCapture = (value: string, kind: string): boolean => {
+				const bytes = Buffer.byteLength(value, "utf8");
+				if (capturedBytes + bytes > MAX_CAPTURE_BYTES) {
+					captureLimitExceeded = true;
+					currentResult.stopReason = "error";
+					currentResult.errorMessage =
+						`Subagent capture limit exceeded while reading ${kind} ` +
+						`(${MAX_CAPTURE_BYTES} bytes maximum).`;
+					requestTermination(false);
+					return false;
+				}
+				capturedBytes += bytes;
+				return true;
+			};
 
 			const processLine = (line: string) => {
-				if (!line.trim()) return;
+				if (!line.trim() || captureLimitExceeded) return;
 				let event: any;
 				try {
 					event = JSON.parse(line);
@@ -361,9 +451,21 @@ async function runSingleAgent(
 					return;
 				}
 
+				const appendMessage = (message: Message): boolean => {
+					let serialized: string;
+					try {
+						serialized = JSON.stringify(message) ?? "";
+					} catch {
+						serialized = "";
+					}
+					if (!appendCapture(serialized, "messages")) return false;
+					currentResult.messages.push(message);
+					return true;
+				};
+
 				if (event.type === "message_end" && event.message) {
 					const msg = event.message as Message;
-					currentResult.messages.push(msg);
+					if (!appendMessage(msg)) return;
 
 					if (msg.role === "assistant") {
 						currentResult.usage.turns++;
@@ -384,55 +486,49 @@ async function runSingleAgent(
 				}
 
 				if (event.type === "tool_result_end" && event.message) {
-					currentResult.messages.push(event.message as Message);
-					emitUpdate();
+					if (appendMessage(event.message as Message)) emitUpdate();
 				}
 			};
 
 			proc.stdout.on("data", (data) => {
-				buffer += data.toString();
+				if (captureLimitExceeded) return;
+				const text = data.toString();
+				// Count the raw event stream before retaining it in the framing buffer.
+				if (!appendCapture(text, "stdout")) return;
+				buffer += text;
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
 				for (const line of lines) processLine(line);
 			});
 
 			proc.stderr.on("data", (data) => {
-				currentResult.stderr += data.toString();
+				const text = data.toString();
+				if (captureLimitExceeded || !appendCapture(text, "stderr")) return;
+				currentResult.stderr += text;
 			});
 
-			proc.once("exit", () => {
-				processExited = true;
-			});
-
-			proc.on("close", (code) => {
-				processExited = true;
-				if (killTimer) clearTimeout(killTimer);
-				if (buffer.trim()) processLine(buffer);
+			proc.once("close", (code) => {
+				if (buffer.trim() && !captureLimitExceeded) processLine(buffer);
 				// A null code means the child did not exit normally (for example, it
 				// was terminated by a signal), so it must never be reported as success.
-				resolve(code ?? 1);
+				finish(code ?? 1);
 			});
 
-			proc.on("error", () => {
-				resolve(1);
+			proc.once("error", () => {
+				currentResult.errorMessage ||= "Unable to start the subagent process.";
+				requestTermination(false);
+				finish(1);
 			});
 
 			if (signal) {
-				const killProc = () => {
-					wasAborted = true;
-					proc.kill("SIGTERM");
-					killTimer = setTimeout(() => {
-						// ChildProcess.killed only records that kill() was requested;
-						// use the exit event/state to determine whether it is gone.
-						if (!processExited && proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
-					}, 5000);
-				};
-				if (signal.aborted) killProc();
-				else signal.addEventListener("abort", killProc, { once: true });
+				abortHandler = () => requestTermination(true);
+				if (signal.aborted) abortHandler();
+				else signal.addEventListener("abort", abortHandler, { once: true });
 			}
 		});
 
-		currentResult.exitCode = exitCode;
+		currentResult.exitCode = captureLimitExceeded ? 1 : exitCode;
+		if (captureLimitExceeded) return currentResult;
 		if (wasAborted) throw new Error("Subagent was aborted");
 		return currentResult;
 	} finally {

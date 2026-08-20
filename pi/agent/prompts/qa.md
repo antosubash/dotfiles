@@ -17,7 +17,7 @@ Parse feature text and flags: `--url`, `--port`, `--route`, `--start`, `--no-sta
 
 Infer stack/start command/port from project instructions and project files. Ask once only when a required value cannot be inferred. `--url` and `--no-start` skip server startup.
 
-If `--run-id` is supplied, validate it before using it in any path, session name, worktree, or branch: it must be 1–64 characters matching `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase letters, digits, and single hyphens only). Reject the run before Phase 0 for any other value; never sanitize or partially use an invalid ID. The generated `run-YYYYmmdd-HHMMSS` default must satisfy the same rule.
+If `--run-id` is supplied, validate it before using it in any path, session name, worktree, or branch: it must be 1–64 characters matching `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase letters, digits, and single hyphens only). Reject the run before Phase 0 for any other value; never sanitize or partially use an invalid ID. The generated default must be a valid unique slug such as `run-YYYYmmdd-HHMMSS-$$` (the PID suffix avoids same-second collisions). An explicitly supplied ID is never resumed: an existing run directory is an error.
 
 ## Non-negotiable rules
 
@@ -36,17 +36,31 @@ Resolve:
 ```bash
 GIT_DIR="$(git rev-parse --absolute-git-dir 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/pi")"
 QA_BASE="$GIT_DIR/pi-qa"
-RUN_ID="<--run-id or run-YYYYmmdd-HHMMSS>"
+RUN_ID="<--run-id or run-YYYYmmdd-HHMMSS-$$>"
 if [ "${#RUN_ID}" -gt 64 ] || [[ ! "$RUN_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
     printf '%s\n' 'Invalid --run-id: use 1–64 lowercase slug characters separated by single hyphens.' >&2
     exit 2
 fi
+mkdir -p "$QA_BASE"
 QA_DIR="$QA_BASE/$RUN_ID"
+# mkdir (without -p) is the atomic run claim. Never resume or merge state from
+# an old run, even if it looks stopped; callers must choose a new ID.
+if ! mkdir "$QA_DIR"; then
+    printf 'Refusing existing QA run ID: %s\n' "$RUN_ID" >&2
+    exit 2
+fi
 mkdir -p "$QA_DIR"/{reports,fixes,worktrees} "$QA_DIR/screenshots/iteration-1"
+# Refuse orphaned state from a deleted run directory too. Worktree creation in
+# Phase 4 repeats these checks immediately before each branch is created.
+QA_BRANCH_PREFIX="pi/qa-$RUN_ID-"
+if git for-each-ref --format='%(refname:short)' refs/heads/ | grep -q "^$QA_BRANCH_PREFIX"; then
+    printf 'Refusing QA run: branch prefix already exists: %s\n' "$QA_BRANCH_PREFIX" >&2
+    exit 2
+fi
 printf '%s' "$RUN_ID" > "$QA_BASE/latest-run"
 ```
 
-Create `$QA_DIR/state.json` containing feature, URL, stack, start command, port, depth, iteration=1, max_iterations, status=`in-progress`, server ownership/PID, cumulative bug registry, and phase outcomes. This file is authoritative.
+Create `$QA_DIR/state.json` containing feature, URL, stack, start command, port, depth, iteration=1, max_iterations, status=`in-progress`, server ownership/PID, cumulative bug registry, and phase outcomes. This file is authoritative. If any Phase 0 claim or preflight check fails, do not create state or reuse any worktree, branch, session, or report from that ID.
 
 If needed, start the app with `nohup <start> >"$QA_DIR/server.log" 2>&1 &`, record PID, and poll the target for up to 90 seconds. Do not kill an app supplied through `--url` or `--no-start`. On startup failure, save logs, set status=`stopped`, and stop.
 
@@ -122,8 +136,8 @@ Before creating worktrees, ensure the tested source is committed. Inspect status
 
 Cluster open bugs by likely source files. For each non-overlapping cluster:
 
-1. Create branch `pi/qa-${RUN_ID}-c<index>` and a temporary worktree outside the repository, recording branch/path in state.
-2. Dispatch `worker` tasks in one parallel subagent call, each with its worktree as `cwd`.
+1. Immediately before each cluster, refuse if branch `pi/qa-${RUN_ID}-c<index>` already exists (`git show-ref --verify --quiet`) or if the target worktree path already exists. Create the branch and temporary worktree outside the repository in one `git worktree add -b` operation; on any failure, stop instead of trying another path or mixing an old worktree. Record branch/path in state before dispatch.
+2. Dispatch `worker` tasks in one parallel subagent call, each with its claimed worktree as `cwd`.
 3. Require root-cause fixes, targeted checks, a summary under `$QA_DIR/fixes/`, and a commit. No pushes.
 
 Merge each successful branch with `git merge --no-edit`. If a merge conflicts, abort it; never auto-resolve. Re-run that cluster sequentially with `worker` in the main tree, then commit. Remove worktrees and delete merged temporary branches after recording their commits.

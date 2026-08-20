@@ -31,7 +31,10 @@ Resolve:
 
 ```bash
 SHIP_DIR="$(git rev-parse --absolute-git-dir)/pi-ship"
+BRANCH="$(git branch --show-current)"
 mkdir -p "$SHIP_DIR"
+BRANCH_SLUG="$(printf '%s' "$BRANCH" | tr '[:upper:]/_' '[:lower:]--' | tr -cd 'a-z0-9-' | sed 's/--*/-/g; s/^-//; s/-$//' | cut -c1-24 | sed 's/-$//')"
+BRANCH_SLUG="${BRANCH_SLUG:-branch}"
 ```
 
 Create `$SHIP_DIR/state.json` with feature, branch, base, outer=1, bounds, last_clean_review_sha, per-round review/QA results, unresolved tagged findings, status=`in-progress`, report path, and eventual PR URL. Update it at every boundary. Print the detected pipeline before expensive work.
@@ -57,16 +60,24 @@ Use the specialist agent appropriate to the finding as an additional read-only c
 
 Skip for `--no-qa` or `--skip-browser`.
 
-Resolve `PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"` and read `"$PI_CODING_AGENT_DIR/prompts/qa.md"` completely. Execute that workflow in this current session with:
+Resolve `PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"` and read `"$PI_CODING_AGENT_DIR/prompts/qa.md"` completely. Before starting QA, claim a collision-resistant run ID and store it in ship state:
+
+```bash
+SHIP_QA_RUN_ID="ship-${BRANCH_SLUG}-${outer}-$(date +%Y%m%d-%H%M%S)-$$"
+```
+
+It is a valid QA slug and includes the branch, round, timestamp, and process ID, so concurrent ships cannot share a round-only state directory. Execute that workflow in this current session with:
 
 - original feature and browser flags;
-- `--run-id ship-round-<outer>`;
+- `--run-id "$SHIP_QA_RUN_ID"`;
 - `--no-vf`;
 - the chosen depth and max QA iterations.
 
+Read the claimed run's `result.json` using the exact `$SHIP_QA_RUN_ID`; never fall back to `latest-run` or another ship's QA directory.
+
 Do not spawn a child Pi to run the whole QA workflow: destructive approvals and long-running browser state belong in the interactive parent session. Subagents are used by the QA workflow itself.
 
-Read `$(git rev-parse --absolute-git-dir)/pi-qa/ship-round-<outer>/result.json`. Trust it over prose. Record iterations, bugs found/fixed, remaining issues, and report path. Append remaining QA items to `unresolved` with source=`qa`.
+Read `$(git rev-parse --absolute-git-dir)/pi-qa/$SHIP_QA_RUN_ID/result.json`. Trust it over prose. Record the exact QA run ID, iterations, bugs found/fixed, remaining issues, and report path. Append remaining QA items to `unresolved` with source=`qa`.
 
 ### Convergence decision
 
@@ -84,7 +95,7 @@ A clean QA run with no bugs may converge; a clean QA run that found and fixed bu
 
 If not clean, do not push or open a PR. Print tagged unresolved review/QA items and continue to the final local report.
 
-If converged, resolve `PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"`, read `"$PI_CODING_AGENT_DIR/prompts/vf.md"` completely, and execute that workflow in this current session. Pass original feature/base/start flags and explicit `--port`/`--route` (using the values derived from `--url` above when supplied), plus `--qa-passed --qa-run-id ship-round-<outer>` when QA ran, `--skip-browser` when it did not, and `--no-pr` when requested. `/vf` runs local CI, pushes, and creates the single PR.
+If converged, resolve `PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"`, read `"$PI_CODING_AGENT_DIR/prompts/vf.md"` completely, and execute that workflow in this current session. Pass original feature/base/start flags and explicit `--port`/`--route` (using the values derived from `--url` above when supplied), plus `--qa-passed --qa-run-id "$SHIP_QA_RUN_ID"` when QA ran, `--skip-browser` when it did not, and `--no-pr` when requested. `/vf` runs local CI, pushes, and creates the single PR.
 
 Do not loop back to QA for a local-CI failure; report the failed gate.
 

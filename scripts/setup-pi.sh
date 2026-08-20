@@ -17,10 +17,27 @@ backup_and_symlink() {
 
     if [ -L "$dest" ]; then
         rm "$dest"
-    elif [ -e "$dest" ]; then
-        local backup="$BACKUP_DIR/${label}-$(date +%Y%m%d-%H%M%S)"
+    elif [ -e "$dest" ] || [ -L "$dest" ]; then
+        # Include the PID and keep probing rather than ever replacing an old
+        # backup. `mv -n` also protects the final rename if two setups race.
+        local backup_prefix="$BACKUP_DIR/${label}-$(date +%Y%m%d-%H%M%S)-$$"
+        local backup="$backup_prefix"
+        local suffix=0
+        while :; do
+            if [ -e "$backup" ] || [ -L "$backup" ]; then
+                suffix=$((suffix + 1))
+                backup="${backup_prefix}-${suffix}"
+                continue
+            fi
+            if mv -n -- "$dest" "$backup" 2>/dev/null && [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+                break
+            fi
+            # A concurrently-created candidate was not moved. Pick a fresh
+            # suffix and retry; never fall back to an overwriting mv.
+            suffix=$((suffix + 1))
+            backup="${backup_prefix}-${suffix}"
+        done
         printf 'Backing up %s to %s\n' "$dest" "$backup"
-        mv "$dest" "$backup"
     fi
 
     mkdir -p "$(dirname "$dest")"
