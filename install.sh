@@ -92,6 +92,11 @@ if [ -f "$DOTFILES_DIR/scripts/setup-claude.sh" ]; then
     bash "$DOTFILES_DIR/scripts/setup-claude.sh"
 fi
 
+# Pi coding agent — settings, shared agents, workflows, skills, and extensions
+if [ -f "$DOTFILES_DIR/scripts/setup-pi.sh" ]; then
+    bash "$DOTFILES_DIR/scripts/setup-pi.sh"
+fi
+
 # Zsh and Oh My Zsh setup
 setup_zsh() {
     if [ "$SHELL_TYPE" = "zsh" ]; then

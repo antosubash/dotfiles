@@ -142,6 +142,10 @@ alias tl="tmux ls"
 alias tn="tmux new -s"
 alias tk="tmux kill-session"
 
+# Pi coding agent
+alias pic="pi --continue"
+alias pir="pi --resume"
+
 # Enhanced ls with colors if available (using eza, not exa)
 if command -v "$TOOL_EXA" &> /dev/null; then
     alias ls="$TOOL_EXA --icons"
