@@ -1,6 +1,6 @@
 ---
 description: Take a feature branch all the way to a merge-ready PR. Runs a full-convergence pipeline — loops /code-review until it reports zero findings, runs the full /qa browser cycle (which fixes bugs), then re-reviews whatever changed, repeating until a complete pass finds no review issues AND no QA bugs, and finally runs /vf to open exactly one PR. Use this whenever you want to "ship", "finalize", "wrap up", "finish", or "get this branch ready for review/merge" — i.e. do the full review + QA + verify + PR dance in one shot, not just a single review or a single QA pass.
-argument-hint: [feature description] [--port N] [--route PATH] [--url URL] [--start CMD] [--base BRANCH] [--depth shallow|normal|deep] [--review-effort low|medium|high|xhigh|max] [--max-outer-iterations N] [--max-review-iterations N] [--no-review] [--no-qa] [--no-pr] [--skip-browser] [--a11y] [--responsive] [--perf]
+argument-hint: [feature description] [--port N] [--route PATH] [--url URL] [--start CMD] [--base BRANCH] [--depth shallow|normal|deep] [--review-effort low|medium|high|max] [--max-outer-iterations N] [--max-review-iterations N] [--no-review] [--no-qa] [--no-pr] [--skip-browser] [--a11y] [--responsive] [--perf]
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Agent, Skill, TaskCreate, TaskUpdate, TaskList, mcp__plugin_playwright_playwright__browser_navigate, mcp__plugin_playwright_playwright__browser_snapshot, mcp__plugin_playwright_playwright__browser_click, mcp__plugin_playwright_playwright__browser_type, mcp__plugin_playwright_playwright__browser_hover, mcp__plugin_playwright_playwright__browser_take_screenshot, mcp__plugin_playwright_playwright__browser_fill_form, mcp__plugin_playwright_playwright__browser_select_option, mcp__plugin_playwright_playwright__browser_press_key, mcp__plugin_playwright_playwright__browser_wait_for, mcp__plugin_playwright_playwright__browser_console_messages, mcp__plugin_playwright_playwright__browser_network_requests, mcp__plugin_playwright_playwright__browser_network_request, mcp__plugin_playwright_playwright__browser_evaluate, mcp__plugin_playwright_playwright__browser_tabs, mcp__plugin_playwright_playwright__browser_navigate_back, mcp__plugin_playwright_playwright__browser_close, mcp__plugin_playwright_playwright__browser_resize, mcp__plugin_playwright_playwright__browser_file_upload, mcp__plugin_playwright_playwright__browser_handle_dialog
 ---
 
@@ -39,7 +39,7 @@ Parse into:
 - `--url URL` — passed to `/qa` only. **`/vf` has no `--url` flag** — if the user gave only `--url`, derive `--port` and `--route` from that URL and pass those to `/vf` in Stage C.
 - `--base BRANCH` — base branch for rebase + PR. Passed to `/vf` (defaults: `main`, else `master`).
 - `--depth shallow|normal|deep` — QA thoroughness (default `normal`). Passed to `/qa`.
-- `--review-effort low|medium|high|xhigh|max` — effort for `/code-review` (default `high`). Higher = broader coverage, more findings.
+- `--review-effort low|medium|high|max` — effort for `/code-review` (default `high`). Higher = broader coverage, more findings.
 - `--max-outer-iterations N` — max review↔QA convergence rounds (default **3**). Each round runs a full `/qa`, so this bounds cost.
 - `--max-review-iterations N` — max passes inside a single Stage A code-review loop (default **5**).
 - `--no-review` — skip Stage A (the standalone code-review loop). QA still runs its own internal review gate.
@@ -87,8 +87,9 @@ TaskCreate: "Stage C: Verify + open PR (/vf)"
 
 1. **Branch guard.** `git rev-parse --abbrev-ref HEAD`. If it's the base branch (`main`/`master` or `--base`), STOP and tell the user to switch to a feature branch. Doing the whole pipeline only to have `/vf` refuse at the end wastes a lot of work.
 2. **There must be something to ship.** If the repo has no `origin` remote, STOP — Stage C must push, so `/ship` can't finish without one. Run `git fetch origin <base>` first so `origin/<base>` exists locally, then `git diff --stat origin/<base>...HEAD` (and `git status --porcelain` for uncommitted work). If the branch has no changes vs base and a clean tree, STOP — there's nothing to review, QA, or PR.
-3. **Detect stack / port / route** the same way `/qa` and `/vf` do (package.json / pyproject.toml / *.csproj). You don't have to fully start anything here — `/qa` and `/vf` re-detect — but resolve the port/route now so you can pass consistent values through.
-4. **Echo the plan** so the user can course-correct before the expensive part:
+3. **Initialize the pipeline state.** Resolve `SHIP_DIR="$(git rev-parse --absolute-git-dir)/ship"`, `mkdir -p "$SHIP_DIR"`, and write the initial `$SHIP_DIR/state.json` (see "Pipeline State" below). Everywhere this document says `$SHIP_DIR`, it means this one absolute path — substitute the literal path in subagent prompts, they don't inherit shell variables.
+4. **Detect stack / port / route** the same way `/qa` and `/vf` do (package.json / pyproject.toml / *.csproj). You don't have to fully start anything here — `/qa` and `/vf` re-detect — but resolve the port/route now so you can pass consistent values through.
+5. **Echo the plan** so the user can course-correct before the expensive part:
 
 ```
 /ship pipeline
@@ -100,6 +101,38 @@ TaskCreate: "Stage C: Verify + open PR (/vf)"
 ```
 
 **→ TaskUpdate:** Mark "Stage 0: Preflight" `completed`.
+
+---
+
+## Pipeline State (survives context loss)
+
+`$SHIP_DIR/state.json` is the single source of truth for the loop — inside `.git/`, never committed:
+
+```json
+{
+  "feature": "…", "branch": "…", "base": "main",
+  "outer": 1, "max_outer": 3,
+  "last_clean_review_sha": null,
+  "rounds": [
+    { "round": 1,
+      "stageA": { "passes": 2, "result": "clean | unresolved | skipped" },
+      "stageB": { "result": "clean | bugs-fixed | unresolved | skipped",
+                  "iterations": 0, "bugs_found": 0, "bugs_fixed": 0, "artifact_url": "…" } }
+  ],
+  "unresolved": [
+    { "source": "review", "detail": "file:line — why it needs judgment" },
+    { "source": "qa", "id": "BUG-007", "severity": "P1", "summary": "one line" }
+  ],
+  "report_artifact_url": null,
+  "status": "in-progress | converged | stopped"
+}
+```
+
+`report_artifact_url` is set by the Final Summary's report-publish step (null until then).
+
+`rounds[].stageB.iterations`, `.bugs_found`, and `.bugs_fixed` are that round's `iterations`, `bugs_found_total`, and `bugs_fixed_total` from the round's QA `result.json` — copy all three, not just `bugs_found`, since the Final Summary needs the iteration count and fixed count too. Update the file at EVERY stage boundary (Stage A done, Stage B done, convergence decision, Stage C). The convergence check and Stage C read this file, not conversation memory. **If the conversation gets summarized mid-run, re-read `$SHIP_DIR/state.json` and resume from `status` + `outer` — never re-derive loop state from prose.**
+
+`unresolved` holds tagged objects, never bare strings — `"source": "review"` for a Stage A finding that survived `--fix` + a dev agent (with a `detail` string), `"source": "qa"` for a QA `remaining` entry (copied through with its `id`/`severity`/`summary` intact). Stage A and Stage B each **append** their own round's entries — a stage never overwrites what the other stage already wrote this round. At the top of each new round, clear entries from the *previous* round before either stage runs (a fresh round re-earns its own unresolved list; stale entries from a round that's being re-attempted must not linger).
 
 ---
 
@@ -119,29 +152,45 @@ Run `/code-review` against the branch's changes and drive findings to zero. `/co
 
 ```
 review_pass = 1
+REVIEW_TARGET = last_clean_review_sha from state.json, else <base>
+    # The first review of the run covers the full branch diff vs <base>. Once a pass has
+    # come back clean, everything up to that SHA is reviewed code — later reviews (later
+    # rounds) only cover the diff SINCE that SHA. Never re-review the whole branch after
+    # a recorded clean pass. REVIEW_TARGET stays FIXED within this Stage A loop.
 loop:
+    EFFORT = --review-effort (default high) if review_pass == 1,
+             else --review-effort IF the user explicitly passed it, else "medium"
+    # Pass 1 already covered this span at full effort; later passes confirm fresh fixes
+    # and catch regressions — medium is enough for that BY DEFAULT. But an explicit
+    # --review-effort is a user override and must hold for every pass, not just the first —
+    # silently downgrading an explicit `max` (or upgrading an explicit `low`) on
+    # later passes would ignore what the user asked for.
     Dispatch the review to a Sonnet subagent (NEVER invoke code-review directly in the main session):
       Agent(subagent_type="general-purpose", model="sonnet", prompt="
         Invoke the built-in code-review skill via the Skill tool:
-        Skill(skill=\"code-review\", args=\"<effort> <base> --fix\")
-        <base> is the base branch (e.g. main) — ALWAYS pass it as the review target so the
-        review covers the full branch diff vs base, never just uncommitted working-tree
-        changes (a clean tree with no target could silently review nothing).
+        Skill(skill=\"code-review\", args=\"{EFFORT} {REVIEW_TARGET} --fix\")
+        {REVIEW_TARGET} is the review target — a base branch or a commit SHA. ALWAYS pass it
+        so the review covers the diff from that point to HEAD, never just uncommitted
+        working-tree changes (a clean tree with no target could silently review nothing).
         This is the unscoped built-in diff reviewer — NOT the code-review:code-review plugin.
         If the Skill tool or the code-review skill is unavailable in your context, do the
-        review yourself instead: read `git diff <base>...HEAD` plus uncommitted changes and
-        review for correctness bugs, then apply safe fixes — do not just give up.
-        When done, return the complete review: every finding (file:line, severity,
-        one-line description), which findings --fix applied, and which could NOT be auto-fixed
-        and why. If the review reports zero findings, state exactly: CLEAN — 0 findings.")
-      - <effort> defaults to "high" (or --review-effort). --fix applies the findings to the working tree.
-    Read the subagent's returned review.
+        review yourself instead: read `git diff {REVIEW_TARGET}...HEAD` plus uncommitted
+        changes and review for correctness bugs, then apply safe fixes — do not just give up.
+        Write the COMPLETE review — every finding with file:line, severity, description,
+        whether --fix resolved it and if not why — to
+        {literal $SHIP_DIR}/review-round-{outer}-pass-{review_pass}.md.
+        Return ONLY a verdict: 'CLEAN — 0 findings', or 'N findings, F fixed, U unfixed'
+        plus one line per UNFIXED finding (file:line — why it needs judgment). Nothing
+        else — the full review lives in the file, not in your reply.")
+      - --fix applies the findings to the working tree.
+    Read the subagent's returned verdict (full details are on disk if you need them).
     IF it reports no actionable findings (nothing left to fix):
-        → review is CLEAN. Break.
+        → review is CLEAN. Record last_clean_review_sha = `git rev-parse HEAD` in state.json. Break.
     ELSE:
         → It found (and --fix attempted) issues.
         → If any finding could NOT be auto-fixed by --fix (needs judgment, multi-file refactor,
-          or a design decision), dispatch a developer Agent to fix it properly, then continue.
+          or a design decision), dispatch a developer Agent to fix it properly — point it at the
+          review file for full context — then continue.
         → Commit the fixes. First refuse to stage secrets (same guard as /vf): if `git status --porcelain`
           shows any `.env*`, `*.pem`, or `credentials*` path, STOP and ask the user — never commit those.
           Otherwise:  git add -A && git commit -m "fix: address code review findings (round {outer}, pass {review_pass})"
@@ -152,7 +201,7 @@ loop:
 
 Notes:
 - A run that applied fixes is **not** proof of cleanliness — always re-run `/code-review` once more after fixes until a pass comes back with nothing to fix.
-- Record whether Stage A **ended clean** or left findings **UNRESOLVED** — that is what the convergence check keys on. Review fixes made this round do NOT by themselves force another round: Stage B tests them in this very round.
+- Record whether Stage A **ended clean** or left findings **UNRESOLVED** in `$SHIP_DIR/state.json` (`rounds[].stageA`, plus `last_clean_review_sha`) — that is what the convergence check keys on. If UNRESOLVED, append each surviving finding to `unresolved` as `{ "source": "review", "detail": "file:line — why it needs judgment" }` (append, don't overwrite — Stage B appends its own entries later this round). Review fixes made this round do NOT by themselves force another round: Stage B tests them in this very round.
 
 **→ TaskUpdate:** Mark the Stage A task `completed`.
 
@@ -166,12 +215,12 @@ Invoke the full `/qa` browser cycle. It fans out parallel test agents, auto-fixe
 Skill(skill="qa", args="<feature description> --no-vf --run-id ship-round-{outer} --port <port> --route <route> --depth <depth> [--a11y] [--responsive] [--perf] [--url <url>] [--start <cmd>]")
 ```
 
-Pass through only the flags the user actually supplied — except `--run-id ship-round-{outer}`, which you ALWAYS pass so each round's QA evidence gets its own directory (`$(git rev-parse --git-dir)/qa/ship-round-{outer}/`) instead of clobbering the previous round's. When done, read `/qa`'s final report and determine:
-- `qa_found_bugs` = did QA find and fix any P0/P1/P2 bugs this round? (Check the report's iteration history / summary, or `$(git rev-parse --git-dir)/qa/ship-round-{outer}/reports/qa-report-iteration-*.md`.)
-- `qa_issues_remaining` = did QA hit ITS max-iterations with bugs still unfixed?
-- Note the QA report artifact URL `/qa` printed (also saved to `.../ship-round-{outer}/artifact-url.txt`) — the final summary links it.
+Pass through only the flags the user actually supplied — except `--run-id ship-round-{outer}`, which you ALWAYS pass so each round's QA evidence gets its own directory (`$(git rev-parse --absolute-git-dir)/qa/ship-round-{outer}/`) instead of clobbering the previous round's. When done, read `$(git rev-parse --absolute-git-dir)/qa/ship-round-{outer}/result.json` — `/qa` maintains it as its machine-readable outcome — and derive:
+- `qa_found_bugs` = `bugs_found_total > 0`
+- `qa_issues_remaining` = `status == "issues-remaining"` (the `remaining` array lists them)
+- `artifact_url` — the QA report artifact, for the final summary and PR body.
 
-If `qa_issues_remaining` is true, record those as UNRESOLVED.
+Do NOT parse the markdown reports for these — `result.json` is the contract. Fall back to `reports/qa-report-iteration-*.md` + `artifact-url.txt` only if `result.json` is missing (older `/qa`). If `qa_issues_remaining` is true, append each `remaining` entry into `$SHIP_DIR/state.json`'s `unresolved` array as `{ "source": "qa", ...entry }` — append, do NOT overwrite the array (Stage A may have already appended its own `source: "review"` entries this round). Record Stage B's outcome in `state.json` (`rounds[].stageB` — including `iterations`, `bugs_found`, `bugs_fixed`) either way.
 
 **→ TaskUpdate:** Mark the Stage B task `completed`.
 
@@ -182,9 +231,15 @@ Decide what to do next:
 ```
 IF (Stage A skipped OR Stage A ended clean with nothing UNRESOLVED)  AND  (Stage B skipped OR qa_found_bugs == false):
     → CONVERGED. Exit the outer loop → Stage C.
-    NOTE: Stage A fixing issues does NOT block convergence — Stage A always ends on a clean
+    NOTE: Stage A fixing issues does NOT block convergence — a clean Stage A ends on a clean
     re-review pass, and this round's QA already tested those fixes. Only QA changing code
     forces another round, because QA's fixes land AFTER the last clean review.
+
+ELSE IF Stage A left findings UNRESOLVED AND (Stage B skipped OR qa_found_bugs == false):
+    → Those findings already survived --max-review-iterations passes WITH dev-agent help,
+      and either QA never ran or QA changed no code since — an identical round would just
+      repeat the same failure. Exit NOT-CLEAN → Stage C reports the remaining findings and
+      does NOT open a PR.
 
 ELSE IF there are UNRESOLVED findings/bugs AND outer >= --max-outer-iterations:
     → STOP converging. Exit the loop in a NOT-CLEAN state → Stage C will report remaining issues and NOT open a PR.
@@ -195,8 +250,12 @@ ELSE IF outer >= --max-outer-iterations:
 ELSE:
     → QA fixed bugs this round (qa_found_bugs == true), so code changed after the last clean
       review and must be re-reviewed (and the review's own fixes re-tested). Increment outer,
-      create "Round {outer} · Stage A/B" tasks, and go back to Stage A.
+      CLEAR `unresolved` in state.json to `[]` (this round's findings, if any, will re-populate
+      it fresh — see "Pipeline State" above), create "Round {outer} · Stage A/B" tasks, and go
+      back to Stage A.
 ```
+
+Write the decision to `$SHIP_DIR/state.json` (`outer`, `status`, this round's outcomes) BEFORE moving on — the next stage reads loop state from the file, not from conversation memory.
 
 Why this converges correctly: within a round, Stage A runs first and ends clean, then Stage B tests exactly that reviewed code. So a round where QA found nothing means the current code is both review-clean AND QA-clean — done, even if Stage A fixed things earlier in the round. Re-looping on review fixes alone would re-run a full `/qa` (server + agent fan-out) on code QA just passed — pure waste. The one asymmetry: QA's bug-fixes come after the review, so they alone trigger the next round.
 
@@ -212,7 +271,7 @@ To keep cost sane: the default cap of 3 rounds is usually plenty — with this c
 
 ### If the branch did NOT converge clean (UNRESOLVED issues remain after max rounds)
 
-Do **not** open a PR. Print the remaining issues clearly and stop:
+Do **not** open a PR. Read `unresolved` from `$SHIP_DIR/state.json` (the authoritative list), print it clearly — render each `source: "review"` entry as `[review] <detail>` and each `source: "qa"` entry as `[qa <id>] <severity>: <summary>` — and stop:
 
 ```
 /ship STOPPED — branch not clean after {outer} rounds
@@ -220,10 +279,11 @@ Do **not** open a PR. Print the remaining issues clearly and stop:
     - [review] <finding that --fix + dev agent couldn't safely resolve>
     - [qa BUG-007] P1: <bug /qa couldn't fix in its max-iterations>
   Nothing was pushed. Reports: QA artifact URL(s) printed by /qa (local copies under
-  $(git rev-parse --git-dir)/qa/ship-round-*/reports/), code-review output above.
+  $(git rev-parse --absolute-git-dir)/qa/ship-round-*/reports/), full code reviews under
+  $(git rev-parse --absolute-git-dir)/ship/.
 ```
 
-Run the Task list audit and finish. CI/PR is intentionally skipped — shipping known-broken code is worse than stopping.
+Do NOT stop here — continue to **Final Summary** below, which publishes the pipeline report artifact (this STOPPED run needs it most) and performs the mandatory task list audit as part of printing the closing summary. CI/PR is intentionally skipped — shipping known-broken code is worse than stopping.
 
 ### If the branch converged clean
 
@@ -245,6 +305,22 @@ Skill(skill="vf", args="<feature description> --port <port> --route <route> [--s
 
 ## Final Summary
 
+### Publish the pipeline report artifact (before printing the summary)
+
+Every run ends with a published report — converged, STOPPED, and verify-only alike (a STOPPED run needs it most):
+
+1. Build `$SHIP_DIR/report.html` — one self-contained page assembled from `state.json` and the on-disk round records:
+   - Run header: feature, branch → base, final result, rounds used.
+   - Per-round table: Stage A passes with findings found / fixed / unresolved, Stage B iterations + bugs found/fixed (or the skip reason).
+   - Per-pass review summaries distilled from `$SHIP_DIR/review-round-*-pass-*.md` (finding titles + severity + fixed-or-not — not the full text).
+   - Stage C outcome: CI stage results, the PR URL, or the stop reason with the `unresolved` list.
+   - Links to each round's QA report artifact and the `/vf` verification artifact.
+   No embedded screenshots — link the QA/verify artifacts instead. If you do embed an image, splice the base64 in with a script — never through the Write/Edit tools.
+2. Load the `artifact-design` skill first if it's available, then publish: `Artifact(file_path="<literal $SHIP_DIR>/report.html", favicon="🚢", description="/ship pipeline report for <feature>")`. Give the page a stable `<title>` naming the feature. Re-publishing the same file path redeploys to the same URL.
+3. Save the returned URL to `$SHIP_DIR/artifact-url.txt`, record it as `report_artifact_url` in `state.json`, and print it in the summary's `Report:` line.
+
+### Print the summary
+
 Print a compact summary (and run the mandatory TaskList audit — every task in a terminal state):
 
 ```
@@ -255,10 +331,13 @@ Print a compact summary (and run the mandatory TaskList audit — every task in 
   Rounds:        {outer} of {max-outer}
   Stage A:       code-review clean after {passes} pass(es)
   Stage B:       QA clean ({qa iterations}, {bugs} bugs found+fixed) | skipped
+                 (source: rounds[].stageB.iterations / .bugs_found / .bugs_fixed in state.json)
   Result:        ALL CLEAN → PR opened | STOPPED ({X} issues remaining) | verify-only (--no-pr)
   PR:            <url from /vf, or "not opened — see remaining issues">
-  Artifacts:     QA report artifact <url per round>  ·  verification artifact <url from /vf>  ·  code-review output
-                 (local working copies live under $(git rev-parse --git-dir)/qa/ and /verify/ — never committed)
+  Report:        <pipeline report artifact URL>
+  Artifacts:     QA report artifact <url per round>  ·  verification artifact <url from /vf>  ·  code reviews
+                 (local working copies live under $(git rev-parse --absolute-git-dir)/qa/, /ship/ (state.json +
+                 review files), and /verify/ — never committed)
 ═══════════════════════════════════════════════════
 ```
 
