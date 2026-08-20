@@ -123,9 +123,12 @@ TaskCreate: "Stage C: Verify + open PR (/vf)"
     { "source": "review", "detail": "file:line — why it needs judgment" },
     { "source": "qa", "id": "BUG-007", "severity": "P1", "summary": "one line" }
   ],
+  "report_artifact_url": null,
   "status": "in-progress | converged | stopped"
 }
 ```
+
+`report_artifact_url` is set by the Final Summary's report-publish step (null until then).
 
 `rounds[].stageB.iterations`, `.bugs_found`, and `.bugs_fixed` are that round's `iterations`, `bugs_found_total`, and `bugs_fixed_total` from the round's QA `result.json` — copy all three, not just `bugs_found`, since the Final Summary needs the iteration count and fixed count too. Update the file at EVERY stage boundary (Stage A done, Stage B done, convergence decision, Stage C). The convergence check and Stage C read this file, not conversation memory. **If the conversation gets summarized mid-run, re-read `$SHIP_DIR/state.json` and resume from `status` + `outer` — never re-derive loop state from prose.**
 
@@ -302,6 +305,22 @@ Skill(skill="vf", args="<feature description> --port <port> --route <route> [--s
 
 ## Final Summary
 
+### Publish the pipeline report artifact (before printing the summary)
+
+Every run ends with a published report — converged, STOPPED, and verify-only alike (a STOPPED run needs it most):
+
+1. Build `$SHIP_DIR/report.html` — one self-contained page assembled from `state.json` and the on-disk round records:
+   - Run header: feature, branch → base, final result, rounds used.
+   - Per-round table: Stage A passes with findings found / fixed / unresolved, Stage B iterations + bugs found/fixed (or the skip reason).
+   - Per-pass review summaries distilled from `$SHIP_DIR/review-round-*-pass-*.md` (finding titles + severity + fixed-or-not — not the full text).
+   - Stage C outcome: CI stage results, the PR URL, or the stop reason with the `unresolved` list.
+   - Links to each round's QA report artifact and the `/vf` verification artifact.
+   No embedded screenshots — link the QA/verify artifacts instead. If you do embed an image, splice the base64 in with a script — never through the Write/Edit tools.
+2. Load the `artifact-design` skill first if it's available, then publish: `Artifact(file_path="<literal $SHIP_DIR>/report.html", favicon="🚢", description="/ship pipeline report for <feature>")`. Give the page a stable `<title>` naming the feature. Re-publishing the same file path redeploys to the same URL.
+3. Save the returned URL to `$SHIP_DIR/artifact-url.txt`, record it as `report_artifact_url` in `state.json`, and print it in the summary's `Report:` line.
+
+### Print the summary
+
 Print a compact summary (and run the mandatory TaskList audit — every task in a terminal state):
 
 ```
@@ -315,6 +334,7 @@ Print a compact summary (and run the mandatory TaskList audit — every task in 
                  (source: rounds[].stageB.iterations / .bugs_found / .bugs_fixed in state.json)
   Result:        ALL CLEAN → PR opened | STOPPED ({X} issues remaining) | verify-only (--no-pr)
   PR:            <url from /vf, or "not opened — see remaining issues">
+  Report:        <pipeline report artifact URL>
   Artifacts:     QA report artifact <url per round>  ·  verification artifact <url from /vf>  ·  code reviews
                  (local working copies live under $(git rev-parse --absolute-git-dir)/qa/, /ship/ (state.json +
                  review files), and /verify/ — never committed)
