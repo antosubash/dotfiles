@@ -206,3 +206,11 @@ if [[ -x "$REPOS_SYNC_SCRIPT" ]]; then
     alias rs="$REPOS_SYNC_SCRIPT"
 fi
 
+# Remove only clean worktrees in the current repo whose exact branch HEAD
+# belongs to a PR merged at least 14 days ago. Pass --dry-run or --days N.
+WORKTREE_CLEANUP_SCRIPT="$DOTFILES_DIR/scripts/cleanup-merged-worktrees.sh"
+if [[ -x "$WORKTREE_CLEANUP_SCRIPT" ]]; then
+    alias wt-clean="$WORKTREE_CLEANUP_SCRIPT"
+    alias wtc="$WORKTREE_CLEANUP_SCRIPT"
+fi
+
