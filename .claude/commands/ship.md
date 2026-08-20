@@ -1,6 +1,6 @@
 ---
 description: Take a feature branch all the way to a merge-ready PR. Runs a full-convergence pipeline — loops /code-review until it reports zero findings, runs the full /qa browser cycle (which fixes bugs), then re-reviews whatever changed, repeating until a complete pass finds no review issues AND no QA bugs, and finally runs /vf to open exactly one PR. Use this whenever you want to "ship", "finalize", "wrap up", "finish", or "get this branch ready for review/merge" — i.e. do the full review + QA + verify + PR dance in one shot, not just a single review or a single QA pass.
-argument-hint: [feature description] [--port N] [--route PATH] [--url URL] [--start CMD] [--base BRANCH] [--depth shallow|normal|deep] [--review-effort low|medium|high|max] [--max-outer-iterations N] [--max-review-iterations N] [--no-review] [--no-qa] [--no-pr] [--skip-browser] [--a11y] [--responsive] [--perf]
+argument-hint: [feature description] [--port N] [--route PATH] [--url URL] [--start CMD] [--base BRANCH] [--depth shallow|normal|deep] [--review-effort low|medium|high|xhigh|max] [--max-outer-iterations N] [--max-review-iterations N] [--no-review] [--no-qa] [--no-pr] [--skip-browser] [--a11y] [--responsive] [--perf]
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Agent, Skill, TaskCreate, TaskUpdate, TaskList, mcp__plugin_playwright_playwright__browser_navigate, mcp__plugin_playwright_playwright__browser_snapshot, mcp__plugin_playwright_playwright__browser_click, mcp__plugin_playwright_playwright__browser_type, mcp__plugin_playwright_playwright__browser_hover, mcp__plugin_playwright_playwright__browser_take_screenshot, mcp__plugin_playwright_playwright__browser_fill_form, mcp__plugin_playwright_playwright__browser_select_option, mcp__plugin_playwright_playwright__browser_press_key, mcp__plugin_playwright_playwright__browser_wait_for, mcp__plugin_playwright_playwright__browser_console_messages, mcp__plugin_playwright_playwright__browser_network_requests, mcp__plugin_playwright_playwright__browser_network_request, mcp__plugin_playwright_playwright__browser_evaluate, mcp__plugin_playwright_playwright__browser_tabs, mcp__plugin_playwright_playwright__browser_navigate_back, mcp__plugin_playwright_playwright__browser_close, mcp__plugin_playwright_playwright__browser_resize, mcp__plugin_playwright_playwright__browser_file_upload, mcp__plugin_playwright_playwright__browser_handle_dialog
 ---
 
@@ -35,10 +35,11 @@ User invoked with: `$ARGUMENTS`
 
 Parse into:
 - **Feature description** — free text (anything not a flag). Passed through to `/qa` and `/vf` and used in the PR body.
-- `--port N`, `--route PATH`, `--url URL`, `--start CMD` — server/route hints. Passed through to `/qa` and `/vf`.
+- `--port N`, `--route PATH`, `--start CMD` — server/route hints. Passed through to `/qa` and `/vf` (always include `--start` in the Stage C `/vf` call when one was supplied or detected — `/vf` re-detects otherwise and can pick the wrong command).
+- `--url URL` — passed to `/qa` only. **`/vf` has no `--url` flag** — if the user gave only `--url`, derive `--port` and `--route` from that URL and pass those to `/vf` in Stage C.
 - `--base BRANCH` — base branch for rebase + PR. Passed to `/vf` (defaults: `main`, else `master`).
 - `--depth shallow|normal|deep` — QA thoroughness (default `normal`). Passed to `/qa`.
-- `--review-effort low|medium|high|max` — effort for `/code-review` (default `high`). Higher = broader coverage, more findings.
+- `--review-effort low|medium|high|xhigh|max` — effort for `/code-review` (default `high`). Higher = broader coverage, more findings.
 - `--max-outer-iterations N` — max review↔QA convergence rounds (default **3**). Each round runs a full `/qa`, so this bounds cost.
 - `--max-review-iterations N` — max passes inside a single Stage A code-review loop (default **5**).
 - `--no-review` — skip Stage A (the standalone code-review loop). QA still runs its own internal review gate.
@@ -55,7 +56,8 @@ Don't ask clarifying questions when reasonable defaults exist — echo what you 
 - **Exactly one PR.** `/qa` is always invoked with `--no-vf` so it never opens its own PR. Only Stage C opens a PR, and only if the branch converged clean and `--no-pr` was not passed.
 - **Never open a PR with known unfixed issues.** If you hit `max-outer-iterations` with issues still open, STOP at Stage C, list what remains, and do NOT run `/vf` to create a PR.
 - **Must be on a feature branch.** Refuse to run on the base branch (`main`/`master`) — `/vf` will reject it anyway, so check up front before doing expensive work.
-- **Delegate, don't reimplement.** Invoke `/code-review`, `/qa`, and `/vf` via the `Skill` tool. Do not hand-roll your own QA or PR logic — these commands already encode it.
+- **Delegate, don't reimplement.** Invoke `/qa` and `/vf` via the `Skill` tool, and `/code-review` via a Sonnet-pinned subagent (see Stage A). Do not hand-roll your own QA or PR logic — these commands already encode it.
+- **Code review always runs on Sonnet.** Every `/code-review` pass is dispatched through `Agent(model="sonnet")` — never invoked in the main session, regardless of what model the session runs on. Review is the pipeline's dominant token cost and Sonnet handles it well.
 - **Read the sub-command output to make decisions.** After each `Skill` invocation, read what it returned to decide whether findings/bugs remain. That judgment drives the loop.
 
 ---
@@ -84,7 +86,7 @@ TaskCreate: "Stage C: Verify + open PR (/vf)"
 **→ TaskUpdate:** Mark "Stage 0: Preflight" `in_progress`. Create the task list above.
 
 1. **Branch guard.** `git rev-parse --abbrev-ref HEAD`. If it's the base branch (`main`/`master` or `--base`), STOP and tell the user to switch to a feature branch. Doing the whole pipeline only to have `/vf` refuse at the end wastes a lot of work.
-2. **There must be something to ship.** `git diff --stat origin/<base>...HEAD` (and `git status --porcelain` for uncommitted work). If the branch has no changes vs base and a clean tree, STOP — there's nothing to review, QA, or PR.
+2. **There must be something to ship.** If the repo has no `origin` remote, STOP — Stage C must push, so `/ship` can't finish without one. Run `git fetch origin <base>` first so `origin/<base>` exists locally, then `git diff --stat origin/<base>...HEAD` (and `git status --porcelain` for uncommitted work). If the branch has no changes vs base and a clean tree, STOP — there's nothing to review, QA, or PR.
 3. **Detect stack / port / route** the same way `/qa` and `/vf` do (package.json / pyproject.toml / *.csproj). You don't have to fully start anything here — `/qa` and `/vf` re-detect — but resolve the port/route now so you can pass consistent values through.
 4. **Echo the plan** so the user can course-correct before the expensive part:
 
@@ -92,7 +94,7 @@ TaskCreate: "Stage C: Verify + open PR (/vf)"
 /ship pipeline
   Branch:            feature/settings-page → main
   Feature:           user settings page
-  Stages:            A code-review (effort high)  ·  B QA (depth normal)  ·  C /vf → PR
+  Stages:            A code-review (effort high, sonnet)  ·  B QA (depth normal)  ·  C /vf → PR
   Convergence:       up to 3 outer rounds, 5 review passes each
   Port / route:      3000 /settings
 ```
@@ -111,19 +113,33 @@ Initialize `outer = 1`. Then repeat the following until you converge or hit `--m
 
 Run `/code-review` against the branch's changes and drive findings to zero. `/code-review` reviews the current diff at a chosen effort and can apply fixes with `--fix`.
 
+**Code review ALWAYS runs on Sonnet — never in the main session.** Review is the pipeline's biggest token sink, and the main session may be on a far more expensive model (Fable/Opus). Dispatch every review pass through a subagent pinned to `model: "sonnet"`. No exceptions: not for "just one quick pass", not because the session model is already cheap, not on re-review passes.
+
 **Use the built-in, unscoped `code-review` skill — the one that reviews the working diff and supports `--fix`.** Do NOT use the `code-review:code-review` plugin: it reviews an *existing GitHub PR* (`gh pr …`), has no `--fix`, and there is no PR yet at this stage (the PR is created later in Stage C). Picking the plugin would make this loop unable to ever reach "0 findings".
 
 ```
 review_pass = 1
-review_changed_code = false
 loop:
-    Invoke:  Skill(skill="code-review", args="<effort> --fix")     # built-in diff reviewer, NOT code-review:code-review
+    Dispatch the review to a Sonnet subagent (NEVER invoke code-review directly in the main session):
+      Agent(subagent_type="general-purpose", model="sonnet", prompt="
+        Invoke the built-in code-review skill via the Skill tool:
+        Skill(skill=\"code-review\", args=\"<effort> <base> --fix\")
+        <base> is the base branch (e.g. main) — ALWAYS pass it as the review target so the
+        review covers the full branch diff vs base, never just uncommitted working-tree
+        changes (a clean tree with no target could silently review nothing).
+        This is the unscoped built-in diff reviewer — NOT the code-review:code-review plugin.
+        If the Skill tool or the code-review skill is unavailable in your context, do the
+        review yourself instead: read `git diff <base>...HEAD` plus uncommitted changes and
+        review for correctness bugs, then apply safe fixes — do not just give up.
+        When done, return the complete review: every finding (file:line, severity,
+        one-line description), which findings --fix applied, and which could NOT be auto-fixed
+        and why. If the review reports zero findings, state exactly: CLEAN — 0 findings.")
       - <effort> defaults to "high" (or --review-effort). --fix applies the findings to the working tree.
-    Read the returned review.
+    Read the subagent's returned review.
     IF it reports no actionable findings (nothing left to fix):
         → review is CLEAN. Break.
     ELSE:
-        → It found (and --fix attempted) issues. Set review_changed_code = true.
+        → It found (and --fix attempted) issues.
         → If any finding could NOT be auto-fixed by --fix (needs judgment, multi-file refactor,
           or a design decision), dispatch a developer Agent to fix it properly, then continue.
         → Commit the fixes. First refuse to stage secrets (same guard as /vf): if `git status --porcelain`
@@ -135,8 +151,8 @@ loop:
 ```
 
 Notes:
-- A run that applied fixes is **not** proof of cleanliness — always re-run `/code-review` once more after fixes until a pass comes back with nothing to fix. That final clean pass is what lets `review_changed_code` settle.
-- Record `review_changed_code` for the convergence check, and whether any findings were left UNRESOLVED.
+- A run that applied fixes is **not** proof of cleanliness — always re-run `/code-review` once more after fixes until a pass comes back with nothing to fix.
+- Record whether Stage A **ended clean** or left findings **UNRESOLVED** — that is what the convergence check keys on. Review fixes made this round do NOT by themselves force another round: Stage B tests them in this very round.
 
 **→ TaskUpdate:** Mark the Stage A task `completed`.
 
@@ -147,12 +163,13 @@ Notes:
 Invoke the full `/qa` browser cycle. It fans out parallel test agents, auto-fixes bugs with developer agents, runs its own internal code-review gate, and loops internally until clean or its own max-iterations. **Always pass `--no-vf`** so it fixes bugs but does NOT open a PR — Stage C owns the PR.
 
 ```
-Skill(skill="qa", args="<feature description> --no-vf --port <port> --route <route> --depth <depth> [--a11y] [--responsive] [--perf] [--url <url>] [--start <cmd>]")
+Skill(skill="qa", args="<feature description> --no-vf --run-id ship-round-{outer} --port <port> --route <route> --depth <depth> [--a11y] [--responsive] [--perf] [--url <url>] [--start <cmd>]")
 ```
 
-Pass through only the flags the user actually supplied. When done, read `/qa`'s final report and determine:
-- `qa_found_bugs` = did QA find and fix any P0/P1/P2 bugs this round? (Check the report's iteration history / summary, or `.qa/reports/qa-report-iteration-*.md`.)
+Pass through only the flags the user actually supplied — except `--run-id ship-round-{outer}`, which you ALWAYS pass so each round's QA evidence gets its own directory (`$(git rev-parse --git-dir)/qa/ship-round-{outer}/`) instead of clobbering the previous round's. When done, read `/qa`'s final report and determine:
+- `qa_found_bugs` = did QA find and fix any P0/P1/P2 bugs this round? (Check the report's iteration history / summary, or `$(git rev-parse --git-dir)/qa/ship-round-{outer}/reports/qa-report-iteration-*.md`.)
 - `qa_issues_remaining` = did QA hit ITS max-iterations with bugs still unfixed?
+- Note the QA report artifact URL `/qa` printed (also saved to `.../ship-round-{outer}/artifact-url.txt`) — the final summary links it.
 
 If `qa_issues_remaining` is true, record those as UNRESOLVED.
 
@@ -163,8 +180,11 @@ If `qa_issues_remaining` is true, record those as UNRESOLVED.
 Decide what to do next:
 
 ```
-IF (Stage A skipped OR review found nothing this round)  AND  (Stage B skipped OR qa_found_bugs == false):
-    → CONVERGED. The branch survived a full pass with nothing left to fix. Exit the outer loop → Stage C.
+IF (Stage A skipped OR Stage A ended clean with nothing UNRESOLVED)  AND  (Stage B skipped OR qa_found_bugs == false):
+    → CONVERGED. Exit the outer loop → Stage C.
+    NOTE: Stage A fixing issues does NOT block convergence — Stage A always ends on a clean
+    re-review pass, and this round's QA already tested those fixes. Only QA changing code
+    forces another round, because QA's fixes land AFTER the last clean review.
 
 ELSE IF there are UNRESOLVED findings/bugs AND outer >= --max-outer-iterations:
     → STOP converging. Exit the loop in a NOT-CLEAN state → Stage C will report remaining issues and NOT open a PR.
@@ -173,14 +193,14 @@ ELSE IF outer >= --max-outer-iterations:
     → Hit the cap. Exit the loop. If nothing is actually UNRESOLVED, treat as converged; otherwise NOT-CLEAN.
 
 ELSE:
-    → Something changed this round (review fixed code and/or QA fixed bugs). The code is different now,
-      so it must be re-reviewed and re-tested. Increment outer, create "Round {outer} · Stage A/B" tasks,
-      and go back to Stage A.
+    → QA fixed bugs this round (qa_found_bugs == true), so code changed after the last clean
+      review and must be re-reviewed (and the review's own fixes re-tested). Increment outer,
+      create "Round {outer} · Stage A/B" tasks, and go back to Stage A.
 ```
 
-Why re-loop after changes: a code-review fix can break a user flow QA would catch; a QA bug-fix can introduce a code smell or regression the reviewer would catch. Convergence means a round where **neither** stage had anything to change — that's the only honest "all issues fixed" signal.
+Why this converges correctly: within a round, Stage A runs first and ends clean, then Stage B tests exactly that reviewed code. So a round where QA found nothing means the current code is both review-clean AND QA-clean — done, even if Stage A fixed things earlier in the round. Re-looping on review fixes alone would re-run a full `/qa` (server + agent fan-out) on code QA just passed — pure waste. The one asymmetry: QA's bug-fixes come after the review, so they alone trigger the next round.
 
-To keep cost sane: each outer round runs a full `/qa` (which starts a server and fans out agents). The default cap of 3 rounds is usually plenty — most branches converge in 1–2 rounds.
+To keep cost sane: the default cap of 3 rounds is usually plenty — with this convergence rule most branches converge in exactly 1 round.
 
 ---
 
@@ -199,7 +219,8 @@ Do **not** open a PR. Print the remaining issues clearly and stop:
   Unresolved:
     - [review] <finding that --fix + dev agent couldn't safely resolve>
     - [qa BUG-007] P1: <bug /qa couldn't fix in its max-iterations>
-  Nothing was pushed. Reports: .qa/reports/ , code-review output above.
+  Nothing was pushed. Reports: QA artifact URL(s) printed by /qa (local copies under
+  $(git rev-parse --git-dir)/qa/ship-round-*/reports/), code-review output above.
 ```
 
 Run the Task list audit and finish. CI/PR is intentionally skipped — shipping known-broken code is worse than stopping.
@@ -210,10 +231,10 @@ Invoke `/vf` to run local CI and open the single PR. Pass `--qa-passed` **only i
 
 ```
 # Stage B ran (QA verified in the browser):
-Skill(skill="vf", args="<feature description> --qa-passed --port <port> --route <route> [--base <base>] [--no-pr]")
+Skill(skill="vf", args="<feature description> --qa-passed --port <port> --route <route> [--start <cmd>] [--base <base>] [--no-pr]")
 
 # Stage B was skipped (--no-qa / --skip-browser):
-Skill(skill="vf", args="<feature description> --port <port> --route <route> [--base <base>] [--skip-browser] [--no-pr]")
+Skill(skill="vf", args="<feature description> --port <port> --route <route> [--start <cmd>] [--base <base>] [--skip-browser] [--no-pr]")
 ```
 
 `/vf` handles the rest: rebases onto base, runs lint / typecheck / tests / build (its Stage 4 local CI), pushes, and opens the PR with QA evidence in the body. If `/vf` fails at a CI stage, surface which stage failed — do **not** loop back to `/qa` (a failing build/test is a different problem class than a browser bug; report it and let the user decide).
@@ -236,7 +257,8 @@ Print a compact summary (and run the mandatory TaskList audit — every task in 
   Stage B:       QA clean ({qa iterations}, {bugs} bugs found+fixed) | skipped
   Result:        ALL CLEAN → PR opened | STOPPED ({X} issues remaining) | verify-only (--no-pr)
   PR:            <url from /vf, or "not opened — see remaining issues">
-  Artifacts:     .qa/reports/  ·  .verify/  ·  code-review output
+  Artifacts:     QA report artifact <url per round>  ·  verification artifact <url from /vf>  ·  code-review output
+                 (local working copies live under $(git rev-parse --git-dir)/qa/ and /verify/ — never committed)
 ═══════════════════════════════════════════════════
 ```
 
@@ -246,7 +268,7 @@ Never invent a PR URL — print only what `/vf` actually returned.
 
 ## Notes for the model running this command
 
-- **Invoke sub-commands with the `Skill` tool**, e.g. `Skill(skill="code-review", args="high --fix")`, `Skill(skill="qa", args="… --no-vf")`, `Skill(skill="vf", args="… --qa-passed")`. Pass the full arg string as one string.
+- **Invoke `/qa` and `/vf` with the `Skill` tool**, e.g. `Skill(skill="qa", args="… --no-vf")`, `Skill(skill="vf", args="… --qa-passed")`. Pass the full arg string as one string. `/code-review` is the exception: it always goes through a `general-purpose` Agent with `model: "sonnet"` (Stage A shows the exact call) so review tokens are spent on Sonnet, not the session model.
 - **`/qa` is always `--no-vf` here.** That flag (added for orchestrators) makes QA fix bugs and loop but skip its own `/vf`/PR. If you ever see two PRs, you forgot `--no-vf`.
 - **The loop is the product.** The single most important behavior is to actually re-review and re-test after anything changes, and to keep going until a clean pass — not to declare victory after the first review or the first QA pass.
 - **Bound everything.** Respect `--max-outer-iterations` (rounds) and `--max-review-iterations` (passes inside Stage A) so you can never loop forever. When you hit a cap with issues open, stop and report — don't open a PR.
