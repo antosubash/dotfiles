@@ -1,6 +1,6 @@
 ---
 description: Run a gated branch verification pipeline and optionally open one pull request
-argument-hint: "[feature] [--port N] [--route PATH] [--start CMD] [--health URL] [--base BRANCH] [--run-id ID] [--no-pr] [--no-rebase] [--skip-browser] [--no-smoke] [--no-e2e] [--e2e-only PATH] [--qa-passed] [--qa-run-id ID]"
+argument-hint: "[feature] [--port N] [--route PATH] [--start CMD] [--health URL] [--base BRANCH] [--run-id ID] [--no-pr] [--no-rebase] [--skip-browser] [--no-smoke] [--no-e2e] [--e2e-only PATH] [--qa-passed] [--qa-run-id ID] [--worktree PATH] [--no-worktree]"
 ---
 
 # Pi verify-feature workflow
@@ -9,9 +9,11 @@ Verify `$ARGUMENTS` with a gated pipeline. Any failed stage stops later stages a
 
 ## Inputs
 
-Parse feature text and flags: `--port`, `--route`, `--start`, `--health`, `--base`, `--run-id`, `--no-pr`, `--no-rebase`, `--skip-browser`, `--no-smoke`, `--no-e2e`, `--e2e-only`, `--qa-passed`, `--qa-run-id`, `--with-worker`, `--no-worker`, and `--worker`.
+Parse feature text and flags: `--port`, `--route`, `--start`, `--health`, `--base`, `--run-id`, `--no-pr`, `--no-rebase`, `--skip-browser`, `--no-smoke`, `--no-e2e`, `--e2e-only`, `--qa-passed`, `--qa-run-id`, `--with-worker`, `--no-worker`, `--worker`, `--worktree PATH`, and `--no-worktree`.
 
-Auto-detect the affected stack (JS/TS, Python, or .NET), package runner, start command, port, base branch, lint/format, typecheck, tests, build, existing e2e setup, and optional background worker. Read project instructions first. Ask once only when a required value cannot be inferred. Echo the detected plan.
+Read the `worktree-first` skill completely and resolve `WORK_CWD` before Stage 0. Verification normally requires an existing linked worktree because it verifies and ships the current branch. If invoked from the primary checkout without `--worktree` or explicit `--no-worktree`, stop with safe migration instructions; do not create a derived shipping branch. Use `WORK_CWD` for every project/Git command, agent, server, and test, and preserve it after verification.
+
+Auto-detect the affected stack (JS/TS, Python, or .NET), package runner, start command, port, lint/format, typecheck, tests, build, existing e2e setup, and optional background worker. Resolve an unspecified base by querying `(cd "$WORK_CWD" && git ls-remote --symref origin HEAD)` and accepting its single `refs/heads/<base>` target; never trust local `origin/HEAD` or guess main/master. Read project instructions first. Ask once only when a required value cannot be inferred. Echo the detected plan.
 
 When `--run-id` or `--qa-run-id` is supplied, validate it before resolving any run or QA path: require 1–64 lowercase slug characters matching `^[a-z0-9]+(-[a-z0-9]+)*$`; reject invalid values rather than sanitizing or interpolating them. `--qa-passed` requires an explicit `--qa-run-id`; reject the combination when it is absent. Never resolve `latest-run` for a passed-QA gate.
 
@@ -19,7 +21,7 @@ When `--run-id` or `--qa-run-id` is supplied, validate it before resolving any r
 
 - Refuse to run on the base branch.
 - Never force-push, bypass hooks, auto-resolve rebase conflicts, read/commit secrets, or commit evidence.
-- Keep logs/screenshots/reports under the unique claimed `VF_DIR="$(git rev-parse --absolute-git-dir)/pi-verify/$VF_RUN_ID"`; never use the shared `pi-verify` directory as a run directory.
+- Keep logs/screenshots/reports under the unique claimed `VF_DIR="$(git -C "$WORK_CWD" rev-parse --path-format=absolute --git-common-dir)/pi-verify/$VF_RUN_ID"`; never use the shared `pi-verify` directory as a run directory. Common-Git-dir storage survives feature-worktree cleanup.
 - Use explicit tool timeouts: 10–15s inspection, 60s git network/PR, 180s lint/typecheck, 300s test/build/spec, 600s full e2e.
 - Persist `$VF_DIR/state.json` at every stage and print a short stage status line.
 - Always clean up owned browser sessions, server, and worker on success or failure.
@@ -29,8 +31,8 @@ When `--run-id` or `--qa-run-id` is supplied, validate it before resolving any r
 1. Resolve branch/base and atomically claim a unique run directory before creating state, reports, sessions, or PIDs:
 
    ```bash
-   GIT_DIR="$(git rev-parse --absolute-git-dir)"
-   VF_BASE="$GIT_DIR/pi-verify"
+   GIT_COMMON_DIR="$(git -C "$WORK_CWD" rev-parse --path-format=absolute --git-common-dir)"
+   VF_BASE="$GIT_COMMON_DIR/pi-verify"
    VF_RUN_ID="<explicit --run-id or vf-<branch-slug>-YYYYmmdd-HHMMSS-$$>"
    # Validate explicit IDs before interpolation: ^[a-z0-9]+(-[a-z0-9]+)*$, 1–64 chars.
    VF_DIR="$VF_BASE/$VF_RUN_ID"
@@ -44,7 +46,7 @@ When `--run-id` or `--qa-run-id` is supplied, validate it before resolving any r
    trap vf_cleanup_notice EXIT
    ```
 
-   Store the exact `VF_RUN_ID`, absolute `VF_DIR`, state path, report path, browser session names, server/worker PID paths, and QA run ID in state. A failed claim must not create or reuse any artifact from that ID.
+   Store the exact `VF_RUN_ID`, absolute `VF_DIR`, exact `WORK_CWD`, worktree branch, opt-out status, state path, report path, browser session names, server/worker PID paths, and QA run ID in state. A failed claim must not create or reuse any artifact from that ID.
 2. Check required tools: git; `gh auth status` when opening a PR; `playwright-cli --help` and `playwright-cli install-browser chromium` when browser verification runs.
 3. Inspect status. If task-related changes are pending, refuse secret-like paths, stage only intended files, review staged diff, and commit with a concise repository-consistent message. Persist the exact state path under this run's `VF_DIR`.
 4. Unless `--no-rebase`, fetch and rebase onto `origin/<base>`. On conflict, abort and stop.
@@ -68,7 +70,7 @@ Use the `playwright-cli` skill and the unique claimed-run session `-s=vf-${VF_RU
 
 Stop on failure before writing e2e tests.
 
-When `--qa-passed`, use only the explicitly validated `--qa-run-id`: `QA_DIR="$(git rev-parse --absolute-git-dir)/pi-qa/$QA_RUN_ID"`. Require that exact directory's `result.json` status `clean`; copy final screenshots and retain the exact QA run ID, absolute QA directory, result path, counts, and report path in this run's state/report. A missing or non-clean QA result is a gate failure. There is no latest-run fallback.
+When `--qa-passed`, use only the explicitly validated `--qa-run-id`: `QA_DIR="$GIT_COMMON_DIR/pi-qa/$QA_RUN_ID"`. Require that exact directory's `result.json` status `clean`; copy final screenshots and retain the exact QA run ID, absolute QA directory, result path, counts, and report path in this run's state/report. A missing or non-clean QA result is a gate failure. There is no latest-run fallback.
 
 ## Stage 2b/2c — durable e2e test
 
@@ -90,13 +92,13 @@ Record every command and result in state. Any failure stops before push/PR.
 
 Build `$VF_DIR/report.html` as a self-contained local report with stage results, screenshots, e2e outcome, and QA report link/counts when applicable. Use a script for image base64; do not stream encoded images through model tools.
 
-If `--no-pr`, finish with a verify-only summary. Otherwise the standalone `/pr` race-safe lock/invariant procedure applies; pass the exact `VF_DIR` report path and run ID to it:
+If `--no-pr`, finish with a verify-only summary. Otherwise the standalone `/pr` race-safe lock/invariant procedure applies; pass `--worktree "$WORK_CWD"` when isolated (or the explicit `--no-worktree` opt-out), plus the exact `VF_DIR` report path and run ID to it:
 
-1. Recheck `gh auth status`, branch status, and clean intended diff.
-2. Push with `git push -u origin HEAD`—never force.
-3. Create exactly one PR with `gh pr create --base <base>`. Include summary, validation commands/results, browser route, local report path, QA counts/report path, and reviewer test plan.
+1. Recheck `(cd "$WORK_CWD" && gh auth status)`, `git -C "$WORK_CWD"` branch status, and the clean intended diff.
+2. Push with `git -C "$WORK_CWD" push -u origin HEAD`—never force.
+3. Create exactly one PR with `(cd "$WORK_CWD" && gh pr create --base <base>)`. Include summary, validation commands/results, browser route, local report path, QA counts/report path, and reviewer test plan.
 4. Print only the URL returned by `gh`; never invent one.
 
 ## Final output and cleanup
 
-Print branch/base, exact `VF_RUN_ID`, port/route, worker decision, e2e runner/spec, QA status and exact QA run ID/path, per-stage status, PR URL or skipped, report path, and `VF_DIR`. On failure identify the exact gate and preserve logs. Always close only this run's named Playwright sessions and stop only its owned PIDs/tree; leave `VF_DIR` as the audit trail.
+Print branch/base, exact `VF_RUN_ID`, port/route, worker decision, e2e runner/spec, QA status and exact QA run ID/path, per-stage status, PR URL or skipped, report path, `VF_DIR`, and the preserved `WORK_CWD` path/branch. On failure identify the exact gate and preserve logs. Always close only this run's named Playwright sessions and stop only its owned PIDs/tree; leave `VF_DIR` as the audit trail.

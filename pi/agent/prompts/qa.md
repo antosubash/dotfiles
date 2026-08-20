@@ -1,6 +1,6 @@
 ---
 description: Run a bounded browser QA, parallel subagent, auto-fix, review, and retest loop
-argument-hint: "[feature] [--url URL] [--port N] [--route PATH] [--start CMD] [--no-start] [--depth shallow|normal|deep] [--a11y] [--responsive] [--perf] [--no-fix] [--no-vf] [--run-id ID] [--max-iterations N]"
+argument-hint: "[feature] [--url URL] [--port N] [--route PATH] [--start CMD] [--no-start] [--depth shallow|normal|deep] [--a11y] [--responsive] [--perf] [--no-fix] [--no-vf] [--run-id ID] [--max-iterations N] [--worktree PATH] [--no-worktree]"
 ---
 
 # Pi QA convergence workflow
@@ -13,9 +13,11 @@ Use the `subagent` tool. Browser work must use `browser-qa`; implementation uses
 
 ## Arguments and defaults
 
-Parse feature text and flags: `--url`, `--port`, `--route`, `--start`, `--no-start`, `--depth` (default normal), `--a11y`, `--responsive`, `--perf`, `--no-fix`, `--no-vf`, `--run-id`, `--max-iterations` (default 3).
+Parse feature text and flags: `--url`, `--port`, `--route`, `--start`, `--no-start`, `--depth` (default normal), `--a11y`, `--responsive`, `--perf`, `--no-fix`, `--no-vf`, `--run-id`, `--max-iterations` (default 3), `--worktree PATH`, and `--no-worktree`.
 
-Infer stack/start command/port from project instructions and project files. Ask once only when a required value cannot be inferred. `--url` and `--no-start` skip server startup.
+Before Phase 0, read the `worktree-first` skill completely and resolve `WORK_CWD`. QA requires an existing linked feature worktree by default because creating a new worktree from the origin default branch would lose the feature under test. From the primary checkout, stop unless the user selects a registered path with `--worktree PATH` or explicitly uses `--no-worktree`; never stash, copy, or auto-commit pending work. Use `WORK_CWD` for project discovery, Git operations, servers, tests, browser agents, and all fix/review agents; never silently fall back to the primary checkout. Persist its absolute path, branch, and opt-out status in QA state.
+
+Infer stack/start command/port from project instructions and project files under `WORK_CWD`. Ask once only when a required value cannot be inferred. `--url` and `--no-start` skip server startup.
 
 If `--run-id` is supplied, validate it before using it in any path, session name, worktree, or branch: it must be 1–64 characters matching `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase letters, digits, and single hyphens only). Reject the run before Phase 0 for any other value; never sanitize or partially use an invalid ID. The generated default must be a valid unique slug such as `run-YYYYmmdd-HHMMSS-$$` (the PID suffix avoids same-second collisions). An explicitly supplied ID is never resumed: an existing run directory is an error.
 
@@ -28,14 +30,15 @@ If `--run-id` is supplied, validate it before using it in any path, session name
 - Never stage secret-like paths (`.env*`, `*.pem`, `credentials*`).
 - Persist state after every phase; recover from the state file after compaction.
 - Emit a short phase/iteration status line before each expensive operation.
+- Preserve the feature worktree after QA and report its path; remove only temporary cluster worktrees after safe merges.
 
 ## Phase 0 — initialize and start
 
 Resolve:
 
 ```bash
-GIT_DIR="$(git rev-parse --absolute-git-dir 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/pi")"
-QA_BASE="$GIT_DIR/pi-qa"
+GIT_COMMON_DIR="$(git -C "$WORK_CWD" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/pi")"
+QA_BASE="$GIT_COMMON_DIR/pi-qa"
 RUN_ID="<--run-id or run-YYYYmmdd-HHMMSS-$$>"
 if [ "${#RUN_ID}" -gt 64 ] || [[ ! "$RUN_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
     printf '%s\n' 'Invalid --run-id: use 1–64 lowercase slug characters separated by single hyphens.' >&2
@@ -62,7 +65,7 @@ if git for-each-ref --format='%(refname:short)' refs/heads/ | grep -q "^$QA_BRAN
 fi
 ```
 
-Create `$QA_DIR/state.json` containing the exact `run_id`, absolute `qa_dir`, result/report paths, feature, URL, stack, start command, port, depth, iteration=1, max_iterations, status=`in-progress`, server ownership/PID, cumulative bug registry, and phase outcomes. This file is authoritative. If any Phase 0 claim or preflight check fails, do not create state or reuse any worktree, branch, session, or report from that ID. There is no shared latest-run pointer; callers must pass this exact ID.
+Create `$QA_DIR/state.json` containing the exact `run_id`, absolute `qa_dir`, exact `work_cwd`, worktree branch and opt-out status, result/report paths, feature, URL, stack, start command, port, depth, iteration=1, max_iterations, status=`in-progress`, server ownership/PID, cumulative bug registry, and phase outcomes. This file is authoritative. If any Phase 0 claim or preflight check fails, do not create state or reuse any worktree, branch, session, or report from that ID. There is no shared latest-run pointer; callers must pass this exact ID.
 
 If needed, before starting the app inspect the target port with an OS-appropriate listener check (`lsof`/`ss`/`netstat`) and refuse an occupied or unverifiable port. Never kill or adopt another service. Start only with `nohup <start> >"$QA_DIR/server.log" 2>&1 &`, record the owned PID and process-tree path under this run, and poll the target for up to 90 seconds only while that root PID and required process tree remain alive. Health alone is insufficient and an exited/changed owner is a startup failure. Do not kill an app supplied through `--url` or `--no-start`. On startup failure, save logs, set status=`stopped`, and stop.
 
@@ -134,15 +137,15 @@ Decision:
 
 ## Phase 4 — isolated parallel fixes
 
-Before creating worktrees, ensure the tested source is committed. Inspect status, refuse secret-like paths, and create a descriptive checkpoint commit for task-related pending changes when necessary.
+Before creating worktrees, ensure the tested source is committed in `WORK_CWD`. Inspect status, refuse secret-like paths, and create a descriptive checkpoint commit for task-related pending changes when necessary. Record `FEATURE_HEAD=$(git -C "$WORK_CWD" rev-parse HEAD)`. Resolve the current origin default branch by querying `git -C "$WORK_CWD" ls-remote --symref origin HEAD`, fetch that exact ref, and record its commit; never use local `HEAD` or local origin/HEAD as a creation base.
 
 Cluster open bugs by likely source files. For each non-overlapping cluster:
 
-1. Immediately before each cluster, refuse if branch `pi/qa-${RUN_ID}-c<index>` already exists (`git show-ref --verify --quiet`) or if the target worktree path already exists. Create the branch and temporary worktree outside the repository in one `git worktree add -b` operation; on any failure, stop instead of trying another path or mixing an old worktree. Record branch/path in state before dispatch.
+1. Immediately before each cluster, refuse if branch `pi/qa-${RUN_ID}-c<index>` already exists (`git -C "$WORK_CWD" show-ref --verify --quiet`) or if the target worktree path already exists. Create the branch and temporary worktree outside the repository from the freshly fetched `origin/$DEFAULT_BRANCH` in one `git -C "$WORK_CWD" worktree add -b ... "$path" "origin/$DEFAULT_BRANCH"` operation. Then merge the recorded `FEATURE_HEAD` into that temporary branch before dispatch so fixes see the tested feature. If creation or this preparatory merge fails or conflicts, abort the merge and stop; never retry from another base or auto-resolve. Record branch/path/base/preparation commit in state before dispatch.
 2. Dispatch `worker` tasks in one parallel subagent call, each with its claimed worktree as `cwd`.
 3. Require root-cause fixes, targeted checks, a summary under `$QA_DIR/fixes/`, and a commit. No pushes.
 
-Merge each successful branch with `git merge --no-edit`. If a merge conflicts, abort it; never auto-resolve. Re-run that cluster sequentially with `worker` in the main tree, then commit. Remove worktrees and delete merged temporary branches after recording their commits.
+Merge each successful branch into the feature branch from `WORK_CWD` with `git merge --no-edit`. If a merge conflicts, abort it; never auto-resolve. Re-run that cluster sequentially with `worker` in `WORK_CWD`, then commit. Remove only the temporary cluster worktrees and delete their merged temporary branches after recording their commits; preserve `WORK_CWD`.
 
 ## Phase 5 — review gate
 
@@ -158,6 +161,6 @@ Return to Phase 1. Continue until clean or max iterations. Never ask whether to 
 
 ## Finalize
 
-Always close this run's Playwright sessions and stop only the server process this workflow started, preferring graceful termination before force. Finalize `result.json`, state, Markdown, and HTML. Print iteration history, remaining issues, report path, and working directory.
+Always close this run's Playwright sessions and stop only the server process this workflow started, preferring graceful termination before force. Finalize `result.json`, state, Markdown, and HTML. Print iteration history, remaining issues, report path, and the preserved `WORK_CWD` path/branch.
 
-If clean and `--no-vf` was not supplied, resolve `PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"`, read `"$PI_CODING_AGENT_DIR/prompts/vf.md"`, and execute that workflow in the current session with the original feature plus `--qa-passed --qa-run-id "$RUN_ID"`, preserving detected port, route, and start command. If issues remain, do not run `/vf`.
+If clean and `--no-vf` was not supplied, resolve `PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"`, read `"$PI_CODING_AGENT_DIR/prompts/vf.md"`, and execute that workflow in the current session with the original feature plus `--qa-passed --qa-run-id "$RUN_ID"` and `--worktree "$WORK_CWD"` when isolated (or the explicit `--no-worktree` opt-out), preserving detected port, route, and start command. If issues remain, do not run `/vf`.

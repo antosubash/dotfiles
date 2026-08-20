@@ -6,8 +6,9 @@ Run `~/dotfiles/scripts/setup-pi.sh` to link these resources into `~/.pi/agent/`
 
 | Command | Purpose |
 |---|---|
-| `/implement` | Scout → planner → worker chain |
-| `/loop` | Bounded implement → review → fix convergence |
+| `/worktree` | Create or select the isolated worktree for a task |
+| `/implement` | Worktree-first scout → planner → worker chain |
+| `/loop` | Worktree-first bounded implement → review → fix convergence |
 | `/review` | Read-only reviewer subagent |
 | `/qa` | Parallel Playwright CLI testing, isolated fix worktrees, review, retest |
 | `/vf` | Gated branch, browser, e2e, local-CI, and PR verification |
@@ -15,6 +16,12 @@ Run `~/dotfiles/scripts/setup-pi.sh` to link these resources into `~/.pi/agent/`
 | `/repos-sync` | Safe workspace synchronization |
 
 `/commit`, `/verify`, `/pr`, and `/handoff` provide smaller focused workflows.
+
+## Worktree-first development
+
+Write-capable workflows use linked Git worktrees by default. `/implement`, `/loop`, and `/worktree` fetch and create every new worktree from `origin/<default-branch>`—never current `HEAD` or a local default branch. `/qa`, `/ship`, `/vf`, `/commit`, and `/pr` operate on an existing feature branch, so they require an existing linked worktree rather than silently creating a derived or replacement branch. `--worktree PATH` selects an existing registered worktree; `--no-worktree` is the explicit escape hatch.
+
+A dirty primary checkout is never stashed, copied, auto-committed, or moved. Workflows stop with safe guidance instead. Every agent and project command receives the selected path as `cwd`, and the feature worktree is preserved after completion for inspection or resume. `/qa` may create additional temporary fix worktrees, but removes only those after their commits are safely merged.
 
 ## Agents
 
@@ -34,11 +41,11 @@ Pi-specific `scout`, `planner`, `worker`, `reviewer`, `reviewer-fast`, and `brow
 
 ## Loop state
 
-Long workflows persist authoritative state outside the tracked tree in atomically claimed, unique run directories:
+Long workflows persist authoritative state outside the tracked tree in atomically claimed, unique run directories under `$(git rev-parse --path-format=absolute --git-common-dir)`. Common-directory storage survives linked-worktree cleanup and provides repository-wide locks:
 
-- QA: `$(git rev-parse --absolute-git-dir)/pi-qa/<qa-run-id>/`
-- Verification: `$(git rev-parse --absolute-git-dir)/pi-verify/<vf-run-id>/`
-- Ship: `$(git rev-parse --absolute-git-dir)/pi-ship/<ship-run-id>/`
+- QA: `<git-common-dir>/pi-qa/<qa-run-id>/`
+- Verification: `<git-common-dir>/pi-verify/<vf-run-id>/`
+- Ship: `<git-common-dir>/pi-ship/<ship-run-id>/`
 
 Exact IDs and absolute paths are threaded through state, reports, sessions, and owned PIDs; passed-QA verification requires its explicit QA run ID and never consults a latest-run pointer. Setup and PR creation also use atomic local locks. If a lock or run claim remains after a crash, verify its owner PID and active processes before removing it. This lets workflows recover after context compaction without relying on conversation prose.
 

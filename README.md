@@ -177,14 +177,15 @@ Choose your platform:
 
 Included workflows:
 
-- `/implement` — scout → plan → worker subagent chain
-- `/loop` — bounded implement → review → fix convergence loop
-- `/qa` — parallel Playwright CLI QA, isolated fix worktrees, review, and retest
-- `/vf` — gated browser/local-CI verification and pull request creation
-- `/ship` — bounded review ↔ QA convergence followed by exactly one PR
+- `/worktree` — create or select an isolated task worktree
+- `/implement` — worktree-first scout → plan → worker subagent chain
+- `/loop` — worktree-first bounded implement → review → fix convergence loop
+- `/qa` — parallel Playwright CLI QA with isolated feature/fix worktrees
+- `/vf` — worktree-gated browser/local-CI verification and pull request creation
+- `/ship` — worktree-gated review ↔ QA convergence followed by exactly one PR
 - `/repos-sync` — safe workspace synchronization
 
-Claude specialist agents under `.claude/agents/` are shared with Pi. Claude model tiers are mapped to the configured Codex models. Recognizable destructive shell commands trigger a best-effort interactive approval guard and are blocked in non-interactive runs; this is not a sandbox.
+Write-capable Pi workflows create or reuse linked Git worktrees by default and preserve them for resume/audit. Every new worktree starts from the freshly fetched origin default branch, never the caller's current `HEAD` or local default branch. A dirty primary checkout is never moved or auto-stashed; `--no-worktree` is required to opt out explicitly. Claude specialist agents under `.claude/agents/` are shared with Pi. Claude model tiers are mapped to the configured Codex models. Recognizable destructive shell commands trigger a best-effort interactive approval guard and are blocked in non-interactive runs; this is not a sandbox.
 
 Useful aliases: `pic` continues the latest Pi session and `pir` opens the session picker.
 

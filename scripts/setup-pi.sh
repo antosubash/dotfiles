@@ -56,6 +56,7 @@ backup_and_symlink() {
 }
 
 backup_and_symlink "$DOTFILES_DIR/pi/agent/settings.json" "$PI_DIR/settings.json" "pi-settings.json"
+backup_and_symlink "$DOTFILES_DIR/pi/agent/APPEND_SYSTEM.md" "$PI_DIR/APPEND_SYSTEM.md" "pi-append-system.md"
 backup_and_symlink "$DOTFILES_DIR/pi/agent/prompts" "$PI_DIR/prompts" "pi-prompts"
 backup_and_symlink "$DOTFILES_DIR/pi/agent/skills" "$PI_DIR/skills" "pi-skills"
 backup_and_symlink "$DOTFILES_DIR/pi/agent/agents" "$PI_DIR/agents" "pi-agents"

@@ -1,0 +1,5 @@
+# Worktree-first default
+
+For any task that is expected to edit tracked project files, create commits, run mutable QA/fix loops, or ship code, read the `worktree-first` skill and establish `WORK_CWD` before the first edit. Reuse the current linked worktree when already inside one. From a clean primary checkout, new implementation work creates a unique linked worktree based only on the freshly fetched `origin/<default-branch>` tip—never the caller's current `HEAD` or a local default branch. QA, commit, verification, and shipping require an existing linked feature worktree. From a dirty primary checkout, stop rather than stashing, copying, discarding, or auto-committing changes.
+
+Use `WORK_CWD` as the `cwd` for all write-capable subagents and project commands. Read-only questions, reconnaissance, review, and handoff may remain in the current checkout. Treat `--worktree PATH` as an explicit selection and `--no-worktree` (or an equally explicit user instruction to work in the current checkout) as the only opt-out. Preserve feature worktrees by default and report their path and branch.

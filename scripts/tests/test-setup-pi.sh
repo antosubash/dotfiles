@@ -29,7 +29,7 @@ run_setup() {
 
 # A custom agent directory receives every managed resource.
 run_setup >/dev/null
-for resource in settings.json prompts skills agents extensions; do
+for resource in settings.json APPEND_SYSTEM.md prompts skills agents extensions; do
     assert_link "$PI_DIR/$resource" "$ROOT/pi/agent/$resource"
 done
 
