@@ -1,7 +1,7 @@
 ---
 description: Comprehensive QA testing of a feature using Playwright MCP — launches the app, fans out parallel test agents, auto-fixes bugs with developer agents, runs code review, and loops until all issues are resolved. Acts like a Senior QA engineer leading a full QA cycle.
-argument-hint: [feature/page description] [--url URL] [--port N] [--route PATH] [--start CMD] [--no-start] [--depth shallow|normal|deep] [--a11y] [--responsive] [--perf] [--no-fix] [--no-vf] [--max-iterations N]
-allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Agent, TaskCreate, TaskUpdate, TaskList, mcp__plugin_playwright_playwright__browser_navigate, mcp__plugin_playwright_playwright__browser_snapshot, mcp__plugin_playwright_playwright__browser_click, mcp__plugin_playwright_playwright__browser_type, mcp__plugin_playwright_playwright__browser_hover, mcp__plugin_playwright_playwright__browser_take_screenshot, mcp__plugin_playwright_playwright__browser_fill_form, mcp__plugin_playwright_playwright__browser_select_option, mcp__plugin_playwright_playwright__browser_press_key, mcp__plugin_playwright_playwright__browser_wait_for, mcp__plugin_playwright_playwright__browser_console_messages, mcp__plugin_playwright_playwright__browser_network_requests, mcp__plugin_playwright_playwright__browser_network_request, mcp__plugin_playwright_playwright__browser_evaluate, mcp__plugin_playwright_playwright__browser_tabs, mcp__plugin_playwright_playwright__browser_navigate_back, mcp__plugin_playwright_playwright__browser_close, mcp__plugin_playwright_playwright__browser_resize, mcp__plugin_playwright_playwright__browser_file_upload, mcp__plugin_playwright_playwright__browser_handle_dialog, mcp__plugin_playwright_playwright__browser_drag, mcp__plugin_playwright_playwright__browser_drop, mcp__plugin_playwright_playwright__browser_run_code_unsafe
+argument-hint: [feature/page description] [--url URL] [--port N] [--route PATH] [--start CMD] [--no-start] [--depth shallow|normal|deep] [--a11y] [--responsive] [--perf] [--no-fix] [--no-vf] [--run-id ID] [--max-iterations N]
+allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Agent, Skill, Artifact, TaskCreate, TaskUpdate, TaskList, mcp__plugin_playwright_playwright__browser_navigate, mcp__plugin_playwright_playwright__browser_snapshot, mcp__plugin_playwright_playwright__browser_click, mcp__plugin_playwright_playwright__browser_type, mcp__plugin_playwright_playwright__browser_hover, mcp__plugin_playwright_playwright__browser_take_screenshot, mcp__plugin_playwright_playwright__browser_fill_form, mcp__plugin_playwright_playwright__browser_select_option, mcp__plugin_playwright_playwright__browser_press_key, mcp__plugin_playwright_playwright__browser_wait_for, mcp__plugin_playwright_playwright__browser_console_messages, mcp__plugin_playwright_playwright__browser_network_requests, mcp__plugin_playwright_playwright__browser_network_request, mcp__plugin_playwright_playwright__browser_evaluate, mcp__plugin_playwright_playwright__browser_tabs, mcp__plugin_playwright_playwright__browser_navigate_back, mcp__plugin_playwright_playwright__browser_close, mcp__plugin_playwright_playwright__browser_resize, mcp__plugin_playwright_playwright__browser_file_upload, mcp__plugin_playwright_playwright__browser_handle_dialog, mcp__plugin_playwright_playwright__browser_drag, mcp__plugin_playwright_playwright__browser_drop, mcp__plugin_playwright_playwright__browser_run_code_unsafe
 ---
 
 # /qa — Senior QA Engineer + Auto-Fix Pipeline
@@ -33,11 +33,13 @@ Parse into:
 - `--perf` — check performance (automatic in `deep`)
 - `--no-fix` — report only, do not auto-fix bugs
 - `--no-vf` — skip the automatic `/vf` invocation in Phase 9. Use when an orchestrator (e.g. `/ship`) runs `/vf` itself and wants `/qa` to fix bugs and loop but NOT open its own PR.
+- `--run-id ID` — names this run's working directory `$QA_BASE/{ID}` (see Phase 0). Orchestrators pass a stable id (`/ship` passes `ship-round-{N}`) so each round keeps its own evidence instead of clobbering the previous run's. Default: `run-<timestamp>`.
 - `--max-iterations N` — max fix→retest loops (default: 3, prevents infinite loops)
 
 ## Hard Rules
 
-- **Screenshot everything.** Every test scenario gets a screenshot. Save to `.qa/screenshots/iteration-{N}/`.
+- **Screenshot everything.** Every test scenario gets a screenshot. Save to `$QA_DIR/screenshots/iteration-{N}/`.
+- **Never pollute the repo.** All working files (screenshots, findings, reports, logs, PIDs) live under `$QA_DIR` — resolved in Phase 0 to a directory inside `.git/` (or the temp dir outside a repo) — never in the repo tree, never committed. The human-facing report is published as a Claude Artifact (Phase 3).
 - **Never skip a failing test.** Document it and keep going.
 - **Test with real interactions.** `browser_snapshot` for element refs, then interact.
 - **Be adversarial.** Think like a user who is confused, impatient, or malicious.
@@ -152,15 +154,17 @@ Mark each completed as you go.
 
 **→ TaskUpdate:** Mark "Phase 0: Setup" as `in_progress`. Create the full task list per the Task Tracking section above.
 
-1. Create output directories:
+1. **Resolve the working directory.** All QA working files live OUTSIDE the repo tree — inside `.git/` (or under the temp dir when not in a repo) — so they can never be committed:
    ```bash
-   mkdir -p .qa/screenshots/iteration-1 .qa/reports .qa/fixes
+   QA_BASE="$(git rev-parse --absolute-git-dir 2>/dev/null || echo "${TMPDIR:-/tmp}/claude")/qa"
+   RUN_ID="<value of --run-id, else run-$(date +%Y%m%d-%H%M%S)>"
+   QA_DIR="$QA_BASE/$RUN_ID"
+   mkdir -p "$QA_DIR/screenshots/iteration-1" "$QA_DIR/reports" "$QA_DIR/fixes"
+   echo "$RUN_ID" > "$QA_BASE/latest-run"    # pointer /vf --qa-passed uses to find this run
+   echo "1" > "$QA_DIR/current-iteration"
    ```
 
-2. Initialize the iteration counter file:
-   ```bash
-   echo "1" > .qa/current-iteration
-   ```
+2. **Literal paths for subagents.** Everywhere this document says `$QA_DIR`, it means the one absolute path resolved above. Subagents do NOT inherit shell variables — whenever you compose an agent prompt below, substitute the literal absolute path (e.g. `/home/user/proj/.git/qa/run-20260820-093000`) for `$QA_DIR`.
 
 3. **If `--url` is provided:** use that URL directly, skip app startup.
 
@@ -170,7 +174,7 @@ Mark each completed as you go.
    - Detect stack from project files (package.json, pyproject.toml, *.csproj)
    - Detect start command, port, package manager
    - Kill anything on the port
-   - Start dev server in background, redirect to `.qa/server.log`
+   - Start dev server in background, redirect to `$QA_DIR/server.log`, save its PID to `$QA_DIR/server.pid`
    - Poll health URL every 2s for up to 90 seconds
    - On failure: dump server log and STOP
 
@@ -183,6 +187,7 @@ Mark each completed as you go.
      Max iterations: 3
      Auto-fix:      enabled
      Iteration:     1
+     Run:           run-20260820-093000 → <literal $QA_DIR path>
    ```
 
 **→ TaskUpdate:** Mark "Phase 0: Setup" as `completed`.
@@ -206,13 +211,13 @@ Understand the page before testing. Do this yourself (not delegated) because the
    - Loading states, empty states, conditional content
    - Data dependencies (auth, API data, user state)
 
-4. **Baseline screenshot** → `.qa/screenshots/iteration-{N}/00-initial-state.png`
+4. **Baseline screenshot** → `$QA_DIR/screenshots/iteration-{N}/00-initial-state.png`
 
 5. **Check console** for pre-existing errors: `browser_console_messages` level `error`.
 
 6. **Check network** for failed requests: `browser_network_requests`.
 
-7. **Save the page inventory** to `.qa/page-inventory.md` — this file is passed to all test agents so they share the same understanding of the page.
+7. **Save the page inventory** to `$QA_DIR/page-inventory.md` — this file is passed to all test agents so they share the same understanding of the page.
 
 8. **Close the browser** via `browser_close` — each parallel agent will open its own session.
 
@@ -237,21 +242,21 @@ Fan out independent test categories as parallel agents. Each agent gets the page
 | Responsive | no | `--responsive` only | yes |
 | Performance | no | `--perf` only | yes |
 
-**Launch all applicable agents in a single message using the Agent tool.** This is critical — they must run in parallel, not sequentially.
+**Launch all applicable agents in a single message using the Agent tool, each pinned to `model: "sonnet"`.** This is critical — they must run in parallel, not sequentially, and test agents ALWAYS run on Sonnet: browser test execution is high-volume mechanical work, never worth session-model (Fable/Opus) tokens.
 
 ### Agent prompt template
 
-Each agent gets a prompt following this structure. Customize the `TESTING MANDATE` section per agent.
+Each agent gets a prompt following this structure. Customize the `TESTING MANDATE` section per agent. Remember: substitute the literal absolute path for `$QA_DIR` in the prompt — agents don't inherit shell variables.
 
 ```
 You are a QA test agent. Your job is to test a specific category of scenarios on a web page using Playwright MCP tools.
 
 TARGET URL: {url}
 ITERATION: {N}
-SCREENSHOT DIR: .qa/screenshots/iteration-{N}/
+SCREENSHOT DIR: $QA_DIR/screenshots/iteration-{N}/
 
 PAGE INVENTORY:
-{contents of .qa/page-inventory.md}
+{contents of $QA_DIR/page-inventory.md}
 
 TESTING MANDATE:
 {category-specific instructions — see below}
@@ -265,7 +270,7 @@ INTERACTION RULES:
 - Name screenshots: {NN}-{category}-{description}.png
 
 OUTPUT FORMAT:
-When done, write your findings to .qa/findings-{category}.json with this structure:
+When done, write your findings to $QA_DIR/findings-{category}.json with this structure:
 {
   "category": "{category}",
   "tests": [
@@ -285,7 +290,7 @@ When done, write your findings to .qa/findings-{category}.json with this structu
   "summary": { "passed": N, "failed": N }
 }
 
-Also save a human-readable summary to .qa/findings-{category}.md.
+Also save a human-readable summary to $QA_DIR/findings-{category}.md.
 Close the browser when done.
 ```
 
@@ -371,7 +376,7 @@ Resources: browser_evaluate to find resources >500KB with name, size, duration
 
 ### After all agents complete
 
-Read all `.qa/findings-*.json` files and merge them into a consolidated findings list. Assign globally unique bug IDs (BUG-001, BUG-002, ...) to all failures.
+Read all `$QA_DIR/findings-*.json` files and merge them into a consolidated findings list. Assign globally unique bug IDs (BUG-001, BUG-002, ...) to all failures.
 
 **→ TaskUpdate:** Mark the parallel test execution task as `completed`.
 
@@ -381,7 +386,7 @@ Read all `.qa/findings-*.json` files and merge them into a consolidated findings
 
 **→ TaskUpdate:** Mark "Phase 3: QA report" (or "Iteration {N}: QA report") as `in_progress`.
 
-Produce the report from merged findings. Save to `.qa/reports/qa-report-iteration-{N}.md` AND print to console.
+Produce the report from merged findings. Save to `$QA_DIR/reports/qa-report-iteration-{N}.md` AND print to console.
 
 ```markdown
 # QA Report: [Feature/Page Name]
@@ -433,9 +438,18 @@ Produce the report from merged findings. Save to `.qa/reports/qa-report-iteratio
 </details>
 ```
 
+### Publish the report as a Claude Artifact
+
+The markdown report under `$QA_DIR/reports/` is working data — the human-facing report is a **Claude Artifact**. Publish it every iteration:
+
+1. Build `$QA_DIR/reports/report.html` — one self-contained HTML page covering ALL iterations so far: the summary table, the per-iteration delta (FIXED / REGRESSION / STILL OPEN), and every open bug with steps, expected/actual, and console errors. Embed the baseline screenshot and each failure's screenshot as `data:` URIs (no external references — a strict CSP blocks them). Keep the page under 16MB: if screenshots push it over, embed only failure screenshots, then only P0/P1 ones, and reference the rest by filename.
+2. Load the `artifact-design` skill first if it's available, then publish: `Artifact(file_path="<literal $QA_DIR>/reports/report.html", favicon="🧪", description="QA report for <feature>")`. Give the page a stable `<title>` — the feature name, not a generic label.
+3. **Re-publish the SAME file path on every iteration** — same path redeploys to the same URL; a new path would create a second artifact.
+4. Save the artifact URL to `$QA_DIR/artifact-url.txt` and print it. Orchestrators (`/ship`, `/vf`) read that file to link the report in the PR body.
+
 **DECISION POINT — YOU MUST FOLLOW THIS EXACTLY:**
 
-Read the current iteration from `.qa/current-iteration`. Count the number of P0+P1+P2 failures in the report.
+Read the current iteration from `$QA_DIR/current-iteration`. Count the number of P0+P1+P2 failures in the report.
 
 ```
 IF failures == 0:
@@ -478,6 +492,11 @@ This prevents merge conflicts when multiple agents edit concurrently.
 
 ### Spawning fix agents
 
+First record the pre-fix state — Phase 5 reviews everything made after this point:
+```bash
+git rev-parse HEAD > "$QA_DIR/pre-fix-sha"
+```
+
 Launch all fix agents **in a single message** using the Agent tool so they run in parallel. Each agent works in an **isolated worktree** (`isolation: "worktree"`) to avoid conflicts.
 
 **Fix agent prompt template:**
@@ -512,18 +531,27 @@ RULES:
 AFTER FIXING:
 - Run the project's linter if configured
 - Run relevant unit tests if they exist
-- Write a summary of what you changed and why to .qa/fixes/fix-{BUG-IDS}.md
+- Write a summary of what you changed and why to $QA_DIR/fixes/fix-{BUG-IDS}.md
+- COMMIT your changes: git add -A && git commit -m "fix(qa): {BUG-IDS} — <short summary>"
+  You are in an isolated worktree — uncommitted changes CANNOT be merged back and are lost.
+  Never stage secrets: if git status --porcelain shows any .env*, *.pem, or credentials* path,
+  leave it out of the commit and flag it in your summary.
+- Report your worktree branch name so your changes can be merged back
 ```
 
 ### After all fix agents complete
 
-1. Read each agent's fix summary from `.qa/fixes/fix-*.md`
-2. If any agent used a worktree, merge their changes:
+1. Read each agent's fix summary from `$QA_DIR/fixes/fix-*.md`
+2. Merge each agent's worktree branch:
    ```bash
    # For each worktree branch returned by the agent
    git merge --no-edit <worktree-branch>
    ```
-3. If merge conflicts occur, resolve them (prefer the fix that's more targeted)
+   If an agent returned no branch or made no commit, its fix was lost — re-run that cluster's
+   fix agent directly in the main tree (no worktree) before continuing.
+3. If a merge conflicts, do NOT hand-resolve it: run `git merge --abort`, then re-run that
+   cluster's fix agent sequentially in the main tree (no worktree) so it re-applies its fix on
+   top of the already-merged state and commits directly.
 4. Print a summary of all fixes applied
 
 **→ TaskUpdate:** Mark the fix agents task as `completed`.
@@ -536,12 +564,15 @@ AFTER FIXING:
 
 Run a code review on all changes made by the fix agents. This prevents sloppy fixes from entering the codebase.
 
-1. **Get the diff** of all changes:
+1. **Get the diff** of everything the fix agents changed — diff against the recorded pre-fix
+   SHA (counting commits with `HEAD~N` breaks as soon as a merge commit lands or an agent
+   makes more than one commit):
    ```bash
-   git diff HEAD~{number-of-fix-commits}..HEAD
+   git diff "$(cat "$QA_DIR/pre-fix-sha")"
    ```
+   With a single ref this also picks up any uncommitted changes.
 
-2. **Spawn a code review agent** using the Agent tool:
+2. **Spawn a code review agent** using the Agent tool, pinned to `model: "sonnet"` — code review always runs on Sonnet to keep token cost down, never on the (possibly much more expensive) session model:
    ```
    Review the following code changes for:
    - Correctness: do the fixes actually address the bugs?
@@ -559,7 +590,7 @@ Run a code review on all changes made by the fix agents. This prevents sloppy fi
    - For each issue, rate severity (blocker/warning/nit)
    - For blockers: describe exactly what's wrong and how to fix it
 
-   Write your review to .qa/reports/code-review-iteration-{N}.md
+   Write your review to $QA_DIR/reports/code-review-iteration-{N}.md
    ```
 
 3. **If the review finds blockers:**
@@ -585,10 +616,10 @@ After Phase 5 (code review) completes, do the following steps IN THIS EXACT ORDE
 
 **Step 1: Increment iteration counter.**
 ```bash
-N=$(cat .qa/current-iteration)
+N=$(cat $QA_DIR/current-iteration)
 NEXT=$((N + 1))
-echo $NEXT > .qa/current-iteration
-mkdir -p .qa/screenshots/iteration-$NEXT
+echo $NEXT > $QA_DIR/current-iteration
+mkdir -p $QA_DIR/screenshots/iteration-$NEXT
 ```
 
 **Step 2: Check iteration limit.**
@@ -608,7 +639,7 @@ TaskCreate: "Iteration {NEXT}: Code review"      (will be used if bugs remain)
 The fixes you just applied require a fresh server restart:
 ```bash
 # Kill existing server
-kill -9 $(cat .qa/server.pid 2>/dev/null) 2>/dev/null || true
+kill -9 $(cat $QA_DIR/server.pid 2>/dev/null) 2>/dev/null || true
 lsof -ti tcp:<port> | xargs -r kill -9
 
 # Clear build caches (stack dependent)
@@ -621,8 +652,8 @@ lsof -ti tcp:<port> | xargs -r kill -9
 # .NET: dotnet build --nologo
 
 # Restart dev server
-nohup <start-cmd> > .qa/server.log 2>&1 &
-echo $! > .qa/server.pid
+nohup <start-cmd> > $QA_DIR/server.log 2>&1 &
+echo $! > $QA_DIR/server.pid
 ```
 Poll health URL every 2s for up to 90 seconds. On failure, STOP.
 
@@ -649,7 +680,7 @@ On re-test iterations, the Phase 3 report MUST include a delta section:
 
 1. **Stop the dev server** if you started it:
    ```bash
-   kill -9 $(cat .qa/server.pid 2>/dev/null) 2>/dev/null || true
+   kill -9 $(cat $QA_DIR/server.pid 2>/dev/null) 2>/dev/null || true
    lsof -ti tcp:<port> | xargs -r kill -9
    ```
 2. **Close the browser** via `browser_close`.
@@ -672,10 +703,11 @@ On re-test iterations, the Phase 3 report MUST include a delta section:
   │ 3        │ 0      │ 1      │ ALL CLEAN         │
   └──────────┴────────┴────────┴───────────────────┘
 
-  Reports:   .qa/reports/qa-report-iteration-{1..N}.md
-             .qa/reports/code-review-iteration-{1..N-1}.md
-  Fixes:     .qa/fixes/fix-*.md
-  Evidence:  .qa/screenshots/iteration-{1..N}/
+  Report:    <QA report artifact URL from $QA_DIR/artifact-url.txt>
+
+  Working files (under $QA_DIR — inside .git/, never committed):
+    reports/qa-report-iteration-{1..N}.md · reports/code-review-iteration-{1..N-1}.md
+    fixes/fix-*.md · screenshots/iteration-{1..N}/
 
 ═══════════════════════════════════════════════════
 ```
@@ -693,7 +725,7 @@ On re-test iterations, the Phase 3 report MUST include a delta section:
    ```
    Do NOT invoke /vf when issues remain.
 
-6. **If `--no-vf` is set:** do NOT invoke `/vf`. An orchestrator (e.g. `/ship`) owns the verification + PR step and will run `/vf` itself. Echo `Phase 9: /vf skipped (--no-vf — orchestrator owns PR)` and report the final QA result (ALL CLEAN or remaining issues). Then fall through to the closing `TaskUpdate` at the end of Phase 9 (do not skip the task audit) — skip only step 7.
+6. **If `--no-vf` is set:** do NOT invoke `/vf`. An orchestrator (e.g. `/ship`) owns the verification + PR step and will run `/vf` itself. Echo `Phase 9: /vf skipped (--no-vf — orchestrator owns PR)` and report the final QA result (ALL CLEAN or remaining issues) plus the QA report artifact URL — the orchestrator links it in the PR. Then fall through to the closing `TaskUpdate` at the end of Phase 9 (do not skip the task audit) — skip only step 7.
 
 7. **If ALL CLEAN (0 failures across all categories) and neither `--no-fix` nor `--no-vf` is set:**
 
@@ -701,7 +733,7 @@ On re-test iterations, the Phase 3 report MUST include a delta section:
 
    Use the `Skill` tool with:
    - `skill`: `vf`
-   - `args`: `{original feature description} --qa-passed --port {port} --route {route}`
+   - `args`: `{original feature description} --qa-passed --port {port} --route {route}` — also pass through `--start {cmd}` when one was supplied or detected, so `/vf` doesn't re-detect a different command.
 
    Example: if the user ran `/qa the login page --port 3000 --route /login`, invoke:
    ```
@@ -710,8 +742,8 @@ On re-test iterations, the Phase 3 report MUST include a delta section:
 
    The `--qa-passed` flag tells `/vf`:
    - Skip Stage 2a (smoke check) — QA already verified the app in the browser
-   - Copy `.qa/screenshots/iteration-{final}/` screenshots into `.verify/` as evidence
-   - Include the QA report summary in the PR body
+   - Find this run via `$QA_BASE/latest-run` and reuse `$QA_DIR/screenshots/iteration-{final}/` as evidence
+   - Link the QA report artifact URL (from `$QA_DIR/artifact-url.txt`) in the PR body
    - Still run Stage 2b/2c (e2e specs) and Stage 4 (full local CI) — these are complementary
 
    If `/vf` fails, report which stage failed but do NOT loop back to `/qa` — CI failures are a different problem class.

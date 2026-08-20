@@ -194,3 +194,11 @@ if [[ -x "$UPDATE_MANAGER_BIN" ]]; then
     alias update-manager="$UPDATE_MANAGER_BIN"
 fi
 
+# Repo workspace sync — fetch every repo under ~/Repos, put it back on its
+# default branch, and report worktrees whose branch has already landed.
+REPOS_SYNC_SCRIPT="$DOTFILES_DIR/scripts/repos-sync.sh"
+if [[ -x "$REPOS_SYNC_SCRIPT" ]]; then
+    alias repos-sync="$REPOS_SYNC_SCRIPT"
+    alias rs="$REPOS_SYNC_SCRIPT"
+fi
+

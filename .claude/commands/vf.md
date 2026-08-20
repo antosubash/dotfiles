@@ -1,7 +1,7 @@
 ---
 description: End-to-end verify the current feature branch before opening a PR (gated pipeline — browser check, local CI, then PR)
-argument-hint: [feature description] [--port N] [--route PATH] [--start CMD] [--health URL] [--no-pr]
-allowed-tools: Bash, Read, Edit, Write, Glob, Grep, TaskCreate, TaskUpdate, TaskList
+argument-hint: [feature description] [--port N] [--route PATH] [--start CMD] [--health URL] [--base BRANCH] [--no-pr] [--no-rebase] [--skip-browser] [--with-worker] [--no-worker] [--worker CMD] [--use-mcp] [--no-smoke] [--no-e2e] [--e2e-only PATH] [--qa-passed]
+allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Skill, Artifact, TaskCreate, TaskUpdate, TaskList
 ---
 
 # /vf — Verify Feature
@@ -29,7 +29,7 @@ Parse `$ARGUMENTS` into:
 - `--no-smoke` — skip Stage 2a smoke check (e.g. when re-running after writing the spec)
 - `--no-e2e` — skip Stage 2b/2c and the full e2e suite in Stage 4 even if e2e is configured
 - `--e2e-only PATH` — run only this spec in Stage 2c (e.g. `tests/dashboard.spec.ts`). Full suite still runs in Stage 4.
-- `--qa-passed` — indicates `/qa` already verified the feature in the browser. Skips Stage 2a (smoke check), reuses QA screenshots/reports as PR evidence. Stage 2b/2c (e2e specs) and Stage 4 (local CI) still run.
+- `--qa-passed` — indicates `/qa` already verified the feature in the browser. Skips Stage 2a (smoke check), reuses the QA run's screenshots and report artifact (resolved via the QA `latest-run` pointer) as PR evidence. Stage 2b/2c (e2e specs) and Stage 4 (local CI) still run.
 
 If a flag is missing, auto-detect (see "Auto-detection" below) or ask the user **once** for any value that cannot be inferred. Never silently invent values.
 
@@ -41,6 +41,7 @@ If a flag is missing, auto-detect (see "Auto-detection" below) or ask the user *
 - **Never bypass verifications** (no `--no-verify`, no skipping hooks).
 - **No AI attribution** in commit messages or PR body unless the user asks.
 - **Never read or commit secrets** (`.env*`, `*.pem`, `credentials*`).
+- **Never commit verification or QA evidence.** All evidence lives under `$VF_DIR` (resolved in Stage 0 to a directory inside `.git/`, which git can't track) and human-facing reports are published as Claude Artifacts.
 - **Every Bash call MUST set an explicit `timeout`.** Never rely on the default. See "Timeouts" below.
 
 ## Timeouts
@@ -167,7 +168,12 @@ Only create tasks for stages that will actually run based on the detected flags 
 
 **→ TaskUpdate:** Mark "Stage 0: Prepare branch" as `in_progress`. Create the full task list per the Task Tracking section above.
 
-1. Run `git rev-parse --abbrev-ref HEAD`. **Refuse to continue** if on the base branch — instruct the user to switch to a feature branch.
+1. Run `git rev-parse --abbrev-ref HEAD`. **Refuse to continue** if on the base branch — instruct the user to switch to a feature branch. Then resolve the working directory — all verification evidence lives inside `.git/` so it can never be committed:
+   ```bash
+   VF_DIR="$(git rev-parse --absolute-git-dir)/verify"
+   mkdir -p "$VF_DIR"
+   ```
+   Everywhere this document says `$VF_DIR`, it means this one absolute path.
 2. Check tools:
    - `git --version` (required)
    - `gh --version` and `gh auth status` (required only if PR creation requested)
@@ -190,13 +196,12 @@ Skip this stage if `--skip-browser` is set.
 **→ TaskUpdate:** Mark "Stage 1: Start application" as `in_progress`.
 
 1. Kill anything bound to the port: `lsof -ti tcp:<port> | xargs -r kill -9` (Linux/macOS). On Windows, use `npx kill-port <port>`.
-2. Start the dev server in the background. Redirect output to `.verify/server.log`:
+2. Start the dev server in the background. Redirect output to `$VF_DIR/server.log`:
    ```bash
-   mkdir -p .verify
-   nohup <start-cmd> > .verify/server.log 2>&1 &
-   echo $! > .verify/server.pid
+   nohup <start-cmd> > "$VF_DIR/server.log" 2>&1 &
+   echo $! > "$VF_DIR/server.pid"
    ```
-3. Poll the health URL (default `http://localhost:<port>/`) every 2s for up to **90 seconds**. Accept HTTP 200, 302, or 401 as "up". On timeout, kill the server, dump the last 50 lines of `.verify/server.log`, and STOP.
+3. Poll the health URL (default `http://localhost:<port>/`) every 2s for up to **90 seconds**. Accept HTTP 200, 302, or 401 as "up". On timeout, kill the server, dump the last 50 lines of `$VF_DIR/server.log`, and STOP.
 
 **→ TaskUpdate:** Mark "Stage 1: Start application" as `completed`.
 
@@ -212,16 +217,16 @@ Skip if auto-detection said worker is not needed and `--with-worker` was not pas
    - **DB-backed queues** (Hangfire SQL, Django-Q ORM, pg-boss) — the app's existing DB connection is enough; nothing extra to start.
 2. Start the worker in the background. Same pattern as the web server:
    ```bash
-   nohup <worker-cmd> > .verify/worker.log 2>&1 &
-   echo $! > .verify/worker.pid
+   nohup <worker-cmd> > $VF_DIR/worker.log 2>&1 &
+   echo $! > $VF_DIR/worker.pid
    ```
-3. Wait up to **30 seconds** for a "ready" signal in `.verify/worker.log`. Look for stack-specific markers:
+3. Wait up to **30 seconds** for a "ready" signal in `$VF_DIR/worker.log`. Look for stack-specific markers:
    - Celery: `celery@<host> ready` / `mingle: all alone`
    - BullMQ: worker `ready` event, or `Worker started`
    - Hangfire: `Server <name> successfully announced`
    - .NET `BackgroundService`: app host `Application started`
    - Generic fallback: just confirm the PID is still alive after 5 seconds and the log has no fatal/exception lines.
-4. On timeout or crash: dump the last 50 lines of `.verify/worker.log`, kill the web server, and STOP.
+4. On timeout or crash: dump the last 50 lines of `$VF_DIR/worker.log`, kill the web server, and STOP.
 
 **→ TaskUpdate:** Mark "Stage 1b: Start worker" as `completed`.
 
@@ -236,10 +241,16 @@ Skip if `--skip-browser` is set. This stage has **three sub-steps**: smoke, spec
 **→ TaskUpdate:** Mark "Stage 2a: Smoke check" as `in_progress`.
 
 **If `--qa-passed` is set:** skip this sub-stage entirely. `/qa` already did comprehensive browser testing. Instead:
-1. Copy the final QA screenshot into `.verify/`: `cp .qa/screenshots/iteration-$(cat .qa/current-iteration)/*.png .verify/ 2>/dev/null || true`
-2. If `.qa/screenshots/iteration-$(cat .qa/current-iteration)/00-initial-state.png` exists, copy it to `.verify/smoke.png`
-3. Echo `Stage 2a: skipped (QA-verified — see .qa/reports/)`
-4. Proceed directly to Stage 2b.
+1. Resolve the QA run `/qa` recorded:
+   ```bash
+   QA_BASE="$(git rev-parse --absolute-git-dir)/qa"
+   QA_DIR="$QA_BASE/$(cat "$QA_BASE/latest-run")"
+   ```
+2. Copy the final QA screenshots into `$VF_DIR/`: `cp "$QA_DIR/screenshots/iteration-$(cat "$QA_DIR/current-iteration")"/*.png "$VF_DIR/" 2>/dev/null || true`
+3. If that iteration's `00-initial-state.png` exists, copy it to `$VF_DIR/smoke.png`
+4. Read the QA report artifact URL from `$QA_DIR/artifact-url.txt` (if present) — Stage 5 links it in the PR body.
+5. Echo `Stage 2a: skipped (QA-verified — report: <artifact URL>)`
+6. Proceed directly to Stage 2b.
 
 Fast exploratory pass using the **`@playwright/cli`** tool (binary: `playwright-cli`). Goal: prove the app actually serves the feature route, the UI renders, console is clean. Don't formalize assertions yet — this is reconnaissance that informs the spec you write in 2b.
 
@@ -252,7 +263,7 @@ SESSION=vf
 playwright-cli -s=$SESSION open "http://localhost:<port><route>"
 
 # Capture a DOM snapshot — gives you element refs you can use in subsequent commands.
-playwright-cli -s=$SESSION snapshot > .verify/snapshot.txt
+playwright-cli -s=$SESSION snapshot > $VF_DIR/snapshot.txt
 
 # Drive the feature (examples — adapt to what the description says):
 #   playwright-cli -s=$SESSION click "getByRole('button', { name: 'Save' })"
@@ -261,17 +272,17 @@ playwright-cli -s=$SESSION snapshot > .verify/snapshot.txt
 # Use `snapshot` between actions to confirm state changed.
 
 # Save evidence.
-playwright-cli -s=$SESSION screenshot --filename=.verify/smoke.png
+playwright-cli -s=$SESSION screenshot --filename=$VF_DIR/smoke.png
 
 # Inspect network + console for problems before declaring smoke green.
-playwright-cli -s=$SESSION requests       > .verify/requests.txt   # network log
+playwright-cli -s=$SESSION requests       > $VF_DIR/requests.txt   # network log
 playwright-cli -s=$SESSION eval "() => ({title: document.title, url: location.href})"
 
 # Close the session.
 playwright-cli -s=$SESSION close
 ```
 
-**If `--use-mcp`:** the Playwright MCP tools (`mcp__plugin_playwright_playwright__*`) are acceptable here as an alternative driver for the same actions (`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_take_screenshot`). Save the screenshot to `.verify/smoke.png`. Don't switch to MCP or `@playwright/cli` for 2b — durable specs always go through `@playwright/test`.
+**If `--use-mcp`:** the Playwright MCP tools (`mcp__plugin_playwright_playwright__*`) are acceptable here as an alternative driver for the same actions (`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_take_screenshot`). Save the screenshot to `$VF_DIR/smoke.png`. Don't switch to MCP or `@playwright/cli` for 2b — durable specs always go through `@playwright/test`.
 
 **Smoke check passes if:**
 - The first response status is < 400 (check via the `requests` listing or by inspecting the snapshot for an error page).
@@ -352,11 +363,11 @@ Pass `--reporter=list` (JS/TS) for readable output.
 **Pass criteria:**
 - The new spec exits green.
 - Browser console asserted clean (covered by the spec's "no console errors" case).
-- If Stage 1b started a worker: the spec's async side-effect assertion passed, proving the job actually ran. Additionally verify by tail-checking `.verify/worker.log` for a success line for the job and no `exception`/`failed`/`error` lines.
+- If Stage 1b started a worker: the spec's async side-effect assertion passed, proving the job actually ran. Additionally verify by tail-checking `$VF_DIR/worker.log` for a success line for the job and no `exception`/`failed`/`error` lines.
 
 **Capture artifacts:**
-- Copy the Playwright HTML report (e.g. `e2e/playwright-report/`) summary line and `test-results/` traces into `.verify/` for the PR.
-- Copy the final passing screenshot from `test-results/.../*.png` to `.verify/screenshot.png`.
+- Copy the Playwright HTML report (e.g. `e2e/playwright-report/`) summary line and `test-results/` traces into `$VF_DIR/` for the PR.
+- Copy the final passing screenshot from `test-results/.../*.png` to `$VF_DIR/screenshot.png`.
 
 On any failure in 2a/2b/2c: STOP. Leave the server (and worker) running so the user can inspect. Report what failed and where.
 
@@ -366,8 +377,8 @@ On any failure in 2a/2b/2c: STOP. Leave the server (and worker) running so the u
 
 **→ TaskUpdate:** Mark "Stage 3: Stop server and worker" as `in_progress`.
 
-1. If `.verify/worker.pid` exists, kill it: `kill -9 $(cat .verify/worker.pid) 2>/dev/null || true`. Stop the worker BEFORE the web server so any final task completion writes flush cleanly.
-2. If `.verify/server.pid` exists, kill it: `kill -9 $(cat .verify/server.pid) 2>/dev/null || true`.
+1. If `$VF_DIR/worker.pid` exists, kill it: `kill -9 $(cat $VF_DIR/worker.pid) 2>/dev/null || true`. Stop the worker BEFORE the web server so any final task completion writes flush cleanly.
+2. If `$VF_DIR/server.pid` exists, kill it: `kill -9 $(cat $VF_DIR/server.pid) 2>/dev/null || true`.
 3. Free the web port: `lsof -ti tcp:<port> | xargs -r kill -9`.
 
 This is required before Stage 4 — running builds while the dev server or worker hold file locks (especially with `dotnet watch`, `nodemon`, or `uvicorn --reload`) breaks the build.
@@ -419,15 +430,10 @@ Skip if `--no-pr` is set.
 
 **→ TaskUpdate:** Mark "Stage 5: Open PR" as `in_progress`.
 
-1. If `.verify/screenshot.png` exists:
-   - `git add .verify/screenshot.png` and commit with subject `chore: add verification screenshot`.
-2. **If `--qa-passed`:** also stage QA artifacts for the PR:
-   - `git add .qa/reports/qa-report-iteration-*.md` — the QA reports
-   - `git add .qa/screenshots/iteration-$(cat .qa/current-iteration)/00-initial-state.png` — final QA screenshot
-   - Commit with subject `chore: add QA report and evidence`
+1. **Never commit evidence into the repo.** Screenshots, logs, and reports live under `$VF_DIR` and the QA run dir (both inside `.git/`, which git can't track) and are published as Claude Artifacts instead — the branch history stays clean.
+2. **Publish the verification report as a Claude Artifact:** build `$VF_DIR/report.html` — one self-contained page with the stage results table, the smoke/final screenshot embedded as a `data:` URI (no external references — a strict CSP blocks them; keep the page under 16MB), the e2e outcome, and — if `--qa-passed` — a link to the QA report artifact. Load the `artifact-design` skill first if it's available, then publish: `Artifact(file_path="<literal $VF_DIR>/report.html", favicon="✅", description="Verification report for <feature>")`. Save the returned URL to `$VF_DIR/artifact-url.txt`.
 3. Push the branch: `git push -u origin HEAD`. **Never** `--force` or `--force-with-lease` here.
-4. Construct the raw screenshot URL from the remote (e.g. `https://raw.githubusercontent.com/<owner>/<repo>/<branch>/.verify/screenshot.png`).
-5. Create the PR:
+4. Create the PR:
    ```bash
    gh pr create --base <base> --title "<short title>" --body "$(cat <<'EOF'
    ## Summary
@@ -437,15 +443,17 @@ Skip if `--no-pr` is set.
    - Browser-verified at `<route>` on port `<port>`
    - Console: no errors
    - Local CI: lint / typecheck / tests / build all green
-
-   ![verification](<raw screenshot URL>)
+   - Verification report: <verification artifact URL>
 
    ## QA Report
    {IF --qa-passed: include this section, else omit}
    - Full QA cycle completed ({N} iterations)
    - {total_passed} tests passed, {total_failed} bugs found and fixed
    - Categories tested: Happy Path, Form Validation, Error States, Edge Cases{, Accessibility, Responsive, Performance if applicable}
-   - See `.qa/reports/` for full reports
+   - Full QA report: <QA report artifact URL>
+
+   > Report links are Claude Artifacts and start private — the author can share them
+   > from claude.ai/code/artifacts if reviewers need access.
 
    ## Test plan
    - [ ] Reviewer loads `<route>` and confirms <key assertion>
@@ -474,9 +482,9 @@ At the end (success or failure), print a compact summary:
   QA:           passed (3 iterations, 12 bugs found+fixed) | not run
   Stages:       0 ✓  1 ✓  1b ✓  2a ✓/⊘  2b ✓  2c ✓  3 ✓  4 ✓  5 ✓
   PR:           <url or "skipped">
-  Artifacts:    .verify/smoke.png, .verify/screenshot.png, .verify/server.log,
-                .verify/worker.log, .verify/playwright-report-summary.txt
-                {if --qa-passed: .qa/reports/qa-report-iteration-*.md}
+  Report:       <verification artifact URL>{ · <QA report artifact URL> if --qa-passed}
+  Working dir:  $VF_DIR (smoke.png, screenshot.png, server.log, worker.log,
+                playwright-report summary — inside .git/, never committed)
 ```
 
 Use ⊘ for stages skipped due to `--qa-passed` (not a failure, just redundant). On failure, replace the failed stage's ✓ with ✗ and include a short reason on the next line.
@@ -486,9 +494,9 @@ Use ⊘ for stages skipped due to `--qa-passed` (not a failure, just redundant).
 Always (success or failure):
 - **Task list audit (MANDATORY):** Call `TaskList`. Mark any remaining `in_progress` or `pending` tasks as `completed` (if done) or update their description with the reason they were skipped. Every task must be in a terminal state before you finish.
 - Close any open `@playwright/cli` session: `playwright-cli -s=vf close 2>/dev/null || true`.
-- Kill the worker if it's still running (`.verify/worker.pid`).
-- Kill the dev server if it's still running (`.verify/server.pid`).
-- Leave `.verify/` in place — it's the audit trail. The user can `.gitignore` it if they don't want it tracked.
+- Kill the worker if it's still running (`$VF_DIR/worker.pid`).
+- Kill the dev server if it's still running (`$VF_DIR/server.pid`).
+- Leave `$VF_DIR` in place — it's the audit trail. It lives inside `.git/`, so it can never be tracked or committed; no `.gitignore` entry is needed.
 
 ## Notes for the model running this command
 
