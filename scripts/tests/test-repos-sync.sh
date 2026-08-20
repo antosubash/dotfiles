@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Tests for scripts/repos-sync.sh
+# shellcheck disable=SC2034  # tests set globals (ROOT, FILTERS, PRUNE_WORKTREES, DRY_RUN) read by the sourced script
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/repos-sync.sh"
 # shellcheck source=./lib.sh
 . "$(dirname "$0")/lib.sh"
