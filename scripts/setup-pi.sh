@@ -4,7 +4,7 @@
 set -e
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PI_DIR="$HOME/.pi/agent"
+PI_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 BACKUP_DIR="$HOME/.dotfiles_backup"
 
 printf '%s\n' "Setting up Pi development workflow..."

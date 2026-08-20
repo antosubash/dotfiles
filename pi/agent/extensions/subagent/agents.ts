@@ -103,7 +103,14 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			continue;
 		}
 
-		const { frontmatter, body } = parseFrontmatter<AgentFrontmatter>(content);
+		let parsed: { frontmatter: AgentFrontmatter; body: string };
+		try {
+			parsed = parseFrontmatter<AgentFrontmatter>(content);
+		} catch {
+			// One malformed agent must not prevent discovery of the remaining files.
+			continue;
+		}
+		const { frontmatter, body } = parsed;
 
 		if (typeof frontmatter.name !== "string" || typeof frontmatter.description !== "string") {
 			continue;

@@ -13,6 +13,8 @@ Parse feature text and flags: `--port`, `--route`, `--start`, `--health`, `--bas
 
 Auto-detect the affected stack (JS/TS, Python, or .NET), package runner, start command, port, base branch, lint/format, typecheck, tests, build, existing e2e setup, and optional background worker. Read project instructions first. Ask once only when a required value cannot be inferred. Echo the detected plan.
 
+When `--qa-run-id` is supplied, validate it before resolving any QA path: require 1–64 lowercase slug characters matching `^[a-z0-9]+(-[a-z0-9]+)*$`; reject invalid values rather than sanitizing or interpolating them.
+
 ## Safety and evidence
 
 - Refuse to run on the base branch.

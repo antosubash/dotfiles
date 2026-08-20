@@ -17,6 +17,8 @@ Parse feature text and flags: `--url`, `--port`, `--route`, `--start`, `--no-sta
 
 Infer stack/start command/port from project instructions and project files. Ask once only when a required value cannot be inferred. `--url` and `--no-start` skip server startup.
 
+If `--run-id` is supplied, validate it before using it in any path, session name, worktree, or branch: it must be 1–64 characters matching `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase letters, digits, and single hyphens only). Reject the run before Phase 0 for any other value; never sanitize or partially use an invalid ID. The generated `run-YYYYmmdd-HHMMSS` default must satisfy the same rule.
+
 ## Non-negotiable rules
 
 - Keep all state, reports, logs, screenshots, worktree metadata, and HTML under the absolute git directory, never the tracked tree.
@@ -35,6 +37,10 @@ Resolve:
 GIT_DIR="$(git rev-parse --absolute-git-dir 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/pi")"
 QA_BASE="$GIT_DIR/pi-qa"
 RUN_ID="<--run-id or run-YYYYmmdd-HHMMSS>"
+if [ "${#RUN_ID}" -gt 64 ] || [[ ! "$RUN_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+    printf '%s\n' 'Invalid --run-id: use 1–64 lowercase slug characters separated by single hyphens.' >&2
+    exit 2
+fi
 QA_DIR="$QA_BASE/$RUN_ID"
 mkdir -p "$QA_DIR"/{reports,fixes,worktrees} "$QA_DIR/screenshots/iteration-1"
 printf '%s' "$RUN_ID" > "$QA_BASE/latest-run"
@@ -64,6 +70,15 @@ Build test tasks from depth:
 - always: happy path and form/input validation;
 - normal/deep: error states and edge cases;
 - deep or flag: accessibility, responsive, performance.
+
+Use these concrete mandates verbatim when building category tasks:
+
+- **Happy path:** complete the primary user flow from its initial state through its success state; verify the visible result, persisted/navigation state, and the key interaction after reload when applicable.
+- **Validation:** submit empty, malformed, boundary, and corrected values; verify every invalid input gets a specific visible message, focus remains usable, no invalid mutation occurs, and valid correction succeeds.
+- **Error/edge:** exercise loading, empty, delayed, failed, duplicate, unauthorized, unavailable, and back/refresh states that the feature can encounter; verify safe recovery and no uncaught console or failed-request regressions.
+- **Accessibility:** use keyboard-only navigation; verify logical focus order, visible focus, accessible names/labels, keyboard operability, semantic landmarks/headings, and no obvious contrast or focus-trap defect at each relevant state.
+- **Responsive:** test at 320px, 768px, and 1440px (or the nearest supported widths); verify content remains usable, no unintended horizontal overflow or clipping occurs, and navigation/forms remain operable.
+- **Performance:** capture navigation/interaction timing and request evidence on the primary flow; identify slow or repeated requests, blocking work, layout jank, and console warnings, and report measurements rather than declaring a pass without evidence.
 
 Dispatch all applicable `browser-qa` tasks in one `subagent` parallel call (maximum four concurrently; batches are fine). Give each task:
 
@@ -129,4 +144,4 @@ Return to Phase 1. Continue until clean or max iterations. Never ask whether to 
 
 Always close this run's Playwright sessions and stop only the server process this workflow started, preferring graceful termination before force. Finalize `result.json`, state, Markdown, and HTML. Print iteration history, remaining issues, report path, and working directory.
 
-If clean and `--no-vf` was not supplied, read `~/.pi/agent/prompts/vf.md` and execute that workflow in the current session with the original feature plus `--qa-passed --qa-run-id "$RUN_ID"`, preserving detected port, route, and start command. If issues remain, do not run `/vf`.
+If clean and `--no-vf` was not supplied, resolve `PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"`, read `"$PI_CODING_AGENT_DIR/prompts/vf.md"`, and execute that workflow in the current session with the original feature plus `--qa-passed --qa-run-id "$RUN_ID"`, preserving detected port, route, and start command. If issues remain, do not run `/vf`.

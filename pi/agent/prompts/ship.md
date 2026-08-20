@@ -22,6 +22,7 @@ Hard rules:
 - `/qa` always runs with `--no-vf`; only the final `/vf` owns push/PR.
 - Review fixes are not clean until another reviewer pass returns `VERDICT: CLEAN`.
 - QA fixes happen after review and therefore force another outer review round.
+- When `--url URL` is supplied, parse it with a URL parser before invoking `/vf`: derive `--port` from its explicit port or the scheme default (`http` 80, `https` 443), and derive `--route` as its pathname plus query string (use `/` when the pathname is empty). Pass those derived values explicitly because `/vf` has no `--url` input; reject conflicting explicit `--port`/`--route` values rather than silently testing a different target.
 - Persist all decisions; recover from state after compaction.
 
 Fetch `origin/<base>`. Inspect branch diff and working tree. Refuse secret-like paths and create a repository-consistent checkpoint commit for intended pending feature changes so review/worktree agents see the tested source.
@@ -56,7 +57,7 @@ Use the specialist agent appropriate to the finding as an additional read-only c
 
 Skip for `--no-qa` or `--skip-browser`.
 
-Read `~/.pi/agent/prompts/qa.md` completely and execute that workflow in this current session with:
+Resolve `PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"` and read `"$PI_CODING_AGENT_DIR/prompts/qa.md"` completely. Execute that workflow in this current session with:
 
 - original feature and browser flags;
 - `--run-id ship-round-<outer>`;
@@ -69,21 +70,21 @@ Read `$(git rev-parse --absolute-git-dir)/pi-qa/ship-round-<outer>/result.json`.
 
 ### Convergence decision
 
-At the end of each round:
+At the end of each round, make the following decision in this order and write it to state before proceeding:
 
-- Stage A clean/skipped AND QA clean with `bugs_found_total == 0` (or QA skipped) → converged.
-- Stage A unresolved and QA made no changes → stop not-clean; an identical round would not help.
-- unresolved issues at max outer bound → stop not-clean.
-- QA found and fixed bugs, with no remaining issues → clear stale prior-round unresolved entries, increment outer, and return to Stage A because QA changed code after the clean review.
-- QA has remaining issues → continue only when under the bound and another round can plausibly change the result; otherwise stop not-clean.
+1. If QA has remaining issues, continue only when `outer < max_outer_iterations` and another round can plausibly change the result; otherwise set `status=not-clean`, stop, and do not run `/vf`.
+2. If Stage A is unresolved and QA made no changes, set `status=not-clean`, stop, and do not run `/vf`; repeating an identical round cannot help.
+3. If Stage A is clean/skipped and QA is clean/skipped with `bugs_found_total == 0`, set `status=converged`. A clean QA result with zero bugs is terminal because the clean review still covers the current source.
+4. If QA is clean and `bugs_found_total > 0 && bugs_fixed_total > 0`, QA changed code after the clean review. Clear stale prior-round unresolved QA entries and require one more Stage A review, even though this QA run is clean. If review was disabled with `--no-review`, the required final review cannot be performed: set `status=not-clean` and stop without a PR. Otherwise, if `outer < max_outer_iterations`, increment `outer` and return to Stage A. If the outer bound is exhausted, set `status=not-clean` with reason `QA fixes require a final review but max outer iterations was reached`; stop without pushing or opening a PR.
+5. Any other non-converged state is `status=not-clean`; stop at the bound rather than opening a PR.
 
-Write the decision before proceeding. Never ask whether to continue.
+A clean QA run with no bugs may converge; a clean QA run that found and fixed bugs may never directly converge without the additional review. Never ask whether to continue.
 
 ## Final stage
 
 If not clean, do not push or open a PR. Print tagged unresolved review/QA items and continue to the final local report.
 
-If converged, read `~/.pi/agent/prompts/vf.md` completely and execute that workflow in this current session. Pass original feature/base/start/port/route flags, `--qa-passed --qa-run-id ship-round-<outer>` when QA ran, `--skip-browser` when it did not, and `--no-pr` when requested. `/vf` runs local CI, pushes, and creates the single PR.
+If converged, resolve `PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"`, read `"$PI_CODING_AGENT_DIR/prompts/vf.md"` completely, and execute that workflow in this current session. Pass original feature/base/start flags and explicit `--port`/`--route` (using the values derived from `--url` above when supplied), plus `--qa-passed --qa-run-id ship-round-<outer>` when QA ran, `--skip-browser` when it did not, and `--no-pr` when requested. `/vf` runs local CI, pushes, and creates the single PR.
 
 Do not loop back to QA for a local-CI failure; report the failed gate.
 

@@ -349,6 +349,8 @@ async function runSingleAgent(
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 			let buffer = "";
+			let processExited = false;
+			let killTimer: ReturnType<typeof setTimeout> | undefined;
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
@@ -398,7 +400,13 @@ async function runSingleAgent(
 				currentResult.stderr += data.toString();
 			});
 
+			proc.once("exit", () => {
+				processExited = true;
+			});
+
 			proc.on("close", (code) => {
+				processExited = true;
+				if (killTimer) clearTimeout(killTimer);
 				if (buffer.trim()) processLine(buffer);
 				resolve(code ?? 0);
 			});
@@ -411,8 +419,10 @@ async function runSingleAgent(
 				const killProc = () => {
 					wasAborted = true;
 					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
+					killTimer = setTimeout(() => {
+						// ChildProcess.killed only records that kill() was requested;
+						// use the exit event/state to determine whether it is gone.
+						if (!processExited && proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
 					}, 5000);
 				};
 				if (signal.aborted) killProc();
@@ -517,7 +527,7 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
+			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents) {
 				const requestedAgentNames = new Set<string>();
 				if (params.chain) for (const step of params.chain) requestedAgentNames.add(step.agent);
 				if (params.tasks) for (const t of params.tasks) requestedAgentNames.add(t.agent);
@@ -528,8 +538,22 @@ export default function (pi: ExtensionAPI) {
 					.filter((a): a is AgentConfig => a?.source === "project");
 
 				if (projectAgentsRequested.length > 0) {
+					const mode = hasChain ? "chain" : hasTasks ? "parallel" : "single";
 					const names = projectAgentsRequested.map((a) => a.name).join(", ");
 					const dir = discovery.projectAgentsDir ?? "(unknown)";
+					if (!ctx.hasUI) {
+						return {
+							content: [
+								{
+									type: "text",
+									text: `Blocked: project-local agents require interactive confirmation (requested: ${names}; source: ${dir}).`,
+								},
+							],
+							details: makeDetails(mode)([]),
+							isError: true,
+						};
+					}
+
 					const ok = await ctx.ui.confirm(
 						"Run project-local agents?",
 						`Agents: ${names}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
@@ -537,7 +561,7 @@ export default function (pi: ExtensionAPI) {
 					if (!ok)
 						return {
 							content: [{ type: "text", text: "Canceled: project-local agents not approved." }],
-							details: makeDetails(hasChain ? "chain" : hasTasks ? "parallel" : "single")([]),
+							details: makeDetails(mode)([]),
 						};
 				}
 			}
