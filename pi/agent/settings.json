@@ -1,0 +1,16 @@
+{
+  "lastChangelogVersion": "0.84.2",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-sol",
+  "defaultThinkingLevel": "high",
+  "externalEditor": "nvim",
+  "defaultProjectTrust": "ask",
+  "collapseChangelog": true,
+  "treeFilterMode": "no-tools",
+  "enabledModels": [
+    "openai-codex/gpt-5.6-sol:high",
+    "openai-codex/gpt-5.6-luna:high",
+    "openai-codex/gpt-5.4-mini:medium"
+  ],
+  "showCacheMissNotices": true
+}

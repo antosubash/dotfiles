@@ -19,21 +19,65 @@ sanitize_name() {
     printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/-/g; s/--*/-/g; s/^-//; s/-$//'
 }
 
+origin_default_branch() {
+    repo_path="$1"
+    ref=$(git -C "$repo_path" ls-remote --symref origin HEAD 2>/dev/null |
+        awk '$1 == "ref:" && $3 == "HEAD" { print $2 }')
+    case "$ref" in
+        refs/heads/*) printf '%s\n' "${ref#refs/heads/}" ;;
+        *)
+            printf 'cannot resolve origin default branch from remote HEAD\n' >&2
+            return 1
+            ;;
+    esac
+}
+
 ensure_worktree() {
     repo_path="$1"
     branch="$2"
     worktree_path="$3"
 
-    if [ -d "$worktree_path" ]; then
+    if [ -e "$worktree_path" ]; then
+        canonical_path=$(cd "$worktree_path" 2>/dev/null && pwd -P) || {
+            printf 'existing worktree path is not a directory: %s\n' "$worktree_path" >&2
+            return 1
+        }
+        if ! git -C "$repo_path" worktree list --porcelain |
+            grep -Fqx "worktree $canonical_path"; then
+            printf 'existing path is not a registered worktree: %s\n' "$worktree_path" >&2
+            return 1
+        fi
+        actual_branch=$(git -C "$canonical_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+        if [ "$actual_branch" != "$branch" ]; then
+            printf 'worktree branch mismatch: expected %s, found %s\n' "$branch" "${actual_branch:-detached}" >&2
+            return 1
+        fi
         return 0
     fi
 
     if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$branch"; then
+        # Reattach an existing local branch without changing its history.
         git -C "$repo_path" worktree add "$worktree_path" "$branch" >/dev/null
-    elif git -C "$repo_path" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
-        git -C "$repo_path" worktree add -b "$branch" "$worktree_path" "origin/$branch" >/dev/null
     else
-        git -C "$repo_path" worktree add -b "$branch" "$worktree_path" >/dev/null
+        # A brand-new task branch always starts at the remote's current default
+        # tip. A same-named remote feature branch is not silently reused.
+        default_branch=$(origin_default_branch "$repo_path") || return 1
+        git -C "$repo_path" fetch origin \
+            "refs/heads/$default_branch:refs/remotes/origin/$default_branch" >/dev/null
+        git -C "$repo_path" ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1
+        remote_status=$?
+        case "$remote_status" in
+            0)
+                printf 'remote branch origin/%s exists; create a local tracking branch explicitly before attaching a worktree\n' "$branch" >&2
+                return 1
+                ;;
+            2) ;;
+            *)
+                printf 'unable to check origin for branch %s\n' "$branch" >&2
+                return 1
+                ;;
+        esac
+        git -C "$repo_path" worktree add -b "$branch" "$worktree_path" "origin/$default_branch" >/dev/null
     fi
 }
 

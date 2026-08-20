@@ -69,7 +69,7 @@ cmd_prompt() {
     inner="$script_abs remove '$q_main' '$q_top' '$q_win'"
     quoted_inner=$(sq_escape "$inner")
 
-    tmux confirm-before -p "force-remove worktree $toplevel and kill window? (y/n)" "run-shell '$quoted_inner'"
+    tmux confirm-before -p "remove clean worktree $toplevel and kill window? (y/n)" "run-shell '$quoted_inner'"
 }
 
 cmd_remove() {
@@ -77,18 +77,11 @@ cmd_remove() {
     worktree_path="${2:-}"
     window_id="${3:-}"
 
-    # Try git first. If the worktree is registered, this also cleans up the
-    # metadata under .git/worktrees/<name>. For an orphan dir whose metadata
-    # was already pruned, git refuses with "not a working tree"; we then fall
-    # back to nuking the directory directly.
-    err=$(git -C "$main_top" worktree remove --force "$worktree_path" 2>&1)
-    if [ -e "$worktree_path" ]; then
-        if ! rm_err=$(rm -rf -- "$worktree_path" 2>&1); then
-            tmux display-message "worktree remove failed: ${err:-$rm_err}"
-            return 0
-        fi
-        # In case the registry still has a stale entry pointing at the now-gone dir.
-        git -C "$main_top" worktree prune >/dev/null 2>&1 || true
+    # Never force-remove or recursively delete a worktree. Git must confirm it
+    # is registered and clean; otherwise preserve both its files and window.
+    if ! err=$(git -C "$main_top" worktree remove "$worktree_path" 2>&1); then
+        tmux display-message "worktree remove refused: $err"
+        return 0
     fi
     tmux kill-window -t "$window_id"
 }

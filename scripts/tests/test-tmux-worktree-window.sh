@@ -43,6 +43,19 @@ EOF
     chmod +x "$FAKE_BIN/gh"
 }
 
+# Give a test repository a real origin/main and origin/HEAD. New task
+# worktrees must start there rather than at the caller's local HEAD.
+add_origin_default() {
+    local repo="$1"
+    local remote="$TMPDIR_ROOT/origin-default.git"
+    git init -q --bare "$remote"
+    git -C "$repo" remote add origin "$remote"
+    git -C "$repo" push -q -u origin main
+    git -C "$remote" symbolic-ref HEAD refs/heads/main
+    git -C "$repo" fetch -q origin
+    git -C "$repo" remote set-head origin -a >/dev/null
+}
+
 # --- tests ---
 
 test_unknown_subcommand_fails() {
@@ -130,15 +143,42 @@ test_ensure_worktree_new_branch() {
     setup_test "ensure_worktree creates a new branch"
     source_script
     make_repo "$TMPDIR_ROOT/repo"
+    add_origin_default "$TMPDIR_ROOT/repo"
+    # Diverge local HEAD after the push. The new branch must ignore this commit.
+    : > "$TMPDIR_ROOT/repo/local-only"
+    git -C "$TMPDIR_ROOT/repo" add local-only
+    git -C "$TMPDIR_ROOT/repo" commit -q -m local-only
     local wt="$TMPDIR_ROOT/repo/.worktrees/new-feat"
     ensure_worktree "$TMPDIR_ROOT/repo" "new-feat" "$wt"
     [ -d "$wt" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: worktree dir missing"); }
-    # Branch should now exist locally
+    # Branch should exist locally at origin/main, not the divergent local HEAD.
     if git -C "$TMPDIR_ROOT/repo" show-ref --verify --quiet refs/heads/new-feat; then
         PASS=$((PASS+1))
     else
         FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: new-feat branch not created")
     fi
+    assert_eq "$(git -C "$TMPDIR_ROOT/repo" rev-parse origin/main)" "$(git -C "$wt" rev-parse HEAD)" "new branch starts at origin default"
+    teardown_test
+}
+
+test_ensure_worktree_uses_remote_head_not_stale_local_symbolic_ref() {
+    setup_test "new branch follows remote HEAD when local origin/HEAD is stale"
+    source_script
+    make_repo "$TMPDIR_ROOT/repo"
+    add_origin_default "$TMPDIR_ROOT/repo"
+    git -C "$TMPDIR_ROOT/repo" checkout -q -b trunk
+    : > "$TMPDIR_ROOT/repo/trunk-file"
+    git -C "$TMPDIR_ROOT/repo" add trunk-file
+    git -C "$TMPDIR_ROOT/repo" commit -q -m trunk
+    git -C "$TMPDIR_ROOT/repo" push -q origin trunk
+    git -C "$TMPDIR_ROOT/origin-default.git" symbolic-ref HEAD refs/heads/trunk
+    assert_eq refs/remotes/origin/main "$(git -C "$TMPDIR_ROOT/repo" symbolic-ref refs/remotes/origin/HEAD)" "local origin HEAD remains stale"
+    : > "$TMPDIR_ROOT/repo/local-only-after-trunk"
+    git -C "$TMPDIR_ROOT/repo" add local-only-after-trunk
+    git -C "$TMPDIR_ROOT/repo" commit -q -m local-only-after-trunk
+    local wt="$TMPDIR_ROOT/repo/.worktrees/from-trunk"
+    ensure_worktree "$TMPDIR_ROOT/repo" "from-trunk" "$wt"
+    assert_eq "$(git -C "$TMPDIR_ROOT/repo" rev-parse origin/trunk)" "$(git -C "$wt" rev-parse HEAD)" "new branch follows remote HEAD"
     teardown_test
 }
 
@@ -158,8 +198,8 @@ test_ensure_worktree_existing_local_branch() {
     teardown_test
 }
 
-test_ensure_worktree_from_origin() {
-    setup_test "ensure_worktree pulls branch from origin"
+test_remote_branch_requires_explicit_local_branch() {
+    setup_test "remote feature branch requires explicit local attachment"
     source_script
     make_repo "$TMPDIR_ROOT/origin"
     git -C "$TMPDIR_ROOT/origin" checkout -q -b remote-feat
@@ -170,14 +210,15 @@ test_ensure_worktree_from_origin() {
     git clone -q "$TMPDIR_ROOT/origin" "$TMPDIR_ROOT/clone"
     git -C "$TMPDIR_ROOT/clone" fetch -q origin
     local wt="$TMPDIR_ROOT/clone/.worktrees/remote-feat"
-    ensure_worktree "$TMPDIR_ROOT/clone" "remote-feat" "$wt"
-    [ -d "$wt" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: worktree dir missing"); }
-    # Local branch should now exist, tracking origin/remote-feat
-    if git -C "$TMPDIR_ROOT/clone" show-ref --verify --quiet refs/heads/remote-feat; then
-        PASS=$((PASS+1))
+    if ensure_worktree "$TMPDIR_ROOT/clone" "remote-feat" "$wt" 2>"$TMPDIR_ROOT/err"; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: silently based new local branch on remote feature")
     else
-        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: local branch not created from origin")
+        PASS=$((PASS+1))
     fi
+    assert_contains "$(cat "$TMPDIR_ROOT/err")" "create a local tracking branch explicitly" "safe remote-branch diagnostic"
+    git -C "$TMPDIR_ROOT/clone" branch --track remote-feat origin/remote-feat >/dev/null
+    ensure_worktree "$TMPDIR_ROOT/clone" "remote-feat" "$wt"
+    [ -d "$wt" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: explicit branch worktree missing"); }
     teardown_test
 }
 
@@ -185,6 +226,7 @@ test_ensure_worktree_idempotent() {
     setup_test "ensure_worktree is idempotent when path exists"
     source_script
     make_repo "$TMPDIR_ROOT/repo"
+    add_origin_default "$TMPDIR_ROOT/repo"
     local wt="$TMPDIR_ROOT/repo/.worktrees/x"
     ensure_worktree "$TMPDIR_ROOT/repo" "x" "$wt"
     # Second call should succeed without trying to add again
@@ -193,6 +235,20 @@ test_ensure_worktree_idempotent() {
     else
         FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: second call failed: $(cat "$TMPDIR_ROOT/err")")
     fi
+    teardown_test
+}
+
+test_ensure_worktree_rejects_unregistered_existing_path() {
+    setup_test "ensure_worktree rejects unregistered existing path"
+    source_script
+    make_repo "$TMPDIR_ROOT/repo"
+    mkdir -p "$TMPDIR_ROOT/repo/.worktrees/x"
+    if ensure_worktree "$TMPDIR_ROOT/repo" "x" "$TMPDIR_ROOT/repo/.worktrees/x" 2>"$TMPDIR_ROOT/err"; then
+        FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: unregistered path accepted")
+    else
+        PASS=$((PASS+1))
+    fi
+    assert_contains "$(cat "$TMPDIR_ROOT/err")" "not a registered worktree" "registration diagnostic"
     teardown_test
 }
 
@@ -217,14 +273,17 @@ test_ensure_worktree_failure_surfaces() {
 }
 
 test_ensure_worktree_new_branch
+test_ensure_worktree_uses_remote_head_not_stale_local_symbolic_ref
 test_ensure_worktree_existing_local_branch
-test_ensure_worktree_from_origin
+test_remote_branch_requires_explicit_local_branch
 test_ensure_worktree_idempotent
+test_ensure_worktree_rejects_unregistered_existing_path
 test_ensure_worktree_failure_surfaces
 
 test_spawn_creates_window() {
     setup_test "spawn creates worktree and tmux window"
     make_repo "$TMPDIR_ROOT/repo"
+    add_origin_default "$TMPDIR_ROOT/repo"
     "$SCRIPT" spawn "$TMPDIR_ROOT/repo" "feature/foo"
     local wt="$TMPDIR_ROOT/repo/.worktrees/feature-foo"
     [ -d "$wt" ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); FAILURES+=("$TEST_NAME: worktree dir missing"); }

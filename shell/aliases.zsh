@@ -142,6 +142,10 @@ alias tl="tmux ls"
 alias tn="tmux new -s"
 alias tk="tmux kill-session"
 
+# Pi coding agent
+alias pic="pi --continue"
+alias pir="pi --resume"
+
 # Enhanced ls with colors if available (using eza, not exa)
 if command -v "$TOOL_EXA" &> /dev/null; then
     alias ls="$TOOL_EXA --icons"
@@ -200,5 +204,13 @@ REPOS_SYNC_SCRIPT="$DOTFILES_DIR/scripts/repos-sync.sh"
 if [[ -x "$REPOS_SYNC_SCRIPT" ]]; then
     alias repos-sync="$REPOS_SYNC_SCRIPT"
     alias rs="$REPOS_SYNC_SCRIPT"
+fi
+
+# Remove only clean worktrees in the current repo whose exact branch HEAD
+# belongs to a PR merged at least 14 days ago. Pass --dry-run or --days N.
+WORKTREE_CLEANUP_SCRIPT="$DOTFILES_DIR/scripts/cleanup-merged-worktrees.sh"
+if [[ -x "$WORKTREE_CLEANUP_SCRIPT" ]]; then
+    alias wt-clean="$WORKTREE_CLEANUP_SCRIPT"
+    alias wtc="$WORKTREE_CLEANUP_SCRIPT"
 fi
 

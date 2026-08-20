@@ -113,6 +113,8 @@ dotfiles/
 │   ├── .bashrc            # Bash configuration (Ubuntu)
 │   ├── .profile           # Shell profile
 │   └── agnoster.zsh-theme # Agnoster theme
+├── pi/
+│   └── agent/             # Pi settings, agents, prompts, skills, extensions
 ├── git/
 │   └── .gitconfig         # Git configuration
 ├── vim/
@@ -165,7 +167,29 @@ Choose your platform:
 - 🔤 Nerd Fonts (JetBrainsMono, FiraCode, MesloLGS NF)
 - 🪟 Windows extras: Windows Terminal w/ Catppuccin Mocha, oh-my-posh, PSReadLine, Alacritty, WSL2 + Ubuntu (optional auto-bootstrap)
 
-### 3. Shell Theme Setup
+### 3. Pi Coding Workflow
+
+`install.sh` runs `scripts/setup-pi.sh`, linking version-controlled Pi resources while leaving credentials, trust decisions, and sessions local under `~/.pi/agent/`.
+
+```bash
+./scripts/setup-pi.sh
+```
+
+Included workflows:
+
+- `/worktree` — create or select an isolated task worktree
+- `/implement` — worktree-first scout → plan → worker subagent chain
+- `/loop` — worktree-first bounded implement → review → fix convergence loop
+- `/qa` — parallel Playwright CLI QA with isolated feature/fix worktrees
+- `/vf` — worktree-gated browser/local-CI verification and pull request creation
+- `/ship` — worktree-gated review ↔ QA convergence followed by exactly one PR
+- `/repos-sync` — safe workspace synchronization
+
+Write-capable Pi workflows create or reuse linked Git worktrees by default and preserve them for resume/audit. Every new worktree starts from the freshly fetched origin default branch, never the caller's current `HEAD` or local default branch. A dirty primary checkout is never moved or auto-stashed; `--no-worktree` is required to opt out explicitly. Claude specialist agents under `.claude/agents/` are shared with Pi. Claude model tiers are mapped to the configured Codex models. Recognizable destructive shell commands trigger a best-effort interactive approval guard and are blocked in non-interactive runs; this is not a sandbox.
+
+Useful aliases: `pic` continues the latest Pi session and `pir` opens the session picker.
+
+### 4. Shell Theme Setup
 
 #### Agnoster Theme (Recommended)
 
@@ -184,7 +208,7 @@ Choose your platform:
 ./scripts/setup-terminal.sh
 ```
 
-### 4. Update System Setup
+### 5. Update System Setup
 
 ```bash
 # Install update commands
