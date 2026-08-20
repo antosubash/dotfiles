@@ -37,6 +37,18 @@ done
 run_setup >/dev/null
 assert_eq 0 "$(find "$HOME_DIR/.dotfiles_backup" -mindepth 1 -maxdepth 1 -print | wc -l)" "idempotent setup backups"
 
+# A concurrent setup fails fast and leaves the owner-created lock untouched.
+mkdir "${PI_DIR}.setup.lock"
+if run_setup >/dev/null 2>"$TMP/setup-lock.log"; then
+    fail "concurrent setup unexpectedly succeeded"
+else
+    pass
+fi
+assert_eq 1 "$(grep -c 'Refusing concurrent Pi setup' "$TMP/setup-lock.log")" "setup lock diagnostic"
+[ -d "${PI_DIR}.setup.lock" ] && pass || fail "setup lock was removed by a competing run"
+rm -rf "${PI_DIR}.setup.lock"
+run_setup >/dev/null
+
 # Existing files are moved aside, never overwritten, and both generations stay
 # readable when the setup is run again in the same second.
 rm "$PI_DIR/settings.json"

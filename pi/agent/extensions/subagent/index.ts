@@ -34,11 +34,15 @@ const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
-// This is a retained-capture budget, not just a display limit. It bounds the
-// decoded event stream, stderr, and messages kept in a result before anything
-// is appended to those buffers. A task that exceeds it is terminated.
+// This is a finite event-stream budget, not just a display limit. Raw stdout
+// and stderr bytes are charged once as they arrive; parsed messages retained
+// from stdout are views of those already-counted bytes, not a second charge.
+// A task that exceeds it is terminated.
 const MAX_CAPTURE_BYTES = 256 * 1024;
 const TERMINATION_GRACE_MS = 5000;
+// A descendant can keep inherited stdout/stderr open after the process-tree
+// kill has completed. Never wait indefinitely for `close` in that case.
+const TERMINATION_SETTLEMENT_DEADLINE_MS = 10000;
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -269,27 +273,41 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
-function signalProcessTree(proc: import("node:child_process").ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
-	if (proc.pid === undefined) return;
+function signalProcessTree(
+	proc: import("node:child_process").ChildProcess,
+	signal: "SIGTERM" | "SIGKILL",
+): import("node:child_process").ChildProcess | undefined {
+	if (proc.pid === undefined) return undefined;
 
 	if (process.platform === "win32") {
 		// Windows has no POSIX process groups. taskkill /T is the process-tree
 		// equivalent and is safe to invoke without a shell. The direct kill is a
-		// fallback for restricted environments where taskkill is unavailable.
+		// fallback for restricted environments where taskkill is unavailable or
+		// reports failure (for example, because a descendant already exited).
 		const taskkillArgs = ["/PID", String(proc.pid), "/T"];
 		if (signal === "SIGKILL") taskkillArgs.push("/F");
 		const treeKiller = spawn("taskkill", taskkillArgs, {
 			stdio: "ignore",
 			windowsHide: true,
 		});
-		treeKiller.once("error", () => {
+		let fallbackUsed = false;
+		const fallback = () => {
+			if (fallbackUsed) return;
+			fallbackUsed = true;
 			try {
 				proc.kill(signal);
 			} catch {
 				/* the process may already have exited */
 			}
+		};
+		treeKiller.once("error", fallback);
+		treeKiller.once("close", (code) => {
+			// A nonzero taskkill result is not proof that the tree was cleaned up.
+			// Try the direct handle as a best-effort fallback before the settlement
+			// deadline closes the retained pipes and fails the invocation.
+			if (code !== 0) fallback();
 		});
-		return;
+		return treeKiller;
 	}
 
 	try {
@@ -302,6 +320,7 @@ function signalProcessTree(proc: import("node:child_process").ChildProcess, sign
 			/* the process may already have exited */
 		}
 	}
+	return undefined;
 }
 
 interface DispatchDefaults {
@@ -397,21 +416,38 @@ async function runSingleAgent(
 			let settled = false;
 			let terminationRequested = false;
 			let killTimer: ReturnType<typeof setTimeout> | undefined;
+			let settlementTimer: ReturnType<typeof setTimeout> | undefined;
 			let capturedBytes = 0;
 			let abortHandler: (() => void) | undefined;
+			let terminationForcedFailure = false;
+			const treeKillers = new Set<import("node:child_process").ChildProcess>();
 
 			const cleanup = () => {
 				if (killTimer) {
 					clearTimeout(killTimer);
 					killTimer = undefined;
 				}
+				if (settlementTimer) {
+					clearTimeout(settlementTimer);
+					settlementTimer = undefined;
+				}
+				for (const treeKiller of treeKillers) {
+					if (!treeKiller.killed) {
+						try {
+							treeKiller.kill();
+						} catch {
+							/* the taskkill helper may already have exited */
+						}
+					}
+				}
+				treeKillers.clear();
 				if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
 			};
 			const finish = (code: number) => {
 				if (settled) return;
 				settled = true;
 				cleanup();
-				resolve(code);
+				resolve(terminationForcedFailure ? 1 : code);
 			};
 			const requestTermination = (aborted: boolean) => {
 				if (aborted) wasAborted = true;
@@ -419,16 +455,36 @@ async function runSingleAgent(
 				terminationRequested = true;
 				// Signal the group/tree even if the leader has emitted `exit`: a
 				// descendant can otherwise keep stdout/stderr pipes open.
-				signalProcessTree(proc, "SIGTERM");
+				const firstKiller = signalProcessTree(proc, "SIGTERM");
+				if (firstKiller) treeKillers.add(firstKiller);
 				killTimer = setTimeout(() => {
 					// `close` waits for inherited stdio to close. If it has not fired,
 					// descendants may still hold the pipes even after the group leader
 					// emitted `exit`, so escalate against the whole process group/tree.
-					if (!settled) signalProcessTree(proc, "SIGKILL");
+					if (settled) return;
+					const finalKiller = signalProcessTree(proc, "SIGKILL");
+					if (finalKiller) treeKillers.add(finalKiller);
 				}, TERMINATION_GRACE_MS);
+				settlementTimer = setTimeout(() => {
+					if (settled) return;
+					terminationForcedFailure = true;
+					currentResult.stopReason = "error";
+					currentResult.errorMessage ||= "Subagent termination did not settle before the hard deadline.";
+					// Do not let inherited descriptors keep the parent waiting forever.
+					proc.stdout?.destroy();
+					proc.stderr?.destroy();
+					for (const treeKiller of treeKillers) {
+						try {
+							treeKiller.kill();
+						} catch {
+							/* helper may already have exited */
+						}
+					}
+					finish(1);
+				}, TERMINATION_SETTLEMENT_DEADLINE_MS);
 			};
-			const appendCapture = (value: string, kind: string): boolean => {
-				const bytes = Buffer.byteLength(value, "utf8");
+			const appendCapture = (value: string | Buffer, kind: string): boolean => {
+				const bytes = typeof value === "string" ? Buffer.byteLength(value, "utf8") : value.byteLength;
 				if (capturedBytes + bytes > MAX_CAPTURE_BYTES) {
 					captureLimitExceeded = true;
 					currentResult.stopReason = "error";
@@ -451,21 +507,12 @@ async function runSingleAgent(
 					return;
 				}
 
-				const appendMessage = (message: Message): boolean => {
-					let serialized: string;
-					try {
-						serialized = JSON.stringify(message) ?? "";
-					} catch {
-						serialized = "";
-					}
-					if (!appendCapture(serialized, "messages")) return false;
-					currentResult.messages.push(message);
-					return true;
-				};
-
 				if (event.type === "message_end" && event.message) {
 					const msg = event.message as Message;
-					if (!appendMessage(msg)) return;
+					// The parsed message is already represented by the counted stdout
+					// event line. Retain it without charging its serialized form a
+					// second time against the finite stream budget.
+					currentResult.messages.push(msg);
 
 					if (msg.role === "assistant") {
 						currentResult.usage.turns++;
@@ -486,15 +533,16 @@ async function runSingleAgent(
 				}
 
 				if (event.type === "tool_result_end" && event.message) {
-					if (appendMessage(event.message as Message)) emitUpdate();
+					currentResult.messages.push(event.message as Message);
+					emitUpdate();
 				}
 			};
 
 			proc.stdout.on("data", (data) => {
 				if (captureLimitExceeded) return;
-				const text = data.toString();
 				// Count the raw event stream before retaining it in the framing buffer.
-				if (!appendCapture(text, "stdout")) return;
+				if (!appendCapture(data, "stdout")) return;
+				const text = data.toString();
 				buffer += text;
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
@@ -502,8 +550,8 @@ async function runSingleAgent(
 			});
 
 			proc.stderr.on("data", (data) => {
+				if (captureLimitExceeded || !appendCapture(data, "stderr")) return;
 				const text = data.toString();
-				if (captureLimitExceeded || !appendCapture(text, "stderr")) return;
 				currentResult.stderr += text;
 			});
 

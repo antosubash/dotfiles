@@ -46,9 +46,12 @@ QA_DIR="$QA_BASE/$RUN_ID"
 # mkdir (without -p) is the atomic run claim. Never resume or merge state from
 # an old run, even if it looks stopped; callers must choose a new ID.
 if ! mkdir "$QA_DIR"; then
-    printf 'Refusing existing QA run ID: %s\n' "$RUN_ID" >&2
+    printf 'Refusing existing QA run ID: %s at %s. Inspect its owner/PIDs before removing a stale run.\n' "$RUN_ID" "$QA_DIR" >&2
     exit 2
 fi
+printf '%s\n' "pid=$$" > "$QA_DIR/owner"
+qa_cleanup_notice() { printf 'QA run %s stopped; inspect %s and owned PIDs before cleanup.\n' "$RUN_ID" "$QA_DIR" >&2; }
+trap qa_cleanup_notice EXIT
 mkdir -p "$QA_DIR"/{reports,fixes,worktrees} "$QA_DIR/screenshots/iteration-1"
 # Refuse orphaned state from a deleted run directory too. Worktree creation in
 # Phase 4 repeats these checks immediately before each branch is created.
@@ -57,12 +60,11 @@ if git for-each-ref --format='%(refname:short)' refs/heads/ | grep -q "^$QA_BRAN
     printf 'Refusing QA run: branch prefix already exists: %s\n' "$QA_BRANCH_PREFIX" >&2
     exit 2
 fi
-printf '%s' "$RUN_ID" > "$QA_BASE/latest-run"
 ```
 
-Create `$QA_DIR/state.json` containing feature, URL, stack, start command, port, depth, iteration=1, max_iterations, status=`in-progress`, server ownership/PID, cumulative bug registry, and phase outcomes. This file is authoritative. If any Phase 0 claim or preflight check fails, do not create state or reuse any worktree, branch, session, or report from that ID.
+Create `$QA_DIR/state.json` containing the exact `run_id`, absolute `qa_dir`, result/report paths, feature, URL, stack, start command, port, depth, iteration=1, max_iterations, status=`in-progress`, server ownership/PID, cumulative bug registry, and phase outcomes. This file is authoritative. If any Phase 0 claim or preflight check fails, do not create state or reuse any worktree, branch, session, or report from that ID. There is no shared latest-run pointer; callers must pass this exact ID.
 
-If needed, start the app with `nohup <start> >"$QA_DIR/server.log" 2>&1 &`, record PID, and poll the target for up to 90 seconds. Do not kill an app supplied through `--url` or `--no-start`. On startup failure, save logs, set status=`stopped`, and stop.
+If needed, before starting the app inspect the target port with an OS-appropriate listener check (`lsof`/`ss`/`netstat`) and refuse an occupied or unverifiable port. Never kill or adopt another service. Start only with `nohup <start> >"$QA_DIR/server.log" 2>&1 &`, record the owned PID and process-tree path under this run, and poll the target for up to 90 seconds only while that root PID and required process tree remain alive. Health alone is insufficient and an exited/changed owner is a startup failure. Do not kill an app supplied through `--url` or `--no-start`. On startup failure, save logs, set status=`stopped`, and stop.
 
 ## Phase 1 — reconnaissance
 
@@ -85,7 +87,7 @@ Build test tasks from depth:
 - normal/deep: error states and edge cases;
 - deep or flag: accessibility, responsive, performance.
 
-Use these concrete mandates verbatim when building category tasks:
+Use these concrete mandates verbatim when building category tasks. Every task must use only this run's exact session name and paths; a crashed or unexpectedly closed session is a test gap, not evidence of a pass:
 
 - **Happy path:** complete the primary user flow from its initial state through its success state; verify the visible result, persisted/navigation state, and the key interaction after reload when applicable.
 - **Validation:** submit empty, malformed, boundary, and corrected values; verify every invalid input gets a specific visible message, focus remains usable, no invalid mutation occurs, and valid correction succeeds.
@@ -150,7 +152,7 @@ If blockers exist, dispatch `worker` with the exact findings, then dispatch `rev
 
 ## Phase 6 — retest loop
 
-Increment iteration, update state, and create the next screenshot directory. Prefer hot reload. Restart only if the server died, dependencies/config changed, or the stack lacks hot reload. Install changed dependencies before a dependency-triggered restart. Use cache deletion only as a stale-behavior fallback and request destructive-command approval when prompted.
+Increment iteration, update state, and create the next screenshot directory. Prefer hot reload. Restart only if the server died, dependencies/config changed, or the stack lacks hot reload. Before every restart, repeat the occupied-port refusal and owned PID/process-tree-plus-health checks; never kill or adopt a listener from another run. Install changed dependencies before a dependency-triggered restart. Use cache deletion only as a stale-behavior fallback and request destructive-command approval when prompted.
 
 Return to Phase 1. Continue until clean or max iterations. Never ask whether to continue.
 

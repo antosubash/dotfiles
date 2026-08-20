@@ -6,9 +6,19 @@ set -e
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PI_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 BACKUP_DIR="$HOME/.dotfiles_backup"
+SETUP_LOCK="${PI_DIR}.setup.lock"
 
 printf '%s\n' "Setting up Pi development workflow..."
 mkdir -p "$PI_DIR" "$BACKUP_DIR"
+if ! mkdir "$SETUP_LOCK" 2>/dev/null; then
+    printf 'Refusing concurrent Pi setup: lock exists at %s. Verify its owner/PID before removing the stale lock and retrying.\n' "$SETUP_LOCK" >&2
+    exit 1
+fi
+printf '%s\n' "pid=$$" > "$SETUP_LOCK/owner"
+cleanup_setup_lock() {
+    rm -rf -- "$SETUP_LOCK"
+}
+trap cleanup_setup_lock EXIT
 
 backup_and_symlink() {
     local src="$1"

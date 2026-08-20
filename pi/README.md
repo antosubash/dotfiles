@@ -11,7 +11,7 @@ Run `~/dotfiles/scripts/setup-pi.sh` to link these resources into `~/.pi/agent/`
 | `/review` | Read-only reviewer subagent |
 | `/qa` | Parallel Playwright CLI testing, isolated fix worktrees, review, retest |
 | `/vf` | Gated branch, browser, e2e, local-CI, and PR verification |
-| `/ship` | Review ↔ QA convergence followed by exactly one `/vf` PR |
+| `/ship` | One full review, scoped fix confirmations, optional QA convergence, then exactly one `/vf` PR |
 | `/repos-sync` | Safe workspace synchronization |
 
 `/commit`, `/verify`, `/pr`, and `/handoff` provide smaller focused workflows.
@@ -30,17 +30,17 @@ The extension maps Claude model tiers when loading shared agents:
 | Sonnet | `openai-codex/gpt-5.6-luna` |
 | Opus/Fable | `openai-codex/gpt-5.6-sol` |
 
-Pi-specific `scout`, `planner`, `worker`, `reviewer`, and `browser-qa` agents live beside the shared specialists.
+Pi-specific `scout`, `planner`, `worker`, `reviewer`, `reviewer-fast`, and `browser-qa` agents live beside the shared specialists. `/ship` uses the full Luna reviewer once, then the Mini reviewer only for known findings and fix/QA deltas. P2/P3 advisories are reported without extending the blocking loop.
 
 ## Loop state
 
-Long workflows persist authoritative state outside the tracked tree:
+Long workflows persist authoritative state outside the tracked tree in atomically claimed, unique run directories:
 
-- QA: `$(git rev-parse --absolute-git-dir)/pi-qa/`
-- Verification: `$(git rev-parse --absolute-git-dir)/pi-verify/`
-- Ship: `$(git rev-parse --absolute-git-dir)/pi-ship/`
+- QA: `$(git rev-parse --absolute-git-dir)/pi-qa/<qa-run-id>/`
+- Verification: `$(git rev-parse --absolute-git-dir)/pi-verify/<vf-run-id>/`
+- Ship: `$(git rev-parse --absolute-git-dir)/pi-ship/<ship-run-id>/`
 
-This lets workflows recover after context compaction without relying on conversation prose.
+Exact IDs and absolute paths are threaded through state, reports, sessions, and owned PIDs; passed-QA verification requires its explicit QA run ID and never consults a latest-run pointer. Setup and PR creation also use atomic local locks. If a lock or run claim remains after a crash, verify its owner PID and active processes before removing it. This lets workflows recover after context compaction without relying on conversation prose.
 
 ## Safety
 
