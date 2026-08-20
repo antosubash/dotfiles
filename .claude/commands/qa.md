@@ -198,28 +198,35 @@ Mark each completed as you go.
 
 **→ TaskUpdate:** Mark "Phase 1: Reconnaissance" (or "Iteration {N}: Reconnaissance") as `in_progress`.
 
-Understand the page before testing. Do this yourself (not delegated) because the findings drive how you partition work for the parallel agents.
+Understand the page before testing. **Delegate reconnaissance to a Sonnet subagent** — a full `browser_snapshot` is the single largest payload in this pipeline and must never land in the main session's context (the session may be on a far more expensive model). The subagent writes the inventory to disk; only a short summary comes back.
 
-1. **Navigate** to the target URL via `browser_navigate`.
+Dispatch ONE agent via the Agent tool (`subagent_type="general-purpose"`, `model="sonnet"`), substituting the literal `$QA_DIR` path:
 
-2. **Full snapshot** via `browser_snapshot`. Read it carefully.
+```
+You are the reconnaissance agent for a QA cycle, using Playwright MCP browser tools.
 
-3. **Inventory the page:**
+TARGET URL: {url}
+
+1. Navigate to the target (browser_navigate).
+2. Take a full browser_snapshot and read it carefully.
+3. Write a page inventory to $QA_DIR/page-inventory.md covering:
    - Every interactive element (buttons, links, inputs, dropdowns, toggles, tabs)
    - Every form and its fields (types, required markers, placeholders, defaults)
    - Navigation elements and destinations
    - Loading states, empty states, conditional content
    - Data dependencies (auth, API data, user state)
+4. Baseline screenshot → $QA_DIR/screenshots/iteration-{N}/00-initial-state.png
+5. Check browser_console_messages (level: error) and browser_network_requests for
+   pre-existing failures; record them in the inventory file.
+6. Close the browser (browser_close).
 
-4. **Baseline screenshot** → `$QA_DIR/screenshots/iteration-{N}/00-initial-state.png`
+Return ONLY a summary of at most 10 lines: page title, counts of interactive
+elements/forms, pre-existing console or network errors, and anything that blocks
+testing (auth wall, blank page, server error). Do NOT return the snapshot or the
+inventory content.
+```
 
-5. **Check console** for pre-existing errors: `browser_console_messages` level `error`.
-
-6. **Check network** for failed requests: `browser_network_requests`.
-
-7. **Save the page inventory** to `$QA_DIR/page-inventory.md` — this file is passed to all test agents so they share the same understanding of the page.
-
-8. **Close the browser** via `browser_close` — each parallel agent will open its own session.
+Read the returned summary. If it reports a blocker (auth wall, blank page, server error), resolve that before fanning out test agents. Do NOT Read `$QA_DIR/page-inventory.md` into the main session — test agents read it from disk themselves (Phase 2).
 
 **→ TaskUpdate:** Mark the reconnaissance task as `completed`.
 
@@ -229,7 +236,7 @@ Understand the page before testing. Do this yourself (not delegated) because the
 
 **→ TaskUpdate:** Mark "Phase 2: Parallel test execution" (or "Iteration {N}: Parallel test execution") as `in_progress`.
 
-Fan out independent test categories as parallel agents. Each agent gets the page inventory, the target URL, and its specific testing mandate. Each agent returns a structured JSON findings list.
+Fan out independent test categories as parallel agents. Each agent gets the page-inventory path, the target URL, and its specific testing mandate. Each agent returns a structured JSON findings list.
 
 **Determine which agents to spawn based on depth and flags:**
 
@@ -256,7 +263,8 @@ ITERATION: {N}
 SCREENSHOT DIR: $QA_DIR/screenshots/iteration-{N}/
 
 PAGE INVENTORY:
-{contents of $QA_DIR/page-inventory.md}
+Read $QA_DIR/page-inventory.md FIRST — it is the shared map of the page all test
+agents work from. Do not skip it.
 
 TESTING MANDATE:
 {category-specific instructions — see below}
@@ -442,10 +450,27 @@ Produce the report from merged findings. Save to `$QA_DIR/reports/qa-report-iter
 
 The markdown report under `$QA_DIR/reports/` is working data — the human-facing report is a **Claude Artifact**. Publish it every iteration:
 
-1. Build `$QA_DIR/reports/report.html` — one self-contained HTML page covering ALL iterations so far: the summary table, the per-iteration delta (FIXED / REGRESSION / STILL OPEN), and every open bug with steps, expected/actual, and console errors. Embed the baseline screenshot and each failure's screenshot as `data:` URIs (no external references — a strict CSP blocks them). Keep the page under 16MB: if screenshots push it over, embed only failure screenshots, then only P0/P1 ones, and reference the rest by filename.
+1. Build `$QA_DIR/reports/report.html` — one self-contained HTML page covering ALL iterations so far: the summary table, the per-iteration delta (FIXED / REGRESSION / STILL OPEN), and every open bug with steps, expected/actual, and console errors. Embed the baseline screenshot and each failure's screenshot as `data:` URIs (no external references — a strict CSP blocks them). Keep the page under 16MB: if screenshots push it over, embed only failure screenshots, then only P0/P1 ones, and reference the rest by filename. **Assemble the HTML with a small python/bash script that base64-encodes the image files and splices them in (e.g. write the page with `{{IMG:filename}}` placeholders, then substitute) — NEVER write or edit base64 image data through the Write/Edit tools. Streaming megabytes of encoded pixels through the model is the exact failure this rule prevents.**
 2. Load the `artifact-design` skill first if it's available, then publish: `Artifact(file_path="<literal $QA_DIR>/reports/report.html", favicon="🧪", description="QA report for <feature>")`. Give the page a stable `<title>` — the feature name, not a generic label.
 3. **Re-publish the SAME file path on every iteration** — same path redeploys to the same URL; a new path would create a second artifact.
 4. Save the artifact URL to `$QA_DIR/artifact-url.txt` and print it. Orchestrators (`/ship`, `/vf`) read that file to link the report in the PR body.
+
+### Write the machine-readable result (every iteration)
+
+Orchestrators consume a small JSON file instead of parsing the markdown report. Rewrite `$QA_DIR/result.json` at the end of EVERY Phase 3 (Phase 9 finalizes it):
+
+```json
+{
+  "status": "in-progress | clean | issues-remaining",
+  "iterations": 2,
+  "bugs_found_total": 5,
+  "bugs_fixed_total": 4,
+  "remaining": [ { "id": "BUG-003", "severity": "P1", "summary": "one line" } ],
+  "artifact_url": "https://claude.ai/..."
+}
+```
+
+`bugs_found_total` counts unique P0+P1+P2 bugs across ALL iterations (P3 observations excluded — they are never bugs anywhere in this file). `remaining` lists bugs still open right now. `status` is `in-progress` mid-cycle, and `clean` or `issues-remaining` once the cycle ends. Keep it accurate — `/ship`'s convergence check and `/vf`'s PR body trust this file over any prose.
 
 **DECISION POINT — YOU MUST FOLLOW THIS EXACTLY:**
 
@@ -635,27 +660,17 @@ TaskCreate: "Iteration {NEXT}: Fix agents"      (will be used if bugs remain)
 TaskCreate: "Iteration {NEXT}: Code review"      (will be used if bugs remain)
 ```
 
-**Step 3: Restart the dev server.**
-The fixes you just applied require a fresh server restart:
-```bash
-# Kill existing server
-kill -9 $(cat $QA_DIR/server.pid 2>/dev/null) 2>/dev/null || true
-lsof -ti tcp:<port> | xargs -r kill -9
+**Step 3: Get the fixes running — hot reload first, restart only when needed.**
 
-# Clear build caches (stack dependent)
-# JS/TS: rm -rf .next dist node_modules/.cache
-# Python: find . -name '__pycache__' -exec rm -rf {} + 2>/dev/null
-# .NET: dotnet clean --nologo
+Dev servers hot-reload code edits. A kill → cache-clear → rebuild → restart cycle costs minutes per iteration and is almost never needed. Restart ONLY if at least one of these holds:
 
-# Rebuild
-# JS/TS: <pm> run build (if applicable)
-# .NET: dotnet build --nologo
+1. **The server died** — health URL no longer responds, or the PID from `$QA_DIR/server.pid` is gone.
+2. **Fixes touched deps or config** — `git diff --name-only "$(cat "$QA_DIR/pre-fix-sha")" HEAD` matches `package.json`, `*lock*`, `*.config.*`, `.env*`, `*.csproj`, `pyproject.toml`, or `Dockerfile`.
+3. **The stack has no hot reload** — the server was started with plain `dotnet run`, a compiled binary, or anything without a watcher (`dotnet watch`, `next dev`, `vite`, `uvicorn --reload` all DO hot-reload).
 
-# Restart dev server
-nohup <start-cmd> > $QA_DIR/server.log 2>&1 &
-echo $! > $QA_DIR/server.pid
-```
-Poll health URL every 2s for up to 90 seconds. On failure, STOP.
+- **Default (none hold):** leave the server running. Confirm it's still healthy with one `curl` of the health URL; the re-test in Phases 1–2 verifies the fixes behaviorally.
+- **Restart needed:** kill it (`kill -9 $(cat $QA_DIR/server.pid 2>/dev/null) 2>/dev/null || true; lsof -ti tcp:<port> | xargs -r kill -9`), restart via `nohup <start-cmd> > $QA_DIR/server.log 2>&1 &` with the PID saved to `$QA_DIR/server.pid`, then poll the health URL every 2s for up to 90 seconds. On failure, STOP. Do NOT clear caches or rebuild.
+- **Stale-behavior fallback ONLY:** if a re-test shows old behavior persisting for a bug whose fix is verifiably in the code (commit present, file content correct), THEN clear build caches (JS/TS: `rm -rf .next dist node_modules/.cache` · Python: remove `__pycache__` dirs · .NET: `dotnet clean --nologo`), rebuild, restart, and re-test once more. This is the exception path — never the loop default.
 
 **Step 4: GO BACK TO PHASE 1 NOW.**
 Execute Phase 1 (Reconnaissance) again. Then Phase 2 (parallel test agents). Then Phase 3 (report).
@@ -676,6 +691,8 @@ On re-test iterations, the Phase 3 report MUST include a delta section:
 
 ## Phase 9 — Final Cleanup & Summary
 
+(Phases 7–8 are intentionally unused — historical numbering. Phase 9 is the terminal phase; don't go hunting for a 7 or 8.)
+
 **→ TaskUpdate:** Mark "Phase 9: Final summary & cleanup" as `in_progress`.
 
 1. **Stop the dev server** if you started it:
@@ -684,7 +701,8 @@ On re-test iterations, the Phase 3 report MUST include a delta section:
    lsof -ti tcp:<port> | xargs -r kill -9
    ```
 2. **Close the browser** via `browser_close`.
-3. **Produce the final summary** — print this to the console:
+3. **Finalize `$QA_DIR/result.json`** — set `status` to `clean` or `issues-remaining`, with final counts, `remaining` list, and `artifact_url`. Orchestrators read this file, so it must reflect the true end state.
+4. **Produce the final summary** — print this to the console:
 
 ```
 ═══════════════════════════════════════════════════
@@ -712,12 +730,12 @@ On re-test iterations, the Phase 3 report MUST include a delta section:
 ═══════════════════════════════════════════════════
 ```
 
-4. **Task list audit (MANDATORY before finishing):**
+5. **Task list audit (MANDATORY before finishing):**
    - Call `TaskList` to see all tasks.
    - Mark any remaining `in_progress` or `pending` tasks as `completed` (if done) or update their description with the reason they were skipped.
    - Every task must be in a terminal state (`completed` or `deleted`) before you finish.
 
-5. **If issues remain after max iterations**, list them clearly and STOP:
+6. **If issues remain after max iterations**, list them clearly and STOP:
    ```
    REMAINING ISSUES (not auto-fixable):
    - [BUG-003] P1: Form accepts invalid email — may need backend validation
@@ -725,9 +743,9 @@ On re-test iterations, the Phase 3 report MUST include a delta section:
    ```
    Do NOT invoke /vf when issues remain.
 
-6. **If `--no-vf` is set:** do NOT invoke `/vf`. An orchestrator (e.g. `/ship`) owns the verification + PR step and will run `/vf` itself. Echo `Phase 9: /vf skipped (--no-vf — orchestrator owns PR)` and report the final QA result (ALL CLEAN or remaining issues) plus the QA report artifact URL — the orchestrator links it in the PR. Then fall through to the closing `TaskUpdate` at the end of Phase 9 (do not skip the task audit) — skip only step 7.
+7. **If `--no-vf` is set:** do NOT invoke `/vf`. An orchestrator (e.g. `/ship`) owns the verification + PR step and will run `/vf` itself. Echo `Phase 9: /vf skipped (--no-vf — orchestrator owns PR)` and report the final QA result (ALL CLEAN or remaining issues) plus the QA report artifact URL — the orchestrator links it in the PR. Then fall through to the closing `TaskUpdate` at the end of Phase 9 (do not skip the task audit) — skip only step 8.
 
-7. **If ALL CLEAN (0 failures across all categories) and neither `--no-fix` nor `--no-vf` is set:**
+8. **If ALL CLEAN (0 failures across all categories) and neither `--no-fix` nor `--no-vf` is set:**
 
    **YOU MUST invoke /vf using the Skill tool.** This is not optional. Do it like this:
 

@@ -248,7 +248,7 @@ Skip if `--skip-browser` is set. This stage has **three sub-steps**: smoke, spec
    ```
 2. Copy the final QA screenshots into `$VF_DIR/`: `cp "$QA_DIR/screenshots/iteration-$(cat "$QA_DIR/current-iteration")"/*.png "$VF_DIR/" 2>/dev/null || true`
 3. If that iteration's `00-initial-state.png` exists, copy it to `$VF_DIR/smoke.png`
-4. Read the QA report artifact URL from `$QA_DIR/artifact-url.txt` (if present) — Stage 5 links it in the PR body.
+4. Read `$QA_DIR/result.json` — iterations, bugs found/fixed, `remaining`, and `artifact_url` — Stage 5 uses these numbers in the PR body and links the artifact. Fall back to `artifact-url.txt` + the markdown reports only if `result.json` is missing (older `/qa`).
 5. Echo `Stage 2a: skipped (QA-verified — report: <artifact URL>)`
 6. Proceed directly to Stage 2b.
 
@@ -389,7 +389,7 @@ This is required before Stage 4 — running builds while the dev server or worke
 
 **→ TaskUpdate:** Mark "Stage 4: Local CI" as `in_progress`.
 
-Run the detected commands **in order**. Stop on first failure.
+Run lint, typecheck, and unit tests as **parallel Bash calls in a single message** — they are independent and none needs the dev server. When all three pass, run the build. On failure, report every failing step from the parallel batch (not just the first), then stop.
 
 | Step | JS/TS | Python | .NET |
 |------|-------|--------|------|
@@ -402,7 +402,7 @@ Run the detected commands **in order**. Stop on first failure.
 **Full e2e suite — only if an e2e setup was detected in auto-detection step 6 AND `--no-e2e` was not passed.** Otherwise skip silently and mark this row `— (no e2e)` in the results table. Never create an e2e setup as a side effect of /vf.
 
 When e2e IS configured: it needs the app running again. Unit tests don't need the dev server, but the e2e suite does. Order:
-1. Run lint + typecheck + unit tests + build (parallel where safe). Stop on first failure.
+1. Run lint + typecheck + unit tests in parallel (single message), then build. Stop on any failure.
 2. Restart the app (and worker if Stage 1b ran). Builds may have cleared `dist/`, killed file watchers, etc.
 3. Wait for health, then run the **full e2e suite** (not just the new spec — that ran in Stage 2c).
 4. Stop the app + worker again.
@@ -446,9 +446,9 @@ Skip if `--no-pr` is set.
    - Verification report: <verification artifact URL>
 
    ## QA Report
-   {IF --qa-passed: include this section, else omit}
-   - Full QA cycle completed ({N} iterations)
-   - {total_passed} tests passed, {total_failed} bugs found and fixed
+   {IF --qa-passed: include this section — take the numbers from $QA_DIR/result.json, else omit}
+   - Full QA cycle completed ({iterations} iterations)
+   - {bugs_found_total} bugs found, {bugs_fixed_total} fixed
    - Categories tested: Happy Path, Form Validation, Error States, Edge Cases{, Accessibility, Responsive, Performance if applicable}
    - Full QA report: <QA report artifact URL>
 
