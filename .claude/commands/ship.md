@@ -1,6 +1,6 @@
 ---
 description: Take a feature branch all the way to a merge-ready PR. Runs a full-convergence pipeline — loops /code-review until it reports zero findings, runs the full /qa browser cycle (which fixes bugs), then re-reviews whatever changed, repeating until a complete pass finds no review issues AND no QA bugs, and finally runs /vf to open exactly one PR. Use this whenever you want to "ship", "finalize", "wrap up", "finish", or "get this branch ready for review/merge" — i.e. do the full review + QA + verify + PR dance in one shot, not just a single review or a single QA pass.
-argument-hint: [feature description] [--port N] [--route PATH] [--url URL] [--start CMD] [--base BRANCH] [--depth shallow|normal|deep] [--review-effort low|medium|high|xhigh|max] [--max-outer-iterations N] [--max-review-iterations N] [--no-review] [--no-qa] [--no-pr] [--skip-browser] [--a11y] [--responsive] [--perf]
+argument-hint: [feature description] [--port N] [--route PATH] [--url URL] [--start CMD] [--base BRANCH] [--depth shallow|normal|deep] [--review-effort low|medium|high|max] [--max-outer-iterations N] [--max-review-iterations N] [--no-review] [--no-qa] [--no-pr] [--skip-browser] [--a11y] [--responsive] [--perf]
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Agent, Skill, TaskCreate, TaskUpdate, TaskList, mcp__plugin_playwright_playwright__browser_navigate, mcp__plugin_playwright_playwright__browser_snapshot, mcp__plugin_playwright_playwright__browser_click, mcp__plugin_playwright_playwright__browser_type, mcp__plugin_playwright_playwright__browser_hover, mcp__plugin_playwright_playwright__browser_take_screenshot, mcp__plugin_playwright_playwright__browser_fill_form, mcp__plugin_playwright_playwright__browser_select_option, mcp__plugin_playwright_playwright__browser_press_key, mcp__plugin_playwright_playwright__browser_wait_for, mcp__plugin_playwright_playwright__browser_console_messages, mcp__plugin_playwright_playwright__browser_network_requests, mcp__plugin_playwright_playwright__browser_network_request, mcp__plugin_playwright_playwright__browser_evaluate, mcp__plugin_playwright_playwright__browser_tabs, mcp__plugin_playwright_playwright__browser_navigate_back, mcp__plugin_playwright_playwright__browser_close, mcp__plugin_playwright_playwright__browser_resize, mcp__plugin_playwright_playwright__browser_file_upload, mcp__plugin_playwright_playwright__browser_handle_dialog
 ---
 
@@ -39,7 +39,7 @@ Parse into:
 - `--url URL` — passed to `/qa` only. **`/vf` has no `--url` flag** — if the user gave only `--url`, derive `--port` and `--route` from that URL and pass those to `/vf` in Stage C.
 - `--base BRANCH` — base branch for rebase + PR. Passed to `/vf` (defaults: `main`, else `master`).
 - `--depth shallow|normal|deep` — QA thoroughness (default `normal`). Passed to `/qa`.
-- `--review-effort low|medium|high|xhigh|max` — effort for `/code-review` (default `high`). Higher = broader coverage, more findings.
+- `--review-effort low|medium|high|max` — effort for `/code-review` (default `high`). Higher = broader coverage, more findings.
 - `--max-outer-iterations N` — max review↔QA convergence rounds (default **3**). Each round runs a full `/qa`, so this bounds cost.
 - `--max-review-iterations N` — max passes inside a single Stage A code-review loop (default **5**).
 - `--no-review` — skip Stage A (the standalone code-review loop). QA still runs its own internal review gate.
@@ -160,7 +160,7 @@ loop:
     # Pass 1 already covered this span at full effort; later passes confirm fresh fixes
     # and catch regressions — medium is enough for that BY DEFAULT. But an explicit
     # --review-effort is a user override and must hold for every pass, not just the first —
-    # silently downgrading an explicit `max`/`xhigh` (or upgrading an explicit `low`) on
+    # silently downgrading an explicit `max` (or upgrading an explicit `low`) on
     # later passes would ignore what the user asked for.
     Dispatch the review to a Sonnet subagent (NEVER invoke code-review directly in the main session):
       Agent(subagent_type="general-purpose", model="sonnet", prompt="
@@ -247,7 +247,9 @@ ELSE IF outer >= --max-outer-iterations:
 ELSE:
     → QA fixed bugs this round (qa_found_bugs == true), so code changed after the last clean
       review and must be re-reviewed (and the review's own fixes re-tested). Increment outer,
-      create "Round {outer} · Stage A/B" tasks, and go back to Stage A.
+      CLEAR `unresolved` in state.json to `[]` (this round's findings, if any, will re-populate
+      it fresh — see "Pipeline State" above), create "Round {outer} · Stage A/B" tasks, and go
+      back to Stage A.
 ```
 
 Write the decision to `$SHIP_DIR/state.json` (`outer`, `status`, this round's outcomes) BEFORE moving on — the next stage reads loop state from the file, not from conversation memory.
