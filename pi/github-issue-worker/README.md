@@ -40,6 +40,11 @@ profiles may run concurrently under the supervisor while retaining separate stat
 The GitHub identity needs repository contents, issues, and pull-request write access. If the worker uses
 your personal `gh` login, its branches, comments, and PRs appear as you.
 
+Detailed guides:
+
+- [Installation and operations](docs/installation.md)
+- [Troubleshooting](docs/troubleshooting.md)
+
 ## Install
 
 From the dotfiles checkout, install the CLI and user-service template:
@@ -122,8 +127,8 @@ journalctl --user -u pi-issue-worker@widgets.service -f
 The supplied hardened units permit controller writes under `~/.local/share/pi-issue-worker`,
 `~/.cache`, and `~/.pi/agent` (the Pi SDK locks and may refresh its auth state). Sandboxed agent commands
 still cannot read the Pi agent directory. If a profile sets a different data directory, add that directory
-to `ReadWritePaths` in a systemd override. Pi bash commands
-also run inside Anthropic Sandbox Runtime: reads are denied across the home directory except the issue
+to `ReadWritePaths` in a systemd override. Pi bash commands also run inside Anthropic Sandbox Runtime:
+reads are denied across the home directory except the issue
 worktree and required Git metadata, writes are limited to the worktree and temporary build space, and
 network access uses an allowlist. Add project-specific browser/build hosts with
 `PI_WORKER_SANDBOX_ALLOWED_DOMAINS`; do not put credentials or broad wildcards there.
@@ -249,6 +254,22 @@ branch name.
   Never approve hostile issues.
 - There is no auto-merge, force-push, automatic rebase, or arbitrary attachment upload.
 - Review replies are posted to the PR conversation rather than individual inline threads.
+
+## Troubleshooting
+
+Start with the [troubleshooting guide](docs/troubleshooting.md). It covers Linux sandbox prerequisites,
+AppArmor user namespaces, systemd `PATH` and write permissions, authentication, profile collisions,
+restart loops, queue diagnostics, persistent sessions, and safe updates.
+
+Quick service diagnostics:
+
+```bash
+systemctl --user status pi-issue-worker-supervisor.service --no-pager
+journalctl --user -u pi-issue-worker-supervisor.service --since '-30 minutes' --no-pager
+```
+
+Do not print profile contents when collecting diagnostics because a mode-0600 profile may contain
+`GH_TOKEN`.
 
 ## Development
 

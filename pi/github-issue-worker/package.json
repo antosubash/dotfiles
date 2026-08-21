@@ -15,6 +15,7 @@
     "dist/src",
     "README.md",
     ".env.example",
+    "docs",
     "systemd"
   ],
   "scripts": {

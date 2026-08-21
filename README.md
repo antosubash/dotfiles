@@ -200,8 +200,9 @@ optional supervisor manages all configured repository children:
 ./scripts/setup-pi-issue-worker.sh
 ```
 
-The installer does not enable a repository or mutate GitHub. See
-[`pi/github-issue-worker/README.md`](pi/github-issue-worker/README.md) for profile and systemd setup.
+The installer does not enable a repository or mutate GitHub. See the
+[worker overview](pi/github-issue-worker/README.md), [installation guide](pi/github-issue-worker/docs/installation.md),
+and [troubleshooting guide](pi/github-issue-worker/docs/troubleshooting.md).
 
 ### 4. Shell Theme Setup
 

@@ -69,8 +69,10 @@ Install the CLI and unit template without starting a profile:
 ~/dotfiles/scripts/setup-pi-issue-worker.sh
 ```
 
-See [`github-issue-worker/README.md`](github-issue-worker/README.md) for security boundaries, `/pi`
-commands, visual evidence, configuration, and service activation.
+See [`github-issue-worker/README.md`](github-issue-worker/README.md) for the overview,
+[`docs/installation.md`](github-issue-worker/docs/installation.md) for production setup, and
+[`docs/troubleshooting.md`](github-issue-worker/docs/troubleshooting.md) for sandbox, systemd,
+authentication, queue, and recovery diagnostics.
 
 ## Updating the vendored subagent
 
