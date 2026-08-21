@@ -8,7 +8,8 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "pi-issue-worker": "dist/src/index.js"
+    "pi-issue-worker": "dist/src/index.js",
+    "pi-issue-worker-supervisor": "dist/src/supervisor.js"
   },
   "files": [
     "dist/src",

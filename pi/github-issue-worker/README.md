@@ -1,7 +1,8 @@
 # Headless Pi GitHub issue worker
 
-A reusable, single-repository worker that turns explicitly approved GitHub issues into isolated Pi
-coding sessions and draft pull requests. Run multiple systemd instances to serve multiple repositories.
+A reusable GitHub issue worker that turns explicitly approved issues into isolated Pi coding sessions
+and draft pull requests. Each worker child remains bound to one repository; the optional supervisor runs
+multiple profile-isolated children from one installation.
 
 The worker deliberately does **not** auto-merge. GitHub labels, comments, pushes, commits, and PR
 creation belong to the controller. Pi edits and verifies code inside an issue-specific linked worktree.
@@ -21,9 +22,10 @@ creation belong to the controller. Pi edits and verifies code inside an issue-sp
    conversation comments require an explicit `/pi` command.
 6. Every event is persisted in SQLite, making comment handling idempotent across restarts.
 
-One process handles work sequentially. This is intentional: repositories with integration databases,
-browser sessions, or expensive builds should not be fanned out accidentally. A per-profile `worker.lock`
-is acquired before SQLite opens; a concurrent instance exits with the owning PID.
+Each repository child handles its work sequentially. This is intentional: repositories with integration
+databases, browser sessions, or expensive builds should not be fanned out accidentally. A per-profile
+`worker.lock` is acquired before SQLite opens; a concurrent instance exits with the owning PID. Different
+profiles may run concurrently under the supervisor while retaining separate state and process boundaries.
 
 ## Requirements
 
@@ -107,7 +109,7 @@ On first start, the worker creates these configurable-prefix labels:
 - `pi-blocked` — human help required
 - `pi-visual` — request local browser evidence
 
-## Run as a user service
+## Run one profile as a user service
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -124,9 +126,46 @@ worktree and required Git metadata, writes are limited to the worktree and tempo
 network access uses an allowlist. Add project-specific browser/build hosts with
 `PI_WORKER_SANDBOX_ALLOWED_DOMAINS`; do not put credentials or broad wildcards there.
 
-To serve another repository, create `~/.config/pi-issue-worker/blog.env` with its repository and base
-branch, then start `pi-issue-worker@blog.service`. State, sessions, clones, and worktrees are separated
-by each profile's `PI_WORKER_DATA_DIR`.
+## Run multiple repositories with the supervisor
+
+Create one mode-0600 environment file per repository in `~/.config/pi-issue-worker`; the directory
+must not be group/world writable. The supervisor parses these files as dotenv data without evaluating
+shell commands, validates every profile before starting, and rejects duplicate repositories or shared
+data directories. Parent-process GitHub token
+environment variables are not shared; put a repository-scoped `GH_TOKEN` in each profile or use the
+authenticated `gh` keyring identity.
+
+```bash
+cp .env.example ~/.config/pi-issue-worker/blog.env
+chmod 600 ~/.config/pi-issue-worker/*.env
+pi-issue-worker-supervisor --check
+pi-issue-worker-supervisor --once
+pi-issue-worker-supervisor
+```
+
+By default all `*.env` files are loaded in name order. Select a subset with repeated flags:
+
+```bash
+pi-issue-worker-supervisor --profile widgets --profile blog
+```
+
+In continuous mode each profile runs as an independent child process. An unexpected child exit restarts
+only that profile after 15 seconds; override the delay with
+`PI_WORKER_SUPERVISOR_RESTART_SECONDS`. `SIGINT` and `SIGTERM` are forwarded to all children.
+Repository, data-directory, SQLite, clone, worktree, session, log, and profile-lock isolation remain
+unchanged.
+
+On Linux, run the hardened supervisor service instead of enabling every template instance:
+
+```bash
+systemctl --user enable --now pi-issue-worker-supervisor.service
+journalctl --user -u pi-issue-worker-supervisor.service -f
+```
+
+Do not run the supervisor and `pi-issue-worker@<profile>.service` for the same profile at the same time.
+The profile lock prevents concurrent state access, but the losing process will fail or repeatedly restart.
+If a profile uses a data directory outside `~/.local/share/pi-issue-worker`, add it to `ReadWritePaths`
+in a systemd override.
 
 ## Review commands
 

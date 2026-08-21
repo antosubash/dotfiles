@@ -59,9 +59,9 @@ Project-local Pi resources retain Pi's normal trust prompt (`defaultProjectTrust
 
 `github-issue-worker/` is a repository-neutral Node.js service built on the Pi SDK. It picks up issues
 only after a maintainer applies the configured ready label, works in a fresh isolated worktree, opens a
-draft PR, and continues trusted review feedback in the same persistent Pi session. One systemd instance
-and environment profile serves one repository, so a single installation can safely serve multiple
-repositories with separate state.
+draft PR, and continues trusted review feedback in the same persistent Pi session. Each child and
+environment profile serves one repository. The optional `pi-issue-worker-supervisor` runs multiple
+profile-isolated children while preserving separate processes, state, clones, worktrees, and sessions.
 
 Install the CLI and unit template without starting a profile:
 

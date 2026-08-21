@@ -192,8 +192,9 @@ Write-capable Pi workflows create or reuse linked Git worktrees by default and p
 Useful aliases: `pic` continues the latest Pi session and `pir` opens the session picker.
 
 For unattended, label-gated issue implementation across one or more GitHub repositories, install the
-headless worker separately. Each repository gets its own environment profile, SQLite state, control
-clone, worktrees, persistent Pi sessions, and optional local `.qa/` browser evidence:
+headless worker separately. Each repository gets its own environment profile, child process, SQLite
+state, control clone, worktrees, persistent Pi sessions, and optional local `.qa/` browser evidence. An
+optional supervisor manages all configured repository children:
 
 ```bash
 ./scripts/setup-pi-issue-worker.sh
