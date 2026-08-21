@@ -9,13 +9,13 @@ ExecStart=%h/.local/bin/pi-issue-worker-supervisor --config-dir %h/.config/pi-is
 Restart=on-failure
 RestartSec=15
 TimeoutStopSec=90
-KillMode=mixed
+KillMode=control-group
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.local/share/pi-issue-worker %h/.cache
+ReadWritePaths=%h/.local/share/pi-issue-worker %h/.cache %h/.pi/agent
 
 [Install]
 WantedBy=default.target

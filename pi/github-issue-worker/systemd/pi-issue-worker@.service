@@ -15,7 +15,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.local/share/pi-issue-worker %h/.cache
+ReadWritePaths=%h/.local/share/pi-issue-worker %h/.cache %h/.pi/agent
 
 [Install]
 WantedBy=default.target
