@@ -1,15 +1,15 @@
 [Unit]
-Description=Headless Pi GitHub issue worker (%i)
+Description=Headless Pi GitHub issue worker supervisor
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=%h/.config/pi-issue-worker/%i.env
-ExecStart=%h/.local/bin/pi-issue-worker
+ExecStart=%h/.local/bin/pi-issue-worker-supervisor --config-dir %h/.config/pi-issue-worker
 Restart=on-failure
 RestartSec=15
 TimeoutStopSec=90
+KillMode=control-group
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

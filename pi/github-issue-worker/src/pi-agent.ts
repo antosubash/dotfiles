@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { access, appendFile, mkdir } from "node:fs/promises";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -16,6 +17,18 @@ import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox
 import type { WorkerConfig } from "./config.js";
 import { isProtectedChange } from "./repository.js";
 import type { AgentRunResult } from "./types.js";
+
+function packageRootFromModule(moduleUrl: string): string {
+  let current = dirname(fileURLToPath(moduleUrl));
+  while (true) {
+    if (existsSync(join(current, "package.json"))) return current;
+    const parent = dirname(current);
+    if (parent === current) throw new Error(`Unable to locate worker package root from ${moduleUrl}`);
+    current = parent;
+  }
+}
+
+const WORKER_RUNTIME_ROOT = packageRootFromModule(import.meta.url);
 
 const AGENT_POLICY = `
 You are running unattended inside an issue-specific Git worktree.
@@ -116,7 +129,9 @@ export function sandboxConfig(worktree: string, config: WorkerConfig): SandboxRu
     .split(":")
     .filter((path) => path.startsWith(`${home}/`))
     .map((path) => resolve(path));
-  const readPaths = [...new Set([worktree, ...gitMetadataPaths(worktree), ...pathReadPaths])];
+  const readPaths = [
+    ...new Set([worktree, WORKER_RUNTIME_ROOT, ...gitMetadataPaths(worktree), ...pathReadPaths]),
+  ];
   return {
     network: {
       allowedDomains: [...config.sandboxAllowedDomains],
@@ -145,7 +160,107 @@ export function sandboxEnvironment(environment: NodeJS.ProcessEnv = process.env)
   );
 }
 
-function createSandboxedBashOperations(): BashOperations {
+export const ACTIVE_COMMAND_PROCESS_GROUP_FILE = "active-command-group.pid";
+
+export function activeCommandProcessGroupPath(dataDir: string): string {
+  return resolve(dataDir, ACTIVE_COMMAND_PROCESS_GROUP_FILE);
+}
+
+const SUPPORTS_POSIX_PROCESS_GROUPS = process.platform !== "win32";
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function isMissingProcessGroupError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ESRCH";
+}
+
+function readTrackedProcessGroupPid(path: string): number | null {
+  try {
+    const pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  } catch (error) {
+    if (isMissingFileError(error)) return null;
+    throw error;
+  }
+}
+
+function clearTrackedProcessGroupFile(path: string, pid: number): void {
+  try {
+    if (readTrackedProcessGroupPid(path) === pid) unlinkSync(path);
+  } catch (error) {
+    if (!isMissingFileError(error)) throw error;
+  }
+}
+
+function isProcessGroupAlive(pid: number): boolean {
+  const killCheck = SUPPORTS_POSIX_PROCESS_GROUPS ? () => process.kill(-pid, 0) : () => process.kill(pid, 0);
+  try {
+    killCheck();
+    return true;
+  } catch (error) {
+    if (isMissingProcessGroupError(error)) return false;
+    throw error;
+  }
+}
+
+async function waitForProcessGroupExit(pid: number, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    if (!isProcessGroupAlive(pid)) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`${SUPPORTS_POSIX_PROCESS_GROUPS ? "Process group" : "Process"} ${pid} did not stop within ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+async function terminateProcessGroup(pid: number): Promise<void> {
+  const killTarget = SUPPORTS_POSIX_PROCESS_GROUPS ? -pid : pid;
+  try {
+    process.kill(killTarget, "SIGTERM");
+  } catch (error) {
+    if (!isMissingProcessGroupError(error)) throw error;
+    return;
+  }
+  try {
+    await waitForProcessGroupExit(pid, 5_000);
+    return;
+  } catch {
+    // Escalate below.
+  }
+  try {
+    process.kill(killTarget, "SIGKILL");
+  } catch (error) {
+    if (!isMissingProcessGroupError(error)) throw error;
+    return;
+  }
+  await waitForProcessGroupExit(pid, 5_000);
+}
+
+export async function stopTrackedProcessGroup(processGroupFile: string): Promise<void> {
+  const pid = readTrackedProcessGroupPid(processGroupFile);
+  if (pid === null) {
+    try {
+      unlinkSync(processGroupFile);
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error;
+    }
+    return;
+  }
+  await terminateProcessGroup(pid);
+  try {
+    unlinkSync(processGroupFile);
+  } catch (error) {
+    if (!isMissingFileError(error)) throw error;
+  }
+}
+
+export function createSandboxedBashOperations(
+  processGroupFile: string,
+  shutdownSignal?: AbortSignal,
+): BashOperations {
   return {
     async exec(command, cwd, { onData, signal, timeout }) {
       const wrappedCommand = await SandboxManager.wrapWithSandbox(command);
@@ -156,43 +271,76 @@ function createSandboxedBashOperations(): BashOperations {
           env: sandboxEnvironment(),
           stdio: ["ignore", "pipe", "pipe"],
         });
+        if (!child.pid) {
+          reject(new Error("Failed to start sandboxed bash process"));
+          return;
+        }
+        try {
+          writeFileSync(processGroupFile, `${child.pid}\n`, "utf8");
+        } catch (error) {
+          child.kill("SIGKILL");
+          reject(error);
+          return;
+        }
         let timedOut = false;
         let timeoutHandle: NodeJS.Timeout | undefined;
+        let stopPromise: Promise<void> | null = null;
+        const stopCurrentProcessGroup = () => {
+          stopPromise ??= stopTrackedProcessGroup(processGroupFile);
+          return stopPromise;
+        };
+        const abort = () => {
+          void stopCurrentProcessGroup();
+        };
+        const cleanupListeners = () => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          signal?.removeEventListener("abort", abort);
+          shutdownSignal?.removeEventListener("abort", abort);
+        };
         if (timeout !== undefined && timeout > 0) {
           timeoutHandle = setTimeout(() => {
             timedOut = true;
-            if (child.pid) {
-              try {
-                process.kill(-child.pid, "SIGKILL");
-              } catch {
-                child.kill("SIGKILL");
-              }
-            }
+            void stopCurrentProcessGroup();
           }, timeout * 1000);
+          timeoutHandle.unref();
         }
         child.stdout?.on("data", onData);
         child.stderr?.on("data", onData);
-        const abort = () => {
-          if (child.pid) {
-            try {
-              process.kill(-child.pid, "SIGKILL");
-            } catch {
-              child.kill("SIGKILL");
-            }
-          }
-        };
         signal?.addEventListener("abort", abort, { once: true });
+        shutdownSignal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted || shutdownSignal?.aborted) {
+          void stopCurrentProcessGroup();
+        }
         child.on("error", (error) => {
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          signal?.removeEventListener("abort", abort);
-          reject(error);
+          cleanupListeners();
+          void (async () => {
+            if (child.pid) await stopCurrentProcessGroup();
+            reject(error);
+          })().catch(reject);
         });
-        child.on("close", (code) => {
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          signal?.removeEventListener("abort", abort);
-          if (signal?.aborted) reject(new Error("aborted"));
-          else if (timedOut) reject(new Error(`timeout:${timeout}`));
-          else resolveResult({ exitCode: code });
+        child.on("close", (code, closeSignal) => {
+          void (async () => {
+            cleanupListeners();
+            const timedOutOrAborted = signal?.aborted || shutdownSignal?.aborted || timedOut;
+            if (timedOutOrAborted) {
+              await stopCurrentProcessGroup();
+              reject(new Error(signal?.aborted || shutdownSignal?.aborted ? "aborted" : `timeout:${timeout}`));
+              return;
+            }
+            if (closeSignal) {
+              await stopCurrentProcessGroup();
+              reject(new Error(`command terminated by ${closeSignal}`));
+              return;
+            }
+            const pid = child.pid;
+            if (pid !== undefined && isProcessGroupAlive(pid)) {
+              await stopCurrentProcessGroup();
+              reject(new Error("sandboxed bash left background processes running"));
+              return;
+            }
+            if (pid !== undefined) clearTrackedProcessGroupFile(processGroupFile, pid);
+            resolveResult({ exitCode: code });
+          })().catch(reject);
         });
       });
     },
@@ -234,102 +382,117 @@ export class PiAgentRunner {
   private async runWithScrubbedGithubEnvironment(options: AgentRunOptions): Promise<AgentRunResult> {
     await mkdir(options.sessionDir, { recursive: true });
     await mkdir(dirname(options.logFile), { recursive: true });
+    const processGroupFile = activeCommandProcessGroupPath(this.config.dataDir);
+    const shutdownController = new AbortController();
+    const onInterrupt = () => shutdownController.abort();
+    process.on("SIGINT", onInterrupt);
+    process.on("SIGTERM", onInterrupt);
     let sandboxInitialized = true;
     try {
       await SandboxManager.initialize(sandboxConfig(options.worktree, this.config));
-    const settingsManager = SettingsManager.create(options.worktree, this.config.agentDir);
-    const loader = new DefaultResourceLoader({
-      cwd: options.worktree,
-      agentDir: this.config.agentDir,
-      settingsManager,
-      appendSystemPrompt: [AGENT_POLICY],
-      // Executable user/project extensions run in the controller process, outside the bash sandbox.
-      // Disable discovery and register only the worker-owned inline policy extension below.
-      noExtensions: true,
-      extensionFactories: [
-        {
-          name: "headless-worker-policy",
-          factory: (pi) => {
-            const sandboxedBash = createBashTool(options.worktree, {
-              operations: createSandboxedBashOperations(),
-            });
-            pi.registerTool({ ...sandboxedBash, label: "bash (OS sandboxed)" });
-            pi.on("user_bash", () => ({ operations: createSandboxedBashOperations() }));
-            pi.on("tool_call", (event) => {
-              const input = event.input as { command?: unknown; path?: unknown };
-              if (event.toolName === "bash" && typeof input.command === "string") {
-                const reason = commandBlockReason(input.command, this.config.protectedPaths);
-                if (reason) return { block: true, reason, terminate: false };
-              }
-              if (["read", "write", "edit"].includes(event.toolName)) {
-                const local = normalizeToolPath(options.worktree, input.path);
-                if (!local) {
-                  return { block: true, reason: "Path is outside the issue worktree", terminate: false };
+      const settingsManager = SettingsManager.create(options.worktree, this.config.agentDir);
+      const sandboxedBashOperations = createSandboxedBashOperations(
+        processGroupFile,
+        shutdownController.signal,
+      );
+      const loader = new DefaultResourceLoader({
+        cwd: options.worktree,
+        agentDir: this.config.agentDir,
+        settingsManager,
+        appendSystemPrompt: [AGENT_POLICY],
+        // Executable user/project extensions run in the controller process, outside the bash sandbox.
+        // Disable discovery and register only the worker-owned inline policy extension below.
+        noExtensions: true,
+        extensionFactories: [
+          {
+            name: "headless-worker-policy",
+            factory: (pi) => {
+              const sandboxedBash = createBashTool(options.worktree, {
+                operations: sandboxedBashOperations,
+              });
+              pi.registerTool({ ...sandboxedBash, label: "bash (OS sandboxed)" });
+              pi.on("user_bash", () => ({ operations: sandboxedBashOperations }));
+              pi.on("tool_call", (event) => {
+                const input = event.input as { command?: unknown; path?: unknown };
+                if (event.toolName === "bash" && typeof input.command === "string") {
+                  const reason = commandBlockReason(input.command, this.config.protectedPaths);
+                  if (reason) return { block: true, reason, terminate: false };
                 }
-                const sensitive =
-                  /appsettings\.secrets\.json$/i.test(local) || /(^|\/)\.env(?:\.|$)/i.test(local);
-                if (sensitive || (event.toolName !== "read" && isProtectedChange(local, this.config.protectedPaths))) {
-                  return { block: true, reason: `Protected path: ${local}`, terminate: false };
+                if (["read", "write", "edit"].includes(event.toolName)) {
+                  const local = normalizeToolPath(options.worktree, input.path);
+                  if (!local) {
+                    return { block: true, reason: "Path is outside the issue worktree", terminate: false };
+                  }
+                  const sensitive =
+                    /appsettings\.secrets\.json$/i.test(local) || /(^|\/)\.env(?:\.|$)/i.test(local);
+                  if (sensitive || (event.toolName !== "read" && isProtectedChange(local, this.config.protectedPaths))) {
+                    return { block: true, reason: `Protected path: ${local}`, terminate: false };
+                  }
                 }
-              }
-              return undefined;
-            });
+                return undefined;
+              });
+            },
           },
-        },
-      ],
-    });
-    // Keep project settings untrusted so a pre-created issue branch cannot enable executable packages.
-    await loader.reload({ resolveProjectTrust: async () => false });
+        ],
+      });
+      // Keep project settings untrusted so a pre-created issue branch cannot enable executable packages.
+      await loader.reload({ resolveProjectTrust: async () => false });
 
-    const hasSession = options.sessionFile
-      ? await access(options.sessionFile)
-          .then(() => true)
-          .catch(() => false)
-      : false;
-    const sessionManager = hasSession && options.sessionFile
-      ? SessionManager.open(options.sessionFile, options.sessionDir, options.worktree)
-      : SessionManager.create(options.worktree, options.sessionDir);
-    const modelRuntime = await this.modelRuntimePromise;
-    const { session, modelFallbackMessage } = await createAgentSession({
-      cwd: options.worktree,
-      agentDir: this.config.agentDir,
-      modelRuntime,
-      thinkingLevel: this.config.thinkingLevel,
-      tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
-      resourceLoader: loader,
-      sessionManager,
-      settingsManager,
-    });
+      const hasSession = options.sessionFile
+        ? await access(options.sessionFile)
+            .then(() => true)
+            .catch(() => false)
+        : false;
+      const sessionManager = hasSession && options.sessionFile
+        ? SessionManager.open(options.sessionFile, options.sessionDir, options.worktree)
+        : SessionManager.create(options.worktree, options.sessionDir);
+      const modelRuntime = await this.modelRuntimePromise;
+      const { session, modelFallbackMessage } = await createAgentSession({
+        cwd: options.worktree,
+        agentDir: this.config.agentDir,
+        modelRuntime,
+        thinkingLevel: this.config.thinkingLevel,
+        tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
+        resourceLoader: loader,
+        sessionManager,
+        settingsManager,
+      });
 
-    const unsubscribe = session.subscribe((event) => {
-      if (event.type === "tool_execution_start") {
-        void appendFile(options.logFile, `${new Date().toISOString()} tool ${event.toolName}\n`);
-      } else if (event.type === "agent_end") {
-        void appendFile(
-          options.logFile,
-          `${new Date().toISOString()} agent_end retry=${String(event.willRetry)}\n`,
-        );
-      }
-    });
+      const unsubscribe = session.subscribe((event) => {
+        if (event.type === "tool_execution_start") {
+          void appendFile(options.logFile, `${new Date().toISOString()} tool ${event.toolName}\n`);
+        } else if (event.type === "agent_end") {
+          void appendFile(
+            options.logFile,
+            `${new Date().toISOString()} agent_end retry=${String(event.willRetry)}\n`,
+          );
+        }
+      });
 
-    try {
-      if (modelFallbackMessage) {
-        await appendFile(options.logFile, `${modelFallbackMessage}\n`);
+      try {
+        if (modelFallbackMessage) {
+          await appendFile(options.logFile, `${modelFallbackMessage}\n`);
+        }
+        await session.prompt(options.prompt);
+        const final = extractAssistantText(session.messages);
+        if (final.stopReason === "error" || final.stopReason === "aborted") {
+          throw new Error(final.error || `Pi stopped with ${final.stopReason}`);
+        }
+        if (!session.sessionFile) throw new Error("Pi did not create a persistent session file");
+        return { sessionFile: session.sessionFile, finalText: final.text.trim() };
+      } finally {
+        unsubscribe();
+        session.dispose();
+        await settingsManager.flush();
       }
-      await session.prompt(options.prompt);
-      const final = extractAssistantText(session.messages);
-      if (final.stopReason === "error" || final.stopReason === "aborted") {
-        throw new Error(final.error || `Pi stopped with ${final.stopReason}`);
-      }
-      if (!session.sessionFile) throw new Error("Pi did not create a persistent session file");
-      return { sessionFile: session.sessionFile, finalText: final.text.trim() };
     } finally {
-      unsubscribe();
-      session.dispose();
-      await settingsManager.flush();
-    }
-    } finally {
-      if (sandboxInitialized) await SandboxManager.reset();
+      process.off("SIGINT", onInterrupt);
+      process.off("SIGTERM", onInterrupt);
+      try {
+        await stopTrackedProcessGroup(processGroupFile);
+      } finally {
+        if (sandboxInitialized) await SandboxManager.reset();
+      }
     }
   }
 }
