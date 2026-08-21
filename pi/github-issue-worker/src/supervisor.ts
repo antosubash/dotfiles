@@ -2,6 +2,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  activeCommandProcessGroupPath,
+  stopTrackedProcessGroup,
+} from "./pi-agent.js";
+import {
   loadSupervisorProfiles,
   parseSupervisorOptions,
   type SupervisorMode,
@@ -26,6 +30,14 @@ function spawnWorker(profile: SupervisorProfile, mode: SupervisorMode): ChildPro
     env: profile.env,
     stdio: "inherit",
   });
+}
+
+export async function cleanupSupervisorProfileProcessGroup(profile: SupervisorProfile): Promise<void> {
+  await stopTrackedProcessGroup(activeCommandProcessGroupPath(profile.config.dataDir));
+}
+
+async function cleanupSupervisorProcessGroups(profiles: readonly SupervisorProfile[]): Promise<void> {
+  await Promise.all(profiles.map((profile) => cleanupSupervisorProfileProcessGroup(profile)));
 }
 
 async function runFinite(profiles: readonly SupervisorProfile[], mode: SupervisorMode): Promise<void> {
@@ -53,6 +65,7 @@ async function runFinite(profiles: readonly SupervisorProfile[], mode: Superviso
           }),
       ),
     );
+    await cleanupSupervisorProcessGroups(profiles);
     const failures = results.filter((result) => result.code !== 0);
     if (stopping) throw new Error("Supervisor interrupted");
     if (failures.length > 0) {
@@ -74,6 +87,7 @@ async function runContinuously(
 ): Promise<void> {
   const children = new Map<string, ChildProcess>();
   const restartTimers = new Map<string, NodeJS.Timeout>();
+  const pendingCleanups = new Set<Promise<void>>();
   let stopping = false;
   let finish: (() => void) | null = null;
   const stopped = new Promise<void>((resolve) => {
@@ -81,7 +95,7 @@ async function runContinuously(
   });
 
   const maybeFinish = () => {
-    if (stopping && children.size === 0) finish?.();
+    if (stopping && children.size === 0 && pendingCleanups.size === 0) finish?.();
   };
   const launch = (profile: SupervisorProfile) => {
     if (stopping) return;
@@ -92,15 +106,28 @@ async function runContinuously(
       console.error(
         `${timestamp()} [${profile.name}] exited with ${signal || code || "unknown status"}`,
       );
-      if (stopping) {
+      const cleanupPromise = (async () => {
+        try {
+          await cleanupSupervisorProfileProcessGroup(profile);
+        } catch (error) {
+          console.error(`${timestamp()} [${profile.name}] cleanup failed`, error);
+          stopping = true;
+          for (const timer of restartTimers.values()) clearTimeout(timer);
+          restartTimers.clear();
+        }
+        if (stopping) return;
+        const timer = setTimeout(() => {
+          restartTimers.delete(profile.name);
+          launch(profile);
+        }, restartSeconds * 1_000);
+        restartTimers.set(profile.name, timer);
+      })();
+      pendingCleanups.add(cleanupPromise);
+      cleanupPromise.finally(() => {
+        pendingCleanups.delete(cleanupPromise);
         maybeFinish();
-        return;
-      }
-      const timer = setTimeout(() => {
-        restartTimers.delete(profile.name);
-        launch(profile);
-      }, restartSeconds * 1_000);
-      restartTimers.set(profile.name, timer);
+      });
+      if (stopping) maybeFinish();
     });
   };
   const stop = (signal: NodeJS.Signals) => {
@@ -134,7 +161,9 @@ async function main(): Promise<void> {
   else await runFinite(profiles, options.mode);
 }
 
-await main().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : error);
-  process.exitCode = 1;
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  await main().catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : error);
+    process.exitCode = 1;
+  });
+}
