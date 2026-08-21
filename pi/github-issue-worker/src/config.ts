@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 
@@ -41,6 +42,14 @@ function expandPath(value: string, home = homedir()): string {
   if (value === "~") return home;
   if (value.startsWith("~/")) return resolve(home, value.slice(2));
   return isAbsolute(value) ? value : resolve(value);
+}
+
+function directoryExists(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function positiveInteger(name: string, value: string, fallback: number): number {
@@ -104,6 +113,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     .split(",")
     .map((value) => value.trim().replace(/^\.\//, "").replace(/\/$/, ""))
     .filter(Boolean);
+  const explicitDataDir = env.PI_WORKER_DATA_DIR?.trim();
+  const legacyDataDir = expandPath(`~/.local/share/pi-issue-worker/${repositorySlug}`, home);
+  const hashedDataDir = expandPath(
+    `~/.local/share/pi-issue-worker/${repositorySlug}-${repositoryIdentityHash}`,
+    home,
+  );
+  const dataDir = explicitDataDir
+    ? expandPath(explicitDataDir, home)
+    : directoryExists(legacyDataDir)
+      ? legacyDataDir
+      : hashedDataDir;
 
   return {
     repository,
@@ -115,11 +135,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     pullRequestLabel: `${labelPrefix}-pr-open`,
     blockedLabel: `${labelPrefix}-blocked`,
     visualLabel: env.PI_WORKER_VISUAL_LABEL?.trim() || `${labelPrefix}-visual`,
-    dataDir: expandPath(
-      env.PI_WORKER_DATA_DIR?.trim() ||
-        `~/.local/share/pi-issue-worker/${repositorySlug}-${repositoryIdentityHash}`,
-      home,
-    ),
+    dataDir,
     pollSeconds: positiveInteger("PI_WORKER_POLL_SECONDS", env.PI_WORKER_POLL_SECONDS || "", 60),
     maxIssuesPerPoll: positiveInteger(
       "PI_WORKER_MAX_ISSUES_PER_POLL",
