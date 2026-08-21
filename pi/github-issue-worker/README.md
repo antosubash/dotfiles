@@ -11,8 +11,9 @@ creation belong to the controller. Pi edits and verifies code inside an issue-sp
 1. A maintainer applies `pi-ready` to an open issue.
 2. The worker changes it to `pi-working`, fetches the configured base branch, and creates
    `pi/issue-<number>-<slug>` in a dedicated control clone.
-3. Pi loads that repository's `AGENTS.md`, project Pi resources, and normal user resources. It works in
-   a persistent issue session and may edit, test, and capture ignored evidence, but policy hooks block
+3. Pi loads repository context files and safe non-executable resources. User and project executable
+   extensions are disabled because they run in the controller process outside the tool sandbox. Pi works
+   in a persistent issue session and may edit, test, and capture ignored evidence, but policy hooks block
    GitHub CLI use, git mutation, secret paths, CI workflows, and configured protected paths.
 4. The controller validates the changed path set, commits, pushes, and opens a **draft** PR with
    `Closes #<number>`.
@@ -198,7 +199,8 @@ branch name.
 - Pi bash commands use Anthropic Sandbox Runtime OS isolation (bubblewrap on Linux, sandbox-exec on
   macOS, with platform prerequisites installed). Home-directory and credential reads are denied, writes
   are allow-only, and network access is allowlisted. Initialization failure blocks the run; there is no
-  unsandboxed fallback.
+  unsandboxed fallback. Executable user/project Pi extensions are disabled; only the worker-owned policy
+  extension runs in the controller process.
 - The agent policy blocks common GitHub/git mutation, privilege escalation, recursive deletion, secret
   paths, CI workflows, and configured protected paths. The controller checks paths again before commit.
 - Run under a dedicated OS account and dedicated GitHub identity as additional defense in depth.
@@ -216,4 +218,4 @@ npm run check
 ```
 
 The core is repository-neutral. Repository behavior comes from environment profiles, the target
-repository's `AGENTS.md`/Pi resources, labels, and configurable protected paths.
+repository's context files, labels, and configurable protected paths.

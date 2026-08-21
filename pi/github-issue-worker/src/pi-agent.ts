@@ -243,6 +243,9 @@ export class PiAgentRunner {
       agentDir: this.config.agentDir,
       settingsManager,
       appendSystemPrompt: [AGENT_POLICY],
+      // Executable user/project extensions run in the controller process, outside the bash sandbox.
+      // Disable discovery and register only the worker-owned inline policy extension below.
+      noExtensions: true,
       extensionFactories: [
         {
           name: "headless-worker-policy",
@@ -275,7 +278,8 @@ export class PiAgentRunner {
         },
       ],
     });
-    await loader.reload({ resolveProjectTrust: async () => true });
+    // Keep project settings untrusted so a pre-created issue branch cannot enable executable packages.
+    await loader.reload({ resolveProjectTrust: async () => false });
 
     const hasSession = options.sessionFile
       ? await access(options.sessionFile)
