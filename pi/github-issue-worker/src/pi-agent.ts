@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import { access, appendFile, mkdir } from "node:fs/promises";
 import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -16,6 +17,18 @@ import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox
 import type { WorkerConfig } from "./config.js";
 import { isProtectedChange } from "./repository.js";
 import type { AgentRunResult } from "./types.js";
+
+function packageRootFromModule(moduleUrl: string): string {
+  let current = dirname(fileURLToPath(moduleUrl));
+  while (true) {
+    if (existsSync(join(current, "package.json"))) return current;
+    const parent = dirname(current);
+    if (parent === current) throw new Error(`Unable to locate worker package root from ${moduleUrl}`);
+    current = parent;
+  }
+}
+
+const WORKER_RUNTIME_ROOT = packageRootFromModule(import.meta.url);
 
 const AGENT_POLICY = `
 You are running unattended inside an issue-specific Git worktree.
@@ -116,7 +129,9 @@ export function sandboxConfig(worktree: string, config: WorkerConfig): SandboxRu
     .split(":")
     .filter((path) => path.startsWith(`${home}/`))
     .map((path) => resolve(path));
-  const readPaths = [...new Set([worktree, ...gitMetadataPaths(worktree), ...pathReadPaths])];
+  const readPaths = [
+    ...new Set([worktree, WORKER_RUNTIME_ROOT, ...gitMetadataPaths(worktree), ...pathReadPaths]),
+  ];
   return {
     network: {
       allowedDomains: [...config.sandboxAllowedDomains],

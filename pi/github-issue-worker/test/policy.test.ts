@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { loadConfig } from "../src/config.js";
 import { commandBlockReason, sandboxConfig, sandboxEnvironment } from "../src/pi-agent.js";
@@ -13,6 +15,10 @@ test("agent bash uses OS-level home denial and worktree-only writes", () => {
   const sandbox = sandboxConfig("/tmp/pi-home/data/worktrees/issue-1", config);
   assert.deepEqual(sandbox.filesystem?.denyRead, [homedir()]);
   assert.deepEqual(sandbox.filesystem?.allowWrite, ["/tmp/pi-home/data/worktrees/issue-1", "/tmp"]);
+  assert.ok(
+    sandbox.filesystem?.allowRead?.some((path) => existsSync(join(path, "package.json"))),
+    "the sandbox must be able to execute the packaged runtime helpers",
+  );
   assert.ok(sandbox.network?.allowedDomains?.includes("registry.npmjs.org"));
 });
 
