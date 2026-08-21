@@ -31,8 +31,17 @@ test("repository manager creates an isolated base worktree and always ignores .q
     });
     const manager = new RepositoryManager(config);
     await manager.ensureControlRepository();
+    await execFile("git", ["remote", "set-url", "origin", join(root, "wrong.git")], {
+      cwd: manager.controlPath,
+    });
+    await assert.rejects(manager.ensureControlRepository(), /origin mismatch/);
+    await execFile("git", ["remote", "set-url", "origin", remote], { cwd: manager.controlPath });
     const worktree = await manager.ensureIssueWorktree(42, "Reusable worker");
     assert.equal(worktree.branch, "pi/issue-42-reusable-worker");
+    await assert.rejects(
+      manager.ensureIssueWorktree(42, "pi/issue-42-renamed-title", worktree.path),
+      /branch mismatch/,
+    );
 
     const qa = join(worktree.path, ".qa", "issues", "42");
     await mkdir(qa, { recursive: true });

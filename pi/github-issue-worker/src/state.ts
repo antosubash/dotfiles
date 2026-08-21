@@ -119,6 +119,17 @@ export class WorkerState {
     return rows.map(mapJob);
   }
 
+  listReviewJobs(): IssueJob[] {
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM issue_jobs
+         WHERE status IN ('pr_open', 'addressing_review') AND pr_number IS NOT NULL
+         ORDER BY issue_number`,
+      )
+      .all() as unknown as JobRow[];
+    return rows.map(mapJob);
+  }
+
   setStatus(issueNumber: number, status: IssueStatus, error: string | null = null): void {
     this.database
       .prepare("UPDATE issue_jobs SET status = ?, last_error = ?, updated_at = ? WHERE issue_number = ?")

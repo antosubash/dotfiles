@@ -25,6 +25,7 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.73",
     "@earendil-works/pi-coding-agent": "0.84.2"
   },
   "devDependencies": {

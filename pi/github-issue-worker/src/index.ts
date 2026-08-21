@@ -5,6 +5,7 @@ import { loadConfig } from "./config.js";
 import { commandExists } from "./exec.js";
 import { WorkerState } from "./state.js";
 import { IssueWorker } from "./worker.js";
+import { ProfileLock } from "./lock.js";
 
 async function requireCommands(commands: readonly string[]): Promise<void> {
   const missing: string[] = [];
@@ -18,8 +19,8 @@ async function main(): Promise<void> {
   const config = loadConfig();
   await requireCommands(["git", "gh"]);
   await mkdir(config.dataDir, { recursive: true });
-  const state = new WorkerState(join(config.dataDir, "state.sqlite"));
-  const worker = new IssueWorker(config, state);
+  const lock = await ProfileLock.acquire(config.dataDir);
+  let state: WorkerState | null = null;
   let stopping = false;
   const stop = () => {
     stopping = true;
@@ -28,6 +29,8 @@ async function main(): Promise<void> {
   process.on("SIGTERM", stop);
 
   try {
+    state = new WorkerState(join(config.dataDir, "state.sqlite"));
+    const worker = new IssueWorker(config, state);
     if (process.argv.includes("--check")) {
       await worker.check();
       console.log(`Ready: ${config.repository} (${config.baseBranch})`);
@@ -58,7 +61,8 @@ async function main(): Promise<void> {
       });
     } while (!stopping);
   } finally {
-    state.close();
+    state?.close();
+    await lock.release();
   }
 }
 

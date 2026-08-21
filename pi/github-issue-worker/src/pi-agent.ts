@@ -1,4 +1,7 @@
+import { spawn } from "node:child_process";
 import { access, appendFile, mkdir } from "node:fs/promises";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import {
   createAgentSession,
@@ -6,7 +9,10 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  createBashTool,
+  type BashOperations,
 } from "@earendil-works/pi-coding-agent";
+import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import type { WorkerConfig } from "./config.js";
 import { isProtectedChange } from "./repository.js";
 import type { AgentRunResult } from "./types.js";
@@ -27,7 +33,17 @@ function normalizeToolPath(cwd: string, input: unknown): string | null {
   if (typeof input !== "string" || input.length === 0) return null;
   const cleaned = input.replace(/^@/, "");
   const absolute = isAbsolute(cleaned) ? resolve(cleaned) : resolve(cwd, cleaned);
-  const local = relative(cwd, absolute).replaceAll("\\", "/");
+  let checked = absolute;
+  try {
+    checked = realpathSync(absolute);
+  } catch {
+    try {
+      checked = resolve(realpathSync(dirname(absolute)), absolute.slice(dirname(absolute).length + 1));
+    } catch {
+      // A new path is safe only when its existing parent is safe.
+    }
+  }
+  const local = relative(cwd, checked).replaceAll("\\", "/");
   return local.startsWith("../") || local === ".." ? null : local;
 }
 
@@ -84,6 +100,105 @@ interface AgentRunOptions {
 
 const GITHUB_SECRET_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"] as const;
 
+function gitMetadataPaths(worktree: string): string[] {
+  const gitFile = resolve(worktree, ".git");
+  if (!existsSync(gitFile)) return [];
+  const contents = readFileSync(gitFile, "utf8").trim();
+  const match = contents.match(/^gitdir:\s*(.+)$/im);
+  if (!match) return [];
+  const gitDir = resolve(worktree, match[1]!);
+  return [gitDir, resolve(gitDir, "..", "..")];
+}
+
+export function sandboxConfig(worktree: string, config: WorkerConfig): SandboxRuntimeConfig {
+  const home = resolve(process.env.HOME || homedir());
+  const pathReadPaths = (process.env.PATH || "")
+    .split(":")
+    .filter((path) => path.startsWith(`${home}/`))
+    .map((path) => resolve(path));
+  const readPaths = [...new Set([worktree, ...gitMetadataPaths(worktree), ...pathReadPaths])];
+  return {
+    network: {
+      allowedDomains: [...config.sandboxAllowedDomains],
+      deniedDomains: [],
+      allowLocalBinding: true,
+    },
+    filesystem: {
+      denyRead: [home],
+      allowRead: readPaths,
+      allowWrite: [worktree, "/tmp"],
+      denyWrite: [
+        resolve(home, ".ssh"),
+        resolve(home, ".aws"),
+        resolve(home, ".gnupg"),
+        resolve(home, ".config"),
+      ],
+    },
+  };
+}
+
+export function sandboxEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(environment).filter(
+      ([name]) => !/(?:TOKEN|API[_-]?KEY|ACCESS[_-]?KEY|SECRET|PASSWORD|PASSWD|PRIVATE[_-]?KEY|CREDENTIAL|AUTH)/i.test(name),
+    ),
+  );
+}
+
+function createSandboxedBashOperations(): BashOperations {
+  return {
+    async exec(command, cwd, { onData, signal, timeout }) {
+      const wrappedCommand = await SandboxManager.wrapWithSandbox(command);
+      return await new Promise((resolveResult, reject) => {
+        const child = spawn("bash", ["-c", wrappedCommand], {
+          cwd,
+          detached: true,
+          env: sandboxEnvironment(),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let timedOut = false;
+        let timeoutHandle: NodeJS.Timeout | undefined;
+        if (timeout !== undefined && timeout > 0) {
+          timeoutHandle = setTimeout(() => {
+            timedOut = true;
+            if (child.pid) {
+              try {
+                process.kill(-child.pid, "SIGKILL");
+              } catch {
+                child.kill("SIGKILL");
+              }
+            }
+          }, timeout * 1000);
+        }
+        child.stdout?.on("data", onData);
+        child.stderr?.on("data", onData);
+        const abort = () => {
+          if (child.pid) {
+            try {
+              process.kill(-child.pid, "SIGKILL");
+            } catch {
+              child.kill("SIGKILL");
+            }
+          }
+        };
+        signal?.addEventListener("abort", abort, { once: true });
+        child.on("error", (error) => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          signal?.removeEventListener("abort", abort);
+          reject(error);
+        });
+        child.on("close", (code) => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          signal?.removeEventListener("abort", abort);
+          if (signal?.aborted) reject(new Error("aborted"));
+          else if (timedOut) reject(new Error(`timeout:${timeout}`));
+          else resolveResult({ exitCode: code });
+        });
+      });
+    },
+  };
+}
+
 export class PiAgentRunner {
   private readonly modelRuntimePromise: Promise<ModelRuntime>;
 
@@ -119,6 +234,9 @@ export class PiAgentRunner {
   private async runWithScrubbedGithubEnvironment(options: AgentRunOptions): Promise<AgentRunResult> {
     await mkdir(options.sessionDir, { recursive: true });
     await mkdir(dirname(options.logFile), { recursive: true });
+    let sandboxInitialized = true;
+    try {
+      await SandboxManager.initialize(sandboxConfig(options.worktree, this.config));
     const settingsManager = SettingsManager.create(options.worktree, this.config.agentDir);
     const loader = new DefaultResourceLoader({
       cwd: options.worktree,
@@ -129,6 +247,11 @@ export class PiAgentRunner {
         {
           name: "headless-worker-policy",
           factory: (pi) => {
+            const sandboxedBash = createBashTool(options.worktree, {
+              operations: createSandboxedBashOperations(),
+            });
+            pi.registerTool({ ...sandboxedBash, label: "bash (OS sandboxed)" });
+            pi.on("user_bash", () => ({ operations: createSandboxedBashOperations() }));
             pi.on("tool_call", (event) => {
               const input = event.input as { command?: unknown; path?: unknown };
               if (event.toolName === "bash" && typeof input.command === "string") {
@@ -200,6 +323,9 @@ export class PiAgentRunner {
       unsubscribe();
       session.dispose();
       await settingsManager.flush();
+    }
+    } finally {
+      if (sandboxInitialized) await SandboxManager.reset();
     }
   }
 }

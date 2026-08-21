@@ -21,7 +21,8 @@ creation belong to the controller. Pi edits and verifies code inside an issue-sp
 6. Every event is persisted in SQLite, making comment handling idempotent across restarts.
 
 One process handles work sequentially. This is intentional: repositories with integration databases,
-browser sessions, or expensive builds should not be fanned out accidentally.
+browser sessions, or expensive builds should not be fanned out accidentally. A per-profile `worker.lock`
+is acquired before SQLite opens; a concurrent instance exits with the owning PID.
 
 ## Requirements
 
@@ -30,6 +31,7 @@ browser sessions, or expensive builds should not be fanned out accidentally.
 - Pi authentication in `~/.pi/agent` or `PI_CODING_AGENT_DIR`
 - `playwright-cli` for visual evidence
 - `ffmpeg` for optional GIF conversion
+- Anthropic Sandbox Runtime prerequisites: on Linux, `bubblewrap`, `socat`, and `ripgrep`; macOS requires `ripgrep`. The worker fails closed if the OS sandbox cannot initialize.
 - A dedicated GitHub App or machine-user identity is strongly recommended
 
 The GitHub identity needs repository contents, issues, and pull-request write access. If the worker uses
@@ -77,6 +79,8 @@ PI_WORKER_BASE_BRANCH=main
 PI_WORKER_DATA_DIR=~/.local/share/pi-issue-worker/acme-widgets
 PI_WORKER_PROTECTED_PATHS=.git,.github/workflows,.pi
 PI_WORKER_APP_URL=http://localhost:3000
+# Optional additional hosts for sandboxed build/browser verification (comma-separated)
+PI_WORKER_SANDBOX_ALLOWED_DOMAINS=
 PI_WORKER_THINKING_LEVEL=high
 ```
 
@@ -113,7 +117,11 @@ journalctl --user -u pi-issue-worker@widgets.service -f
 ```
 
 The supplied hardened unit permits writes under `~/.local/share/pi-issue-worker`. If a profile sets a
-different data directory, add that directory to `ReadWritePaths` in a systemd override.
+different data directory, add that directory to `ReadWritePaths` in a systemd override. Pi bash commands
+also run inside Anthropic Sandbox Runtime: reads are denied across the home directory except the issue
+worktree and required Git metadata, writes are limited to the worktree and temporary build space, and
+network access uses an allowlist. Add project-specific browser/build hosts with
+`PI_WORKER_SANDBOX_ALLOWED_DOMAINS`; do not put credentials or broad wildcards there.
 
 To serve another repository, create `~/.config/pi-issue-worker/blog.env` with its repository and base
 branch, then start `pi-issue-worker@blog.service`. State, sessions, clones, and worktrees are separated
@@ -165,7 +173,8 @@ conversion.
 
 ## State and recovery
 
-Each profile stores:
+Each profile stores in a collision-resistant repository-specific default directory (explicit
+`PI_WORKER_DATA_DIR` values are used unchanged):
 
 ```text
 PI_WORKER_DATA_DIR/
@@ -176,8 +185,9 @@ PI_WORKER_DATA_DIR/
 └── state.sqlite      # jobs and processed GitHub event IDs
 ```
 
-A restart resumes claimed/implementing issues. If a commit was already produced, it is pushed and used
-to create the missing PR instead of rerunning implementation. Existing open PRs are rediscovered by
+A restart resumes claimed/implementing issues and replays unprocessed feedback for
+`addressing_review` jobs. If a commit was already produced, it is pushed and used to create the missing
+PR instead of rerunning implementation. Existing open PRs are rediscovered by
 branch name.
 
 ## Security model and limitations
@@ -185,12 +195,15 @@ branch name.
 - Applying the ready label is the human approval boundary. Do not grant issue-triage rights broadly.
 - Issue and review text remains untrusted and is delimited as data in prompts.
 - Only configured GitHub author associations can trigger follow-up work.
+- Pi bash commands use Anthropic Sandbox Runtime OS isolation (bubblewrap on Linux, sandbox-exec on
+  macOS, with platform prerequisites installed). Home-directory and credential reads are denied, writes
+  are allow-only, and network access is allowlisted. Initialization failure blocks the run; there is no
+  unsandboxed fallback.
 - The agent policy blocks common GitHub/git mutation, privilege escalation, recursive deletion, secret
-  paths, CI workflows, and configured controller paths. The controller checks paths again before commit.
-- Run under a dedicated OS account, dedicated GitHub identity, and sandbox/container for stronger
-  isolation. Prompt/tool guards are defense in depth, not a complete sandbox: an unrestricted coding
-  shell and network access cannot safely process hostile content by policy alone.
-- Model credentials necessarily remain available to Pi. Never approve hostile issues.
+  paths, CI workflows, and configured protected paths. The controller checks paths again before commit.
+- Run under a dedicated OS account and dedicated GitHub identity as additional defense in depth.
+- Model credentials are used by the controller/Pi host process and are never exposed to sandboxed bash.
+  Never approve hostile issues.
 - There is no auto-merge, force-push, automatic rebase, or arbitrary attachment upload.
 - Review replies are posted to the PR conversation rather than individual inline threads.
 

@@ -83,6 +83,155 @@ test("worker claims an approved issue and opens a draft PR", async () => {
   }
 });
 
+test("initial BLOCKED output cannot be committed or pushed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-blocked-initial-"));
+  const state = new WorkerState(join(root, "state.sqlite"));
+  let commits = 0;
+  const github = {
+    listReadyIssues: async () => [issue],
+    claimIssue: async () => undefined,
+    findOpenPullRequest: async () => null,
+    markBlocked: async () => undefined,
+    getIssue: async () => issue,
+    isPullRequestOpen: async () => true,
+    listFeedback: async () => [],
+  };
+  const repository = {
+    branchForIssue: () => "pi/issue-42-add-reusable-behavior",
+    pathForIssue: () => join(root, "worktree"),
+    ensureIssueWorktree: async () => ({ branch: "pi/issue-42-add-reusable-behavior", path: join(root, "worktree") }),
+    changedFiles: async () => ["src/partial.ts"],
+    hasCommitsAhead: async () => false,
+    commitAndPush: async () => {
+      commits += 1;
+      return { commit: "bad", files: ["src/partial.ts"] };
+    },
+    pushIfAhead: async () => {
+      commits += 1;
+    },
+  };
+  const agent = {
+    run: async () => ({ sessionFile: join(root, "session.jsonl"), finalText: "BLOCKED\nMissing acceptance criteria." }),
+  };
+  try {
+    const worker = new IssueWorker(config(root), state, {
+      github: github as unknown as GitHubClient,
+      repository: repository as unknown as RepositoryManager,
+      agent: agent as unknown as PiAgentRunner,
+    });
+    await worker.tick();
+    assert.equal(commits, 0);
+    assert.equal(state.requireJob(42).status, "blocked");
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("addressing_review jobs recover after a restart", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-review-recovery-"));
+  const state = new WorkerState(join(root, "state.sqlite"));
+  state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
+  state.setSession(42, join(root, "session.jsonl"));
+  state.setPullRequest(42, 77, "https://github.com/example/widgets/pull/77");
+  state.setStatus(42, "addressing_review");
+  const feedback: PullRequestFeedback = {
+    eventKey: "review:recovery",
+    source: "review",
+    id: 8,
+    body: "Handle the null case.",
+    author: "maintainer",
+    authorAssociation: "MEMBER",
+    createdAt: "2026-01-02T00:00:00Z",
+    url: null,
+  };
+  let runs = 0;
+  const github = {
+    listReadyIssues: async () => [],
+    getIssue: async () => issue,
+    isPullRequestOpen: async () => true,
+    listFeedback: async () => [feedback],
+    markPullRequestOpen: async () => undefined,
+    commentPullRequest: async () => undefined,
+    markBlocked: async () => undefined,
+  };
+  const repository = {
+    ensureIssueWorktree: async () => ({ branch: "pi/issue-42", path: join(root, "worktree") }),
+    changedFiles: async () => [],
+  };
+  const agent = {
+    run: async () => {
+      runs += 1;
+      return { sessionFile: join(root, "session.jsonl"), finalText: "Recovered review work." };
+    },
+  };
+  try {
+    const worker = new IssueWorker(config(root), state, {
+      github: github as unknown as GitHubClient,
+      repository: repository as unknown as RepositoryManager,
+      agent: agent as unknown as PiAgentRunner,
+    });
+    await worker.tick();
+    assert.equal(runs, 1);
+    assert.equal(state.requireJob(42).status, "pr_open");
+    assert.equal(state.hasProcessed(feedback.eventKey), true);
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("feedback BLOCKED output cannot be committed or pushed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-blocked-feedback-"));
+  const state = new WorkerState(join(root, "state.sqlite"));
+  state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
+  state.setPullRequest(42, 77, "https://github.com/example/widgets/pull/77");
+  let commits = 0;
+  const feedback: PullRequestFeedback = {
+    eventKey: "review:blocked",
+    source: "review",
+    id: 9,
+    body: "Do the unsafe thing.",
+    author: "maintainer",
+    authorAssociation: "MEMBER",
+    createdAt: "2026-01-02T00:00:00Z",
+    url: null,
+  };
+  const github = {
+    listReadyIssues: async () => [],
+    getIssue: async () => issue,
+    isPullRequestOpen: async () => true,
+    listFeedback: async () => [feedback],
+    markPullRequestOpen: async () => undefined,
+    commentPullRequest: async () => undefined,
+    markBlocked: async () => undefined,
+  };
+  const repository = {
+    ensureIssueWorktree: async () => ({ branch: "pi/issue-42", path: join(root, "worktree") }),
+    changedFiles: async () => ["src/partial.ts"],
+    commitAndPush: async () => {
+      commits += 1;
+      return { commit: "bad", files: ["src/partial.ts"] };
+    },
+  };
+  const agent = {
+    run: async () => ({ sessionFile: join(root, "session.jsonl"), finalText: "BLOCKED\nCannot safely comply." }),
+  };
+  try {
+    const worker = new IssueWorker(config(root), state, {
+      github: github as unknown as GitHubClient,
+      repository: repository as unknown as RepositoryManager,
+      agent: agent as unknown as PiAgentRunner,
+    });
+    await worker.tick();
+    assert.equal(commits, 0);
+    assert.equal(state.hasProcessed(feedback.eventKey), true);
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("trusted review feedback reuses the job and records event idempotency", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-review-"));
   const state = new WorkerState(join(root, "state.sqlite"));
@@ -114,6 +263,7 @@ test("trusted review feedback reuses the job and records event idempotency", asy
     markBlocked: async () => undefined,
   };
   const repository = {
+    ensureIssueWorktree: async () => ({ branch: "pi/issue-42", path: join(root, "worktree") }),
     changedFiles: async () => (changed ? ["src/change.ts"] : []),
     commitAndPush: async () => ({ commit: "def", files: ["src/change.ts"] }),
   };

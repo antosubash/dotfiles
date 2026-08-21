@@ -11,11 +11,18 @@ const base = {
 test("loadConfig derives repository-specific generic defaults", () => {
   const config = loadConfig(base);
   assert.equal(config.repositoryUrl, "https://github.com/example/widgets.git");
-  assert.equal(config.dataDir, "/tmp/home/.local/share/pi-issue-worker/example-widgets");
+  assert.match(config.dataDir, /\/example-widgets-[0-9a-f]{12}$/);
+  assert.ok(config.sandboxAllowedDomains.includes("registry.npmjs.org"));
   assert.equal(config.readyLabel, "pi-ready");
   assert.equal(config.workingLabel, "pi-working");
   assert.equal(config.baseBranch, "develop");
   assert.deepEqual(config.protectedPaths, [".git", ".github/workflows", ".pi"]);
+});
+
+test("default state directories distinguish repository identities that slug alike", () => {
+  const first = loadConfig({ ...base, PI_WORKER_REPOSITORY: "acme/foo-bar" });
+  const second = loadConfig({ ...base, PI_WORKER_REPOSITORY: "acme/foo_bar" });
+  assert.notEqual(first.dataDir, second.dataDir);
 });
 
 test("loadConfig supports one instance profile per repository", () => {

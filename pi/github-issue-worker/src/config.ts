@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 
@@ -33,6 +34,7 @@ export interface WorkerConfig {
   playwrightState: string | null;
   qaRetentionDays: number;
   agentDir: string;
+  sandboxAllowedDomains: readonly string[];
 }
 
 function expandPath(value: string, home = homedir()): string {
@@ -73,9 +75,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
 
   const home = env.HOME || homedir();
   const appUrl = env.PI_WORKER_APP_URL?.trim() || null;
+  const appHost = appUrl ? new URL(appUrl).hostname : null;
+  const sandboxAllowedDomains = [
+    "npmjs.org",
+    "*.npmjs.org",
+    "registry.npmjs.org",
+    "registry.yarnpkg.com",
+    "github.com",
+    "*.github.com",
+    "api.github.com",
+    "raw.githubusercontent.com",
+    "localhost",
+    "127.0.0.1",
+    ...(appHost ? [appHost] : []),
+    ...(env.PI_WORKER_SANDBOX_ALLOWED_DOMAINS || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  ];
   const statePath = env.PI_WORKER_PLAYWRIGHT_STATE?.trim();
   const labelPrefix = env.PI_WORKER_LABEL_PREFIX?.trim() || "pi";
   const repositorySlug = repository.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const repositoryIdentityHash = createHash("sha256")
+    .update(`${repository}\n${repositoryUrl}`)
+    .digest("hex")
+    .slice(0, 12);
   const protectedPaths = (env.PI_WORKER_PROTECTED_PATHS || ".git,.github/workflows,.pi")
     .split(",")
     .map((value) => value.trim().replace(/^\.\//, "").replace(/\/$/, ""))
@@ -92,7 +116,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     blockedLabel: `${labelPrefix}-blocked`,
     visualLabel: env.PI_WORKER_VISUAL_LABEL?.trim() || `${labelPrefix}-visual`,
     dataDir: expandPath(
-      env.PI_WORKER_DATA_DIR?.trim() || `~/.local/share/pi-issue-worker/${repositorySlug}`,
+      env.PI_WORKER_DATA_DIR?.trim() ||
+        `~/.local/share/pi-issue-worker/${repositorySlug}-${repositoryIdentityHash}`,
       home,
     ),
     pollSeconds: positiveInteger("PI_WORKER_POLL_SECONDS", env.PI_WORKER_POLL_SECONDS || "", 60),
@@ -112,5 +137,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       14,
     ),
     agentDir: expandPath(env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent", home),
+    sandboxAllowedDomains: [...new Set(sandboxAllowedDomains)],
   };
 }

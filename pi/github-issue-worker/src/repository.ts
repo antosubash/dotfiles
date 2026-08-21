@@ -8,6 +8,26 @@ function normalizePath(path: string): string {
   return path.replaceAll("\\", "/").replace(/^\.\//, "");
 }
 
+export function repositoryIdentity(remote: string): string {
+  let value = remote.trim();
+  const scp = value.match(/^[^@]+@([^:]+):(.+)$/);
+  if (scp) value = `https://${scp[1]}/${scp[2]}`;
+  if (!value.includes("://") && !value.includes(":") && (value.startsWith("/") || value.startsWith("."))) {
+    return `file://${resolve(value)}`;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`Invalid Git remote URL: ${remote}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:" && parsed.protocol !== "ssh:") {
+    throw new Error(`Unsupported Git remote protocol: ${parsed.protocol}`);
+  }
+  const path = parsed.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "");
+  return `${parsed.hostname.toLowerCase()}/${path.toLowerCase()}`;
+}
+
 export function isProtectedChange(path: string, protectedPrefixes: readonly string[]): boolean {
   const normalized = normalizePath(path);
   if (/appsettings\.secrets\.json$/i.test(normalized)) return true;
@@ -49,8 +69,20 @@ export class RepositoryManager {
         { timeoutMs: 10 * 60_000 },
       );
     }
+    await this.validateControlOrigin();
     await this.ensureLocalExcludes();
     await this.fetchBase();
+  }
+
+  private async validateControlOrigin(): Promise<void> {
+    const origin = (
+      await this.run("git", ["remote", "get-url", "origin"], { cwd: this.controlPath })
+    ).stdout.trim();
+    if (repositoryIdentity(origin) !== repositoryIdentity(this.config.repositoryUrl)) {
+      throw new Error(
+        `Control clone origin mismatch: expected ${this.config.repositoryUrl}, found ${origin}`,
+      );
+    }
   }
 
   private async ensureLocalExcludes(): Promise<void> {
@@ -88,19 +120,31 @@ export class RepositoryManager {
     return join(this.worktreesRoot, `issue-${issueNumber}`);
   }
 
-  async ensureIssueWorktree(issueNumber: number, title: string): Promise<{ branch: string; path: string }> {
+  async ensureIssueWorktree(
+    issueNumber: number,
+    branchOrTitle: string,
+    claimedPath?: string,
+  ): Promise<{ branch: string; path: string }> {
     await this.fetchBase();
     await mkdir(this.worktreesRoot, { recursive: true });
-    const branch = this.branchForIssue(issueNumber, title);
-    const path = this.pathForIssue(issueNumber);
-    const registered = await this.isRegistered(path);
-    if (registered) return { branch, path };
+    const branch = claimedPath ? branchOrTitle : this.branchForIssue(issueNumber, branchOrTitle);
+    const path = claimedPath || this.pathForIssue(issueNumber);
+    const expectedPath = resolve(path);
+    const registered = await this.isRegistered(expectedPath);
+    if (registered) {
+      await this.validateWorktree(expectedPath, branch);
+      return { branch, path: expectedPath };
+    }
+    if (expectedPath !== resolve(this.pathForIssue(issueNumber))) {
+      throw new Error(`Refusing unregistered worktree path outside issue allocation: ${path}`);
+    }
+    const worktreePath = expectedPath;
 
-    const pathExists = await access(path)
+    const pathExists = await access(worktreePath)
       .then(() => true)
       .catch(() => false);
     if (pathExists) {
-      throw new Error(`Refusing unregistered pre-existing worktree path: ${path}`);
+      throw new Error(`Refusing unregistered pre-existing worktree path: ${worktreePath}`);
     }
 
     const localBranch = await this.run(
@@ -109,7 +153,7 @@ export class RepositoryManager {
       { cwd: this.controlPath, allowFailure: true },
     );
     if (localBranch.exitCode === 0) {
-      await this.run("git", ["worktree", "add", path, branch], { cwd: this.controlPath });
+      await this.run("git", ["worktree", "add", worktreePath, branch], { cwd: this.controlPath });
     } else {
       const remoteBranch = await this.run(
         "git",
@@ -126,11 +170,49 @@ export class RepositoryManager {
       }
       await this.run(
         "git",
-        ["worktree", "add", "-b", branch, path, startPoint],
+        ["worktree", "add", "-b", branch, worktreePath, startPoint],
         { cwd: this.controlPath, timeoutMs: 5 * 60_000 },
       );
     }
-    return { branch, path };
+    await this.validateWorktree(worktreePath, branch);
+    return { branch, path: worktreePath };
+  }
+
+  private async validateWorktree(path: string, branch: string): Promise<void> {
+    const symbolicBranch = (
+      await this.run("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: path })
+    ).stdout.trim();
+    if (symbolicBranch !== branch) {
+      throw new Error(`Worktree branch mismatch at ${path}: expected ${branch}, found ${symbolicBranch || "detached HEAD"}`);
+    }
+    const head = (await this.run("git", ["rev-parse", "HEAD"], { cwd: path })).stdout.trim();
+    const entry = await this.worktreeEntry(path);
+    if (!entry || entry.head !== head || entry.branch !== `refs/heads/${branch}`) {
+      throw new Error(`Registered worktree identity mismatch at ${path}`);
+    }
+  }
+
+  private async worktreeEntry(path: string): Promise<{ head: string; branch: string } | null> {
+    const result = await this.run("git", ["worktree", "list", "--porcelain"], {
+      cwd: this.controlPath,
+    });
+    const lines = result.stdout.split(/\r?\n/);
+    const expected = resolve(path);
+    for (let index = 0; index < lines.length; index += 1) {
+      if ((lines[index] || "") !== `worktree ${expected}`) continue;
+      const headLine = lines[index + 1] || "";
+      const head = headLine.startsWith("HEAD ") ? headLine.slice(5).trim() : "";
+      const branchLine = lines
+        .slice(index + 2)
+        .find((line) => line === "" || line.startsWith("worktree ") || line.startsWith("branch "));
+      return {
+        head,
+        branch: branchLine?.startsWith("branch ")
+          ? branchLine.slice("branch ".length).trim()
+          : "",
+      };
+    }
+    return null;
   }
 
   private async isRegistered(path: string): Promise<boolean> {
@@ -166,6 +248,7 @@ export class RepositoryManager {
     branch: string,
     commitMessage: string,
   ): Promise<{ commit: string; files: string[] }> {
+    await this.validateWorktree(worktree, branch);
     const files = await this.changedFiles(worktree);
     if (files.length === 0) throw new Error("Pi completed without changing any files");
     const protectedFiles = files.filter((path) => isProtectedChange(path, this.config.protectedPaths));
@@ -193,6 +276,7 @@ export class RepositoryManager {
     const commit = (
       await this.run("git", ["rev-parse", "HEAD"], { cwd: worktree })
     ).stdout.trim();
+    await this.validateWorktree(worktree, branch);
     await this.run("git", ["push", "--set-upstream", "origin", branch], {
       cwd: worktree,
       timeoutMs: 10 * 60_000,
@@ -211,6 +295,7 @@ export class RepositoryManager {
   }
 
   async pushIfAhead(worktree: string, branch: string): Promise<void> {
+    await this.validateWorktree(worktree, branch);
     await this.run("git", ["push", "origin", branch], {
       cwd: worktree,
       timeoutMs: 10 * 60_000,

@@ -45,6 +45,10 @@ function markdownSummary(text: string, maximum = 5_000): string {
   return text.length > maximum ? `${text.slice(0, maximum)}\n\n…truncated` : text;
 }
 
+export function isBlockedFinalOutput(text: string): boolean {
+  return /^\s*BLOCKED\b/im.test(text);
+}
+
 export class IssueWorker {
   private readonly github: GitHubClient;
   private readonly repository: RepositoryManager;
@@ -90,6 +94,10 @@ export class IssueWorker {
 
   private async resumeInterruptedIssues(): Promise<void> {
     for (const job of this.state.listActive()) {
+      if (job.status === "addressing_review" && job.prNumber) {
+        await this.processFeedbackJob(job);
+        continue;
+      }
       if (job.prNumber || !["claimed", "implementing"].includes(job.status)) continue;
       const issue = await this.github.getIssue(job.issueNumber);
       await this.implementIssue(issue, job).catch((error) => this.blockInitialIssue(job.issueNumber, error));
@@ -117,7 +125,11 @@ export class IssueWorker {
       return;
     }
 
-    const worktree = await this.repository.ensureIssueWorktree(issue.number, issue.title);
+    const worktree = await this.repository.ensureIssueWorktree(
+      issue.number,
+      job.branch,
+      job.worktreePath,
+    );
     this.state.setStatus(issue.number, "implementing");
     const visual = job.visualRequested || evidenceRequested(issue, this.config.visualLabel);
     const evidence = visual
@@ -143,6 +155,7 @@ export class IssueWorker {
       });
       this.state.setSession(issue.number, result.sessionFile);
       finalText = result.finalText;
+      if (isBlockedFinalOutput(finalText)) throw new Error(finalText);
     }
 
     const changedFiles = await this.repository.changedFiles(worktree.path);
@@ -154,7 +167,7 @@ export class IssueWorker {
       );
     } else if (await this.repository.hasCommitsAhead(worktree.path)) {
       await this.repository.pushIfAhead(worktree.path, worktree.branch);
-    } else if (/^BLOCKED\b/im.test(finalText)) {
+    } else if (isBlockedFinalOutput(finalText)) {
       throw new Error(finalText);
     } else {
       throw new Error(`Pi made no tracked changes.\n\n${finalText}`);
@@ -183,23 +196,28 @@ export class IssueWorker {
   }
 
   private async processPullRequestFeedback(): Promise<void> {
-    for (const job of this.state.listPullRequests()) {
-      if (!job.prNumber) continue;
-      if (!(await this.github.isPullRequestOpen(job.prNumber))) {
-        this.state.setStatus(job.issueNumber, "completed");
-        continue;
-      }
-      const all = await this.github.listFeedback(job.prNumber);
-      const pending = all
-        .filter(
-          (item) =>
-            !this.state.hasProcessed(item.eventKey) &&
-            isActionableFeedback(item, this.config.trustedAssociations),
-        )
-        .slice(0, 20);
-      if (pending.length === 0) continue;
-      await this.handleFeedback(job, pending);
+    for (const job of this.state.listReviewJobs()) await this.processFeedbackJob(job);
+  }
+
+  private async processFeedbackJob(job: IssueJob): Promise<void> {
+    if (!job.prNumber) return;
+    if (!(await this.github.isPullRequestOpen(job.prNumber))) {
+      this.state.setStatus(job.issueNumber, "completed");
+      return;
     }
+    const all = await this.github.listFeedback(job.prNumber);
+    const pending = all
+      .filter(
+        (item) =>
+          !this.state.hasProcessed(item.eventKey) &&
+          isActionableFeedback(item, this.config.trustedAssociations),
+      )
+      .slice(0, 20);
+    if (pending.length === 0) {
+      if (job.status === "addressing_review") this.state.setStatus(job.issueNumber, "pr_open");
+      return;
+    }
+    await this.handleFeedback(job, pending);
   }
 
   private async handleFeedback(job: IssueJob, feedback: PullRequestFeedback[]): Promise<void> {
@@ -227,17 +245,22 @@ export class IssueWorker {
     }
 
     const issue = await this.github.getIssue(job.issueNumber);
+    const worktree = await this.repository.ensureIssueWorktree(
+      job.issueNumber,
+      job.branch,
+      job.worktreePath,
+    );
     const visualRequested =
       job.visualRequested || commands.some((command) => command.startsWith("verify"));
     const gifRequested = commands.some((command) => command.includes("gif"));
     const evidence = visualRequested
-      ? await createEvidenceRun(job.worktreePath, job.issueNumber, job.prNumber)
+      ? await createEvidenceRun(worktree.path, job.issueNumber, job.prNumber)
       : null;
     this.state.setStatus(job.issueNumber, "addressing_review");
 
     try {
       const result = await this.agent.run({
-        worktree: job.worktreePath,
+        worktree: worktree.path,
         sessionDir: join(this.config.dataDir, "sessions", `issue-${job.issueNumber}`),
         sessionFile: job.sessionFile,
         prompt: buildFeedbackPrompt({
@@ -251,12 +274,13 @@ export class IssueWorker {
         logFile: join(this.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
       });
       this.state.setSession(job.issueNumber, result.sessionFile);
+      if (isBlockedFinalOutput(result.finalText)) throw new Error(result.finalText);
       const gifCreated = gifRequested ? await finishRequestedGif(evidence?.runDir ?? null) : false;
-      const changed = await this.repository.changedFiles(job.worktreePath);
+      const changed = await this.repository.changedFiles(worktree.path);
       if (changed.length > 0) {
         await this.repository.commitAndPush(
-          job.worktreePath,
-          job.branch,
+          worktree.path,
+          worktree.branch,
           commitMessage(issue, true),
         );
       }
@@ -267,7 +291,7 @@ export class IssueWorker {
         job.prNumber!,
         `✅ Feedback processed${changed.length > 0 ? " and an update was pushed" : " with no tracked code changes"}.${gifCreated ? ` GIF created at \`${evidence?.relativeRunDir}/workflow.gif\`.` : ""}\n\n${markdownSummary(result.finalText)}`,
       );
-      await removeExpiredEvidence(job.worktreePath, this.config.qaRetentionDays);
+      await removeExpiredEvidence(worktree.path, this.config.qaRetentionDays);
     } catch (error) {
       const message = errorText(error);
       for (const item of feedback) this.state.markProcessed(job.issueNumber, item.eventKey);
