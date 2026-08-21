@@ -1,0 +1,21 @@
+[Unit]
+Description=Headless Pi GitHub issue worker (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/pi-issue-worker/%i.env
+ExecStart=%h/.local/bin/pi-issue-worker
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/pi-issue-worker %h/.cache
+
+[Install]
+WantedBy=default.target

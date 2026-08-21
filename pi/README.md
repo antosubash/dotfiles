@@ -55,6 +55,23 @@ Exact IDs and absolute paths are threaded through state, reports, sessions, and 
 
 Project-local Pi resources retain Pi's normal trust prompt (`defaultProjectTrust: ask`).
 
+## Headless GitHub issue worker
+
+`github-issue-worker/` is a repository-neutral Node.js service built on the Pi SDK. It picks up issues
+only after a maintainer applies the configured ready label, works in a fresh isolated worktree, opens a
+draft PR, and continues trusted review feedback in the same persistent Pi session. One systemd instance
+and environment profile serves one repository, so a single installation can safely serve multiple
+repositories with separate state.
+
+Install the CLI and unit template without starting a profile:
+
+```bash
+~/dotfiles/scripts/setup-pi-issue-worker.sh
+```
+
+See [`github-issue-worker/README.md`](github-issue-worker/README.md) for security boundaries, `/pi`
+commands, visual evidence, configuration, and service activation.
+
 ## Updating the vendored subagent
 
 The implementation came from Pi's `examples/extensions/subagent/`. After upgrading Pi, compare the installed example with `pi/agent/extensions/subagent/`, carry forward the Claude model alias mapping in `agents.ts`, then run a delegated scout smoke test.
