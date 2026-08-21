@@ -179,16 +179,21 @@ function clearTrackedProcessGroupFile(path: string, pid: number): void {
   }
 }
 
+function isProcessGroupAlive(pid: number): boolean {
+  const killCheck = SUPPORTS_POSIX_PROCESS_GROUPS ? () => process.kill(-pid, 0) : () => process.kill(pid, 0);
+  try {
+    killCheck();
+    return true;
+  } catch (error) {
+    if (isMissingProcessGroupError(error)) return false;
+    throw error;
+  }
+}
+
 async function waitForProcessGroupExit(pid: number, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  const killCheck = SUPPORTS_POSIX_PROCESS_GROUPS ? () => process.kill(-pid, 0) : () => process.kill(pid, 0);
   while (true) {
-    try {
-      killCheck();
-    } catch (error) {
-      if (isMissingProcessGroupError(error)) return;
-      throw error;
-    }
+    if (!isProcessGroupAlive(pid)) return;
     if (Date.now() >= deadline) {
       throw new Error(`${SUPPORTS_POSIX_PROCESS_GROUPS ? "Process group" : "Process"} ${pid} did not stop within ${timeoutMs}ms`);
     }
@@ -298,15 +303,27 @@ export function createSandboxedBashOperations(
             reject(error);
           })().catch(reject);
         });
-        child.on("close", (code) => {
+        child.on("close", (code, closeSignal) => {
           void (async () => {
             cleanupListeners();
-            if (signal?.aborted || shutdownSignal?.aborted || timedOut) {
+            const timedOutOrAborted = signal?.aborted || shutdownSignal?.aborted || timedOut;
+            if (timedOutOrAborted) {
               await stopCurrentProcessGroup();
               reject(new Error(signal?.aborted || shutdownSignal?.aborted ? "aborted" : `timeout:${timeout}`));
               return;
             }
-            clearTrackedProcessGroupFile(processGroupFile, child.pid!);
+            if (closeSignal) {
+              await stopCurrentProcessGroup();
+              reject(new Error(`command terminated by ${closeSignal}`));
+              return;
+            }
+            const pid = child.pid;
+            if (pid !== undefined && isProcessGroupAlive(pid)) {
+              await stopCurrentProcessGroup();
+              reject(new Error("sandboxed bash left background processes running"));
+              return;
+            }
+            if (pid !== undefined) clearTrackedProcessGroupFile(processGroupFile, pid);
             resolveResult({ exitCode: code });
           })().catch(reject);
         });

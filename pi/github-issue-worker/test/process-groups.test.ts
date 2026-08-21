@@ -63,6 +63,50 @@ test("sandboxed bash abort kills the detached descendant process group", async (
   }
 });
 
+test("sandboxed bash rejects when the leader dies but a descendant survives", async (context) => {
+  if (platform() === "win32") context.skip("POSIX process groups are not available on Windows");
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-process-group-leader-"));
+  try {
+    const activeFile = activeCommandProcessGroupPath(root);
+    const leaderPidFile = join(root, "leader.pid");
+    const descendantPidFile = join(root, "descendant.pid");
+    const sandboxManager = SandboxManager as unknown as {
+      wrapWithSandbox: (command: string) => Promise<string>;
+    };
+    const previousWrap = sandboxManager.wrapWithSandbox;
+    sandboxManager.wrapWithSandbox = async (command) => command;
+    try {
+      const operations = createSandboxedBashOperations(activeFile);
+      const execution = operations.exec(
+        [
+          `echo $$ > ${JSON.stringify(leaderPidFile)}`,
+          `sleep 30 >/dev/null 2>&1 & echo $! > ${JSON.stringify(descendantPidFile)}`,
+          "kill -9 $$",
+        ].join("; "),
+        root,
+        { onData: () => undefined, timeout: 30 },
+      );
+
+      await waitForPath(leaderPidFile);
+      await waitForPath(descendantPidFile);
+      const leaderPid = Number.parseInt(await readFile(leaderPidFile, "utf8"), 10);
+      const descendantPid = Number.parseInt(await readFile(descendantPidFile, "utf8"), 10);
+      if (!Number.isInteger(leaderPid)) throw new Error("Leader pid file did not contain a numeric pid");
+      if (!Number.isInteger(descendantPid)) throw new Error("Descendant pid file did not contain a numeric pid");
+
+      await assert.rejects(execution, /SIGKILL/);
+      await assert.rejects(access(activeFile));
+      assert.throws(() => process.kill(leaderPid, 0), (error: any) => error?.code === "ESRCH");
+      assert.throws(() => process.kill(descendantPid, 0), (error: any) => error?.code === "ESRCH");
+      assert.throws(() => process.kill(-leaderPid, 0), (error: any) => error?.code === "ESRCH");
+    } finally {
+      sandboxManager.wrapWithSandbox = previousWrap;
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("supervisor cleanup stops a recorded descendant process group before reuse", async (context) => {
   if (platform() === "win32") context.skip("POSIX process groups are not available on Windows");
   const root = await mkdtemp(join(tmpdir(), "pi-worker-supervisor-group-"));
