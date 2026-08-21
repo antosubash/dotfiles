@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
 import { tmpdir, platform } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { loadConfig } from "../src/config.js";
 import {
@@ -11,7 +12,10 @@ import {
   createSandboxedBashOperations,
 } from "../src/pi-agent.js";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
-import { cleanupSupervisorProfileProcessGroup } from "../src/supervisor.js";
+import {
+  cleanupSupervisorProfileProcessGroup,
+  isMainModule,
+} from "../src/supervisor.js";
 
 async function waitForPath(path: string, timeoutMs = 2_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -25,6 +29,18 @@ async function waitForPath(path: string, timeoutMs = 2_000): Promise<void> {
     }
   }
 }
+
+test("supervisor main detection follows an installed bin symlink", async (context) => {
+  if (platform() === "win32") context.skip("File symlink creation may require elevation on Windows");
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-supervisor-main-"));
+  try {
+    const link = join(root, "pi-issue-worker-supervisor");
+    await symlink(fileURLToPath(new URL("../src/supervisor.ts", import.meta.url)), link);
+    assert.equal(isMainModule(link), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("sandboxed bash abort kills the detached descendant process group", async (context) => {
   if (platform() === "win32") context.skip("POSIX process groups are not available on Windows");
