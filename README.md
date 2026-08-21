@@ -105,6 +105,7 @@ dotfiles/
 │   ├── update-windows.ps1  # Update winget + scoop + modules + WSL distros
 │   ├── setup-agnoster.sh   # Agnoster theme installer
 │   ├── setup-terminal.sh    # Terminal theme configuration
+│   ├── setup-pi-issue-worker.sh # Install the generic headless Pi GitHub worker
 │   ├── setup-update.sh     # Update command installer
 │   ├── update-all.sh       # Full system updater
 │   └── update-quick.sh     # Quick daily updater
@@ -114,7 +115,8 @@ dotfiles/
 │   ├── .profile           # Shell profile
 │   └── agnoster.zsh-theme # Agnoster theme
 ├── pi/
-│   └── agent/             # Pi settings, agents, prompts, skills, extensions
+│   ├── agent/             # Pi settings, agents, prompts, skills, extensions
+│   └── github-issue-worker/ # Generic issue-to-draft-PR worker service
 ├── git/
 │   └── .gitconfig         # Git configuration
 ├── vim/
@@ -188,6 +190,17 @@ Included workflows:
 Write-capable Pi workflows create or reuse linked Git worktrees by default and preserve them for resume/audit. Every new worktree starts from the freshly fetched origin default branch, never the caller's current `HEAD` or local default branch. A dirty primary checkout is never moved or auto-stashed; `--no-worktree` is required to opt out explicitly. Claude specialist agents under `.claude/agents/` are shared with Pi. Claude model tiers are mapped to the configured Codex models. Recognizable destructive shell commands trigger a best-effort interactive approval guard and are blocked in non-interactive runs; this is not a sandbox.
 
 Useful aliases: `pic` continues the latest Pi session and `pir` opens the session picker.
+
+For unattended, label-gated issue implementation across one or more GitHub repositories, install the
+headless worker separately. Each repository gets its own environment profile, SQLite state, control
+clone, worktrees, persistent Pi sessions, and optional local `.qa/` browser evidence:
+
+```bash
+./scripts/setup-pi-issue-worker.sh
+```
+
+The installer does not enable a repository or mutate GitHub. See
+[`pi/github-issue-worker/README.md`](pi/github-issue-worker/README.md) for profile and systemd setup.
 
 ### 4. Shell Theme Setup
 
