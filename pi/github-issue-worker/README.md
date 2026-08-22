@@ -132,7 +132,8 @@ journalctl --user -u pi-issue-worker@widgets.service -f
 ```
 
 The supplied hardened units permit controller writes under `~/.local/share/pi-issue-worker`,
-`~/.cache`, and `~/.pi/agent` (the Pi SDK locks and may refresh its auth state). Sandboxed agent commands
+`~/.cache`, `~/.pi/agent` (the Pi SDK locks and may refresh its auth state), and the private user runtime
+root used for visual browser sockets. Sandboxed agent commands
 still cannot read the Pi agent directory. If a profile sets a different data directory, add that directory
 to `ReadWritePaths` in a systemd override. Pi bash commands also run inside Anthropic Sandbox Runtime:
 reads are denied across the home directory except the issue

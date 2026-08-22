@@ -227,7 +227,7 @@ systemctl --user cat pi-issue-worker-supervisor.service | grep ReadWritePaths
 Expected paths include:
 
 ```text
-%h/.local/share/pi-issue-worker %h/.cache %h/.pi/agent
+%h/.local/share/pi-issue-worker %h/.cache %h/.pi/agent %t
 ```
 
 Rerun the installer when the path is missing.

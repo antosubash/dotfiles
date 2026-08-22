@@ -14,7 +14,7 @@ test("systemd units permit Pi SDK auth locking without exposing it to agent bash
   for (const path of [supervisorUnit, profileUnit]) {
     const unit = await readFile(path, "utf8");
     assert.match(unit, /^ProtectHome=read-only$/m);
-    assert.match(unit, /^ReadWritePaths=.*%h\/\.pi\/agent$/m);
+    assert.match(unit, /^ReadWritePaths=.*%h\/\.pi\/agent.*%t$/m);
   }
 });
 

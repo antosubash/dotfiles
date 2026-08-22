@@ -415,9 +415,7 @@ export class IssueWorker {
         visualVerification:
           job.visualRequested ||
           checks.failures.some((failure) =>
-            /\b(?:browser|chromium|e2e|playwright|visual)\b/i.test(
-              `${failure.name}\n${failure.excerpt || ""}`,
-            ),
+            /\b(?:browser|chromium|e2e|playwright|visual)\b/i.test(failure.name),
           ),
       });
     } catch (error) {
