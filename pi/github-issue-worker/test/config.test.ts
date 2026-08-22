@@ -24,6 +24,8 @@ test("loadConfig uses a hashed default when no legacy directory exists", () => {
     assert.equal(config.maxCiFixAttempts, 3);
     assert.equal(config.model, "openai-codex/gpt-5.6-terra");
     assert.deepEqual(config.protectedPaths, [".git", ".github/workflows", ".pi"]);
+    assert.equal(config.allowDocker, false);
+    assert.equal(config.dockerSocket, null);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -77,6 +79,22 @@ test("loadConfig validates the CI repair attempt bound", () => {
   assert.throws(
     () => loadConfig({ ...base, PI_WORKER_MAX_CI_FIX_ATTEMPTS: "0" }),
     /PI_WORKER_MAX_CI_FIX_ATTEMPTS/,
+  );
+});
+
+test("loadConfig validates the privileged Docker opt-in", () => {
+  assert.throws(
+    () => loadConfig({ ...base, PI_WORKER_ALLOW_DOCKER: "sometimes" }),
+    /PI_WORKER_ALLOW_DOCKER/,
+  );
+  assert.throws(
+    () =>
+      loadConfig({
+        ...base,
+        PI_WORKER_ALLOW_DOCKER: "1",
+        PI_WORKER_DOCKER_SOCKET: "/definitely/missing/docker.sock",
+      }),
+    /accessible Unix socket/,
   );
 });
 

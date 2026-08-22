@@ -49,6 +49,35 @@ test("visual sandbox exposes Unix sockets only behind private tmp and run-direct
   assert.equal(sandbox.filesystem?.allowRead?.includes("/tmp"), false);
 });
 
+test("Docker socket access is explicit and scoped to the privileged run", () => {
+  const config = loadConfig({
+    HOME: "/tmp/pi-home",
+    PI_WORKER_REPOSITORY: "example/widgets",
+    PI_WORKER_BASE_BRANCH: "main",
+  });
+  const dockerSocket = "/run/docker.sock";
+  const privateTemp = "/tmp/piw-private";
+  const sandbox = sandboxConfig("/tmp/pi-home/data/worktrees/issue-1", config, {
+    privateTemp,
+    dockerSocket,
+  });
+  assert.equal(sandbox.network?.allowAllUnixSockets, true);
+  assert.ok(sandbox.filesystem?.allowRead?.includes(dockerSocket));
+  assert.ok(sandbox.filesystem?.allowWrite?.includes(dockerSocket));
+  assert.ok(sandbox.filesystem?.denyRead?.includes("/tmp"));
+  assert.ok(sandbox.filesystem?.denyRead?.includes("/var"));
+  assert.ok(sandbox.filesystem?.allowWrite?.includes("/tmp/piw-private"));
+  assert.equal(sandbox.filesystem?.allowWrite?.includes("/tmp"), false);
+
+  const rootlessSocket = join(privateTemp, "..", "docker.sock");
+  const rootless = sandboxConfig("/tmp/pi-home/data/worktrees/issue-1", config, {
+    privateTemp,
+    dockerSocket: rootlessSocket,
+  });
+  assert.equal(rootless.filesystem?.denyRead?.includes(rootlessSocket), false);
+  assert.ok(rootless.filesystem?.allowRead?.includes(rootlessSocket));
+});
+
 test("visual sandbox isolation fails closed without namespace and socket-path hiding", () => {
   assert.doesNotThrow(() =>
     assertVisualSandboxIsolation("bwrap --unshare-net --tmpfs /tmp --tmpfs /var"),
@@ -108,6 +137,21 @@ test("headless policy keeps GitHub and git writes in the controller", () => {
   assert.match(commandBlockReason("git -C /tmp/repo push origin branch", []) || "", /git mutation/);
   assert.match(commandBlockReason("git commit -m test", []) || "", /git mutation/);
   assert.equal(commandBlockReason("git diff --stat", []), null);
+  assert.match(commandBlockReason("docker build .", []) || "", /explicit trusted/);
+  assert.equal(commandBlockReason("docker build .", [], { dockerAccess: true }), null);
+  assert.match(
+    commandBlockReason("docker run --privileged image", [], { dockerAccess: true }) || "",
+    /forbidden/,
+  );
+  for (const command of [
+    "docker run -v /:/host image",
+    "docker run -v/:/host image",
+    "docker run --volume /:/host image",
+    "docker run --volume=/:/host image",
+    "docker run \\\n--volume /:/host image",
+  ]) {
+    assert.match(commandBlockReason(command, [], { dockerAccess: true }) || "", /forbidden/);
+  }
 });
 
 test("headless policy blocks privilege, destructive commands, and configured paths", () => {

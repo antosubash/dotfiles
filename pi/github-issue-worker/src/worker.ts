@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkerConfig } from "./config.js";
 import { convertWebmToGif, createEvidenceRun, removeExpiredEvidence } from "./evidence.js";
@@ -55,6 +55,20 @@ async function finishRequestedGif(runDir: string | null): Promise<boolean> {
   if (!hasWebm) return false;
   await convertWebmToGif(webm, gif);
   return true;
+}
+
+async function visualEvidenceNote(
+  runDir: string | null,
+  relativeRunDir: string | null,
+): Promise<string> {
+  if (!runDir || !relativeRunDir) return "";
+  const artifacts = (await readdir(runDir).catch(() => []))
+    .filter((name) => /\.(?:png|gif|webm|md|txt)$/i.test(name))
+    .sort();
+  if (artifacts.length === 0) {
+    return `\n\nVisual evidence directory (local, ignored): \`${relativeRunDir}\` (no capture artifact was produced).`;
+  }
+  return `\n\nVisual evidence captured locally under ignored \`${relativeRunDir}\`:\n${artifacts.map((name) => `- \`${name}\``).join("\n")}`;
 }
 
 function markdownSummary(text: string, maximum = 5_000): string {
@@ -211,13 +225,17 @@ export class IssueWorker {
         });
       } catch (error) {
         await this.repository.clearAgentChanges(worktree.path, worktree.branch);
-        throw error;
+        throw new Error(
+          `${errorText(error)}${await visualEvidenceNote(evidence?.runDir ?? null, evidence?.relativeRunDir ?? null)}`,
+        );
       }
       this.state.setSession(issue.number, result.sessionFile);
       finalText = result.finalText;
       if (isBlockedFinalOutput(finalText)) {
         await this.repository.clearAgentChanges(worktree.path, worktree.branch);
-        throw new Error(finalText);
+        throw new Error(
+          `${finalText}${await visualEvidenceNote(evidence?.runDir ?? null, evidence?.relativeRunDir ?? null)}`,
+        );
       }
     }
 
@@ -237,7 +255,9 @@ export class IssueWorker {
       } else if (isBlockedFinalOutput(finalText)) {
         throw new Error(finalText);
       } else {
-        throw new Error(`Pi made no tracked changes.\n\n${finalText}`);
+        throw new Error(
+          `Pi made no tracked changes.\n\n${finalText}${await visualEvidenceNote(evidence?.runDir ?? null, evidence?.relativeRunDir ?? null)}`,
+        );
       }
     } catch (error) {
       if (!controllerMutationExpected) throw error;
@@ -253,9 +273,13 @@ export class IssueWorker {
       ));
     this.state.setPullRequest(issue.number, pull.number, pull.url);
     await this.github.markPullRequestOpen(issue.number);
+    const evidenceNote = await visualEvidenceNote(
+      evidence?.runDir ?? null,
+      evidence?.relativeRunDir ?? null,
+    );
     await this.github.commentIssue(
       issue.number,
-      `✅ Draft pull request opened: ${pull.url}\n\n${markdownSummary(finalText, 2_500)}`,
+      `✅ Draft pull request opened: ${pull.url}\n\n${markdownSummary(finalText, 2_500)}${evidenceNote}`,
     );
     await removeExpiredEvidence(worktree.path, this.config.qaRetentionDays);
   }
@@ -732,7 +756,7 @@ export class IssueWorker {
       for (const item of feedback) this.state.markProcessed(job.issueNumber, item.eventKey);
       await this.github.commentPullRequest(
         job.prNumber!,
-        "Commands: `/pi fix <request>`, `/pi retry`, `/pi verify visual`, `/pi verify gif`, `/pi stop`. Formal reviews and inline review comments from trusted maintainers are handled automatically.",
+        "Commands: `/pi fix <request>`, `/pi retry`, `/pi verify visual`, `/pi verify gif`, `/pi fix docker <request>` (profile opt-in required), `/pi stop`. Formal reviews and inline review comments from trusted maintainers are handled automatically.",
       );
       return;
     }
@@ -761,6 +785,7 @@ export class IssueWorker {
     const visualRequested =
       job.visualRequested || commands.some((command) => /\b(?:visual|gif)\b/.test(command));
     const gifRequested = commands.some((command) => /\bgif\b/.test(command));
+    const dockerRequested = commands.some((command) => /\bdocker\b/.test(command));
     const evidence = visualRequested
       ? await createEvidenceRun(worktree.path, job.issueNumber, job.prNumber)
       : null;
@@ -779,9 +804,11 @@ export class IssueWorker {
           feedback,
           evidenceDir: evidence?.relativeRunDir ?? null,
           gifRequested,
+          dockerAccess: dockerRequested && this.config.allowDocker,
         }),
         logFile: join(this.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
         visualVerification: evidence !== null,
+        dockerAccess: dockerRequested,
       });
       this.state.setSession(job.issueNumber, result.sessionFile);
       if (isBlockedFinalOutput(result.finalText)) {
@@ -790,6 +817,10 @@ export class IssueWorker {
       }
       controllerPhase = true;
       const gifCreated = gifRequested ? await finishRequestedGif(evidence?.runDir ?? null) : false;
+      const evidenceNote = await visualEvidenceNote(
+        evidence?.runDir ?? null,
+        evidence?.relativeRunDir ?? null,
+      );
       const changed = await this.repository.changedFiles(worktree.path);
       if (changed.length > 0) {
         await this.repository.commitAndPush(
@@ -803,11 +834,14 @@ export class IssueWorker {
       await this.github.markPullRequestOpen(job.issueNumber);
       await this.github.commentPullRequest(
         job.prNumber!,
-        `✅ Feedback processed${changed.length > 0 ? " and an update was pushed" : " with no tracked code changes"}.${gifCreated ? ` GIF created at \`${evidence?.relativeRunDir}/workflow.gif\`.` : ""}\n\n${markdownSummary(result.finalText)}`,
+        `✅ Feedback processed${changed.length > 0 ? " and an update was pushed" : " with no tracked code changes"}.${gifCreated ? ` GIF created at \`${evidence?.relativeRunDir}/workflow.gif\`.` : ""}\n\n${markdownSummary(result.finalText)}${evidenceNote}`,
       );
       await removeExpiredEvidence(worktree.path, this.config.qaRetentionDays);
     } catch (error) {
-      const message = errorText(error);
+      const message = `${errorText(error)}${await visualEvidenceNote(
+        evidence?.runDir ?? null,
+        evidence?.relativeRunDir ?? null,
+      )}`;
       if (controllerPhase) {
         this.state.setStatus(job.issueNumber, "addressing_review", message);
         throw error;

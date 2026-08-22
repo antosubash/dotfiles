@@ -102,6 +102,9 @@ PI_WORKER_SANDBOX_ALLOWED_DOMAINS=
 PI_WORKER_MODEL=openai-codex/gpt-5.6-terra
 PI_WORKER_THINKING_LEVEL=high
 PI_WORKER_MAX_CI_FIX_ATTEMPTS=3
+# Privileged opt-in; see "Explicit Docker access" before enabling.
+PI_WORKER_ALLOW_DOCKER=0
+# PI_WORKER_DOCKER_SOCKET=/var/run/docker.sock
 ```
 
 Validate GitHub and Pi authentication without changing GitHub, then run one poll interactively:
@@ -196,6 +199,7 @@ Trusted repository owners, members, and collaborators can write:
 /pi retry
 /pi verify visual
 /pi verify gif
+/pi fix docker run the repository's containerized integration test
 /pi stop
 /pi help
 ```
@@ -231,7 +235,23 @@ Pi uses a unique `playwright-cli` session, takes an accessibility snapshot befor
 console/network failures, and closes the browser session. GIF requests record WebM and use `ffmpeg` for
 conversion. On Linux, browser runs receive a short-lived private temporary directory and complete the
 server/browser workflow in one sandbox command so Playwright's daemon and sockets are cleaned up. Private
-browser temp directories older than 24 hours are removed before later agent runs.
+browser temp directories older than 24 hours are removed before later agent runs. Every visual response
+includes a controller-generated artifact manifest, even when the model omits evidence paths from its prose.
+
+## Explicit Docker access
+
+Docker is disabled by default. To permit it for a repository profile, the machine owner must set
+`PI_WORKER_ALLOW_DOCKER=1`; `PI_WORKER_DOCKER_SOCKET` defaults to `/var/run/docker.sock` and must resolve
+to an accessible Unix socket. A trusted maintainer must then explicitly include `docker` in the `/pi`
+command for that individual agent run, for example `/pi fix docker run the integration test`. Automatic
+issue implementation, review handling, and CI repair never receive Docker access merely because the
+profile opt-in exists.
+
+This is a **privileged escape hatch**, not normal sandboxing. Access to the Docker daemon can provide host-level
+control and bypass the Sandbox Runtime's filesystem and network boundaries. The worker blocks common
+privileged, host-namespace, device, host-mount, and socket-forwarding flags, but command filtering is not a
+security boundary. Enable it only on a dedicated disposable worker machine/account, for trusted repositories,
+and never on a host containing unrelated credentials or workloads. Prefer repository-native tests when possible.
 
 ## State and recovery
 
@@ -267,6 +287,8 @@ branch name.
   paths, CI workflows, and configured protected paths. The controller checks paths again before commit.
   Explicit `BLOCKED` results are never committed; tracked, untracked, and ignored partial changes are
   cleared while ignored `.qa` evidence is retained.
+- Docker access is doubly gated by a machine-owner profile opt-in and an explicit trusted `/pi ... docker`
+  command. It deliberately weakens the sandbox and should be used only on a dedicated disposable worker host.
 - Linux visual runs must permit Unix sockets because Chromium and Playwright require them. This is
   enabled only for explicitly requested visual verification or diagnosed browser CI failures; the sandbox hides the home directory and
   `/tmp` and `/var`, masks unrelated `/run` entries, and exposes only a unique private runtime temp

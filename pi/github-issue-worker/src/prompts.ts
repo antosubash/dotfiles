@@ -19,7 +19,7 @@ Visual verification is requested. Treat verification as part of completion, but 
 - Use a unique playwright-cli session, take an accessibility snapshot before interaction, and inspect console errors and failed requests.
 - On Linux, keep the app server and the complete playwright-cli open/interact/capture/close sequence in one bash tool call with cleanup traps. The private browser sandbox and its Unix sockets exist only for that command lifetime.
 - Save desktop and relevant mobile screenshots, snapshot.txt, console.log, requests.txt, and report.md under the evidence directory.
-${gif ? "- Record a short workflow.webm with playwright-cli video-start/video-stop and convert it to workflow.gif with ffmpeg." : "- A GIF is not required unless it is the clearest proof."}
+${gif ? "- Record a short workflow using `playwright-cli -s=<session> video-start <evidence-directory>/workflow.webm`, perform the interaction, then run `playwright-cli -s=<session> video-stop`. The controller converts that exact WebM to workflow.gif." : "- A GIF is not required unless it is the clearest proof."}
 - Close the Playwright session even when verification fails.
 - .qa is ignored scratch space. Never stage or commit this evidence.
 If the application cannot be launched or authenticated, record the exact blocker in report.md and in your final response.
@@ -69,6 +69,7 @@ export function buildFeedbackPrompt(options: {
   feedback: PullRequestFeedback[];
   evidenceDir: string | null;
   gifRequested: boolean;
+  dockerAccess?: boolean;
 }): string {
   return `Address trusted maintainer feedback on pull request #${options.prNumber} for issue #${options.issueNumber}.
 
@@ -89,6 +90,12 @@ Inspect the current branch and existing implementation, make only the changes ne
 and run relevant checks. If feedback conflicts with repository rules or is ambiguous, explain the blocker instead
 of making a speculative change. Do not stage, commit, push, comment, or change branches.
 ${visualInstructions(options.config, options.evidenceDir, options.gifRequested)}
+${options.dockerAccess ? `
+Docker access was explicitly granted by a trusted maintainer and enabled by the machine owner for this run.
+Use it only when repository-native non-Docker checks cannot verify the requested behavior. Never use privileged
+containers, host namespace/device access, host path mounts, or Docker socket forwarding. Docker daemon access
+weakens the OS sandbox boundary, so run the narrowest command and report exactly what was executed.
+` : ""}
 End with a concise summary of each feedback item, the response, checks run, evidence paths, and any blocker.
 `;
 }

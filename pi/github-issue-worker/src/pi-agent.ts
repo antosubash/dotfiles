@@ -79,7 +79,12 @@ function normalizeToolPath(cwd: string, input: unknown): string | null {
   return local.startsWith("../") || local === ".." ? null : local;
 }
 
-export function commandBlockReason(command: string, protectedPaths: readonly string[]): string | null {
+export function commandBlockReason(
+  command: string,
+  protectedPaths: readonly string[],
+  options: { dockerAccess?: boolean } = {},
+): string | null {
+  const inspectedCommand = command.replace(/\\\r?\n/g, " ");
   const rules: Array<[RegExp, string]> = [
     [/\bgh\s+/i, "GitHub CLI writes and reads belong to the controller"],
     [/\bgit\b[^\n]*(?:\bpush|\bcommit|\badd|\breset|\bclean|\brebase|\bcheckout|\bswitch|\bworktree)\b/i, "git mutation belongs to the controller"],
@@ -87,12 +92,24 @@ export function commandBlockReason(command: string, protectedPaths: readonly str
     [/\brm\b[^\n]*(?:-[a-z]*r[a-z]*|--recursive)\b/i, "recursive deletion is forbidden"],
     [/appsettings\.secrets\.json/i, "secret files are protected"],
     [/(^|[\s/'"])\.env(?:[\s/'".]|$)/i, ".env files are protected"],
+    [
+      /\bdocker(?:-compose)?\b/i,
+      options.dockerAccess
+        ? ""
+        : "Docker requires an explicit trusted /pi request and PI_WORKER_ALLOW_DOCKER=1",
+    ],
   ];
   for (const [pattern, reason] of rules) {
-    if (pattern.test(command)) return reason;
+    if (reason && pattern.test(inspectedCommand)) return reason;
+  }
+  if (
+    options.dockerAccess &&
+    /\bdocker(?:-compose)?\b[^\n]*(?:--privileged|--pid(?:=|\s+)host|--network(?:=|\s+)host|--device(?:=|\s+)|--mount(?:=|\s+)|--volume(?:=|\s+)|(?:^|\s)-v(?:\S*|\s+)|\/var\/run\/docker\.sock|\/run\/docker\.sock)/i.test(inspectedCommand)
+  ) {
+    return "Docker host mounts, host namespaces, devices, privileged mode, and socket forwarding are forbidden";
   }
   for (const path of protectedPaths) {
-    if (path && command.includes(path)) return `protected path referenced: ${path}`;
+    if (path && inspectedCommand.includes(path)) return `protected path referenced: ${path}`;
   }
   return null;
 }
@@ -129,6 +146,7 @@ interface AgentRunOptions {
   prompt: string;
   logFile: string;
   visualVerification?: boolean;
+  dockerAccess?: boolean;
 }
 
 const GITHUB_SECRET_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"] as const;
@@ -194,7 +212,7 @@ function gitMetadataPaths(worktree: string): string[] {
 export function sandboxConfig(
   worktree: string,
   config: WorkerConfig,
-  options: { privateTemp?: string; visualVerification?: boolean } = {},
+  options: { privateTemp?: string; visualVerification?: boolean; dockerSocket?: string | null } = {},
 ): SandboxRuntimeConfig {
   const home = resolve(process.env.HOME || homedir());
   const privateTemp = resolve(options.privateTemp || "/tmp");
@@ -209,15 +227,18 @@ export function sandboxConfig(
       WORKER_RUNTIME_ROOT,
       ...gitMetadataPaths(worktree),
       ...pathReadPaths,
+      ...(options.dockerSocket ? [options.dockerSocket] : []),
     ]),
   ];
   const visualVerification = options.visualVerification === true;
-  const linuxVisual = visualVerification && process.platform === "linux";
-  const hiddenRunEntries = linuxVisual
+  const socketAccessRequested = visualVerification || Boolean(options.dockerSocket);
+  const linuxSocketAccess = socketAccessRequested && process.platform === "linux";
+  const hiddenRunEntries = linuxSocketAccess
     ? [
         ...readdirSync("/run", { withFileTypes: true })
           .filter((entry) => entry.name !== "user" && !entry.isSymbolicLink())
-          .map((entry) => resolve("/run", entry.name)),
+          .map((entry) => resolve("/run", entry.name))
+          .filter((path) => path !== options.dockerSocket),
         ...readdirSync("/run/user", { withFileTypes: true })
           .filter(
             (entry) =>
@@ -228,13 +249,18 @@ export function sandboxConfig(
         ...readdirSync(dirname(privateTemp), { withFileTypes: true })
           .filter((entry) => !entry.isSymbolicLink())
           .map((entry) => resolve(dirname(privateTemp), entry.name))
-          .filter((path) => path !== privateTemp),
+          .filter((path) => path !== privateTemp && path !== options.dockerSocket),
       ]
     : [];
-  const visualSocketPolicy = visualVerification
+  const visualSocketPolicy = socketAccessRequested
     ? process.platform === "linux"
       ? { allowAllUnixSockets: true }
-      : { allowUnixSockets: [privateTemp] }
+      : {
+          allowUnixSockets: [
+            ...(visualVerification ? [privateTemp] : []),
+            ...(options.dockerSocket ? [options.dockerSocket] : []),
+          ],
+        }
     : {};
   return {
     network: {
@@ -247,10 +273,14 @@ export function sandboxConfig(
       denyRead: [
         home,
         ...hiddenRunEntries,
-        ...(linuxVisual ? ["/tmp", "/var"] : []),
+        ...(linuxSocketAccess ? ["/tmp", "/var"] : []),
       ],
       allowRead: readPaths,
-      allowWrite: [worktree, ...(visualVerification ? [privateTemp] : ["/tmp"])],
+      allowWrite: [
+        worktree,
+        ...(linuxSocketAccess ? [privateTemp] : ["/tmp"]),
+        ...(options.dockerSocket ? [options.dockerSocket] : []),
+      ],
       denyWrite: [
         resolve(home, ".ssh"),
         resolve(home, ".aws"),
@@ -380,6 +410,7 @@ export async function stopTrackedProcessGroup(processGroupFile: string): Promise
 export function createSandboxedBashOperations(
   processGroupFile: string,
   shutdownSignal?: AbortSignal,
+  environmentOverrides: NodeJS.ProcessEnv = {},
 ): BashOperations {
   return {
     async exec(command, cwd, { onData, signal, timeout }) {
@@ -388,7 +419,7 @@ export function createSandboxedBashOperations(
         const child = spawn("bash", ["-c", wrappedCommand], {
           cwd,
           detached: true,
-          env: sandboxEnvironment(),
+          env: { ...sandboxEnvironment(), ...environmentOverrides },
           stdio: ["ignore", "pipe", "pipe"],
         });
         if (!child.pid) {
@@ -515,7 +546,11 @@ export class PiAgentRunner {
     await mkdir(dirname(options.logFile), { recursive: true });
     const processGroupFile = activeCommandProcessGroupPath(this.config.dataDir);
     const visualVerification = options.visualVerification === true;
-    const tempRoot = sandboxTempRoot(visualVerification);
+    const dockerAccess = options.dockerAccess === true;
+    if (dockerAccess && (!this.config.allowDocker || !this.config.dockerSocket)) {
+      throw new Error("Docker access was requested but is not enabled for this worker profile");
+    }
+    const tempRoot = sandboxTempRoot(visualVerification || dockerAccess);
     await removeStaleSandboxTemps(tempRoot);
     // Keep this short: Unix-domain browser socket paths are limited to roughly 108 bytes on Linux.
     const sandboxTemp = await mkdtemp(join(tempRoot, "piw-"));
@@ -523,7 +558,9 @@ export class PiAgentRunner {
     const previousSandboxTemp = process.env.CLAUDE_CODE_TMPDIR;
     const previousTmpdir = process.env.TMPDIR;
     process.env.CLAUDE_CODE_TMPDIR = sandboxTemp;
-    if (visualVerification && process.platform === "linux") process.env.TMPDIR = sandboxTemp;
+    if ((visualVerification || dockerAccess) && process.platform === "linux") {
+      process.env.TMPDIR = sandboxTemp;
+    }
     const shutdownController = new AbortController();
     const onInterrupt = () => shutdownController.abort();
     process.on("SIGINT", onInterrupt);
@@ -534,15 +571,19 @@ export class PiAgentRunner {
         sandboxConfig(options.worktree, this.config, {
           privateTemp: sandboxTemp,
           visualVerification: options.visualVerification === true,
+          dockerSocket: dockerAccess ? this.config.dockerSocket : null,
         }),
       );
-      if (process.platform === "linux" && options.visualVerification === true) {
+      if (process.platform === "linux" && (visualVerification || dockerAccess)) {
         assertVisualSandboxIsolation(await SandboxManager.wrapWithSandbox("true"));
       }
       const settingsManager = SettingsManager.create(options.worktree, this.config.agentDir);
       const sandboxedBashOperations = createSandboxedBashOperations(
         processGroupFile,
         shutdownController.signal,
+        dockerAccess && this.config.dockerSocket
+          ? { DOCKER_HOST: `unix://${this.config.dockerSocket}` }
+          : {},
       );
       const loader = new DefaultResourceLoader({
         cwd: options.worktree,
@@ -564,7 +605,9 @@ export class PiAgentRunner {
               pi.on("tool_call", (event) => {
                 const input = event.input as { command?: unknown; path?: unknown };
                 if (event.toolName === "bash" && typeof input.command === "string") {
-                  const reason = commandBlockReason(input.command, this.config.protectedPaths);
+                  const reason = commandBlockReason(input.command, this.config.protectedPaths, {
+                    dockerAccess,
+                  });
                   if (reason) return { block: true, reason, terminate: false };
                 }
                 if (["read", "write", "edit"].includes(event.toolName)) {

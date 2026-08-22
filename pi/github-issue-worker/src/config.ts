@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 
@@ -38,6 +38,8 @@ export interface WorkerConfig {
   qaRetentionDays: number;
   agentDir: string;
   sandboxAllowedDomains: readonly string[];
+  allowDocker: boolean;
+  dockerSocket: string | null;
 }
 
 function expandPath(value: string, home = homedir()): string {
@@ -52,6 +54,13 @@ function directoryExists(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function booleanFlag(name: string, value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized || ["0", "false", "no"].includes(normalized)) return false;
+  if (["1", "true", "yes"].includes(normalized)) return true;
+  throw new Error(`${name} must be 1/true/yes or 0/false/no`);
 }
 
 function positiveInteger(name: string, value: string, fallback: number): number {
@@ -130,6 +139,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     : directoryExists(legacyDataDir)
       ? legacyDataDir
       : hashedDataDir;
+  const allowDocker = booleanFlag("PI_WORKER_ALLOW_DOCKER", env.PI_WORKER_ALLOW_DOCKER);
+  let dockerSocket = allowDocker
+    ? expandPath(env.PI_WORKER_DOCKER_SOCKET?.trim() || "/var/run/docker.sock", home)
+    : null;
+  if (dockerSocket) {
+    try {
+      if (!statSync(dockerSocket).isSocket()) {
+        throw new Error("path is not a Unix socket");
+      }
+      dockerSocket = realpathSync(dockerSocket);
+    } catch (error) {
+      throw new Error(
+        `PI_WORKER_DOCKER_SOCKET must reference an accessible Unix socket: ${dockerSocket} (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
+  }
 
   return {
     repository,
@@ -166,5 +191,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     ),
     agentDir: expandPath(env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent", home),
     sandboxAllowedDomains: [...new Set(sandboxAllowedDomains)],
+    allowDocker,
+    dockerSocket,
   };
 }
