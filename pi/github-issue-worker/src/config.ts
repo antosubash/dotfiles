@@ -105,7 +105,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       .filter(Boolean),
   ];
   const statePath = env.PI_WORKER_PLAYWRIGHT_STATE?.trim();
-  const model = env.PI_WORKER_MODEL?.trim() || "openai-codex/gpt-5.6-luna";
+  const model = env.PI_WORKER_MODEL?.trim() || "openai-codex/gpt-5.6-terra";
   if (!/^[^/\s]+\/[^/\s]+$/.test(model)) {
     throw new Error("PI_WORKER_MODEL must use provider/model format");
   }

@@ -81,3 +81,62 @@ test("repository manager creates an isolated base worktree and always ignores .q
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("repository manager merges a fresh base and commits an agent-resolved conflict without rebasing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-base-merge-"));
+  const source = join(root, "source");
+  const remote = join(root, "remote.git");
+  try {
+    await mkdir(source);
+    await execFile("git", ["init", "--initial-branch=main"], { cwd: source });
+    await execFile("git", ["config", "user.name", "Test Worker"], { cwd: source });
+    await execFile("git", ["config", "user.email", "worker@example.invalid"], { cwd: source });
+    await writeFile(join(source, "shared.txt"), "initial\n");
+    await execFile("git", ["add", "shared.txt"], { cwd: source });
+    await execFile("git", ["commit", "-m", "init"], { cwd: source });
+    await execFile("git", ["clone", "--bare", source, remote]);
+    await execFile("git", ["remote", "add", "origin", remote], { cwd: source });
+
+    const manager = new RepositoryManager(
+      loadConfig({
+        HOME: root,
+        PI_WORKER_REPOSITORY: "example/widgets",
+        PI_WORKER_REPOSITORY_URL: remote,
+        PI_WORKER_BASE_BRANCH: "main",
+        PI_WORKER_DATA_DIR: join(root, "data"),
+      }),
+    );
+    await manager.ensureControlRepository();
+    const worktree = await manager.ensureIssueWorktree(42, "Conflict fixture");
+    await execFile("git", ["config", "user.name", "Test Worker"], { cwd: worktree.path });
+    await execFile("git", ["config", "user.email", "worker@example.invalid"], { cwd: worktree.path });
+    await writeFile(join(worktree.path, "shared.txt"), "feature\n");
+    await execFile("git", ["add", "shared.txt"], { cwd: worktree.path });
+    await execFile("git", ["commit", "-m", "feature"], { cwd: worktree.path });
+    await manager.pushIfAhead(worktree.path, worktree.branch);
+
+    await writeFile(join(source, "shared.txt"), "base\n");
+    await execFile("git", ["add", "shared.txt"], { cwd: source });
+    await execFile("git", ["commit", "-m", "base update"], { cwd: source });
+    await execFile("git", ["push", "origin", "main"], { cwd: source });
+
+    const featureHead = await manager.headRevision(worktree.path);
+    const merge = await manager.beginBaseMerge(worktree.path, worktree.branch, featureHead);
+    assert.deepEqual(merge.conflicts, ["shared.txt"]);
+    await writeFile(join(worktree.path, "shared.txt"), "base and feature\n");
+    await execFile("git", ["add", "shared.txt"], { cwd: worktree.path });
+    const resumed = await manager.beginBaseMerge(worktree.path, worktree.branch, featureHead);
+    assert.equal(resumed.mergeInProgress, true);
+    assert.deepEqual(resumed.conflicts, []);
+    await manager.finishBaseMerge(worktree.path, worktree.branch, 42, featureHead);
+
+    assert.equal((await manager.unmergedFiles(worktree.path)).length, 0);
+    const parents = (
+      await execFile("git", ["rev-list", "--parents", "-n", "1", "HEAD"], { cwd: worktree.path })
+    ).stdout.trim().split(/\s+/);
+    assert.equal(parents.length, 3);
+    assert.equal(await manager.hasUnpushedCommits(worktree.path, worktree.branch), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

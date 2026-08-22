@@ -60,6 +60,14 @@ export interface PullRequestInfo {
   url: string;
 }
 
+export interface PullRequestMergeState {
+  headSha: string;
+  baseSha: string;
+  baseBranch: string;
+  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  mergeStateStatus: string;
+}
+
 export interface PullRequestCheckFailure {
   name: string;
   conclusion: string;

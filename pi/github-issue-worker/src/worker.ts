@@ -12,11 +12,12 @@ import {
   buildCiFailurePrompt,
   buildFeedbackPrompt,
   buildIssuePrompt,
+  buildMergeConflictPrompt,
   commitMessage,
   pullRequestBody,
   pullRequestTitle,
 } from "./prompts.js";
-import { RepositoryManager } from "./repository.js";
+import { BranchDivergenceError, RepositoryManager } from "./repository.js";
 import { WorkerState } from "./state.js";
 import type {
   GitHubIssue,
@@ -31,6 +32,8 @@ function errorText(error: unknown): string {
 }
 
 class RetryableControllerError extends Error {}
+
+const CONFLICT_BLOCK_PREFIX = "Automatic base-branch conflict resolution failed:";
 
 function isInterruptedRun(error: unknown): boolean {
   return /(?:^|\b)(?:aborted|sigint|sigterm|shutdown|terminated by signal)(?:\b|$)/i.test(
@@ -115,6 +118,7 @@ export class IssueWorker {
       }
       await this.startIssue(issue).catch((error) => this.handleInitialFailure(issue.number, error));
     }
+    if (await this.processPullRequestConflicts()) return;
     await this.processPullRequestFeedback();
     await this.processPullRequestCi();
   }
@@ -262,6 +266,187 @@ export class IssueWorker {
     await this.github.markBlocked(issueNumber, message).catch(() => undefined);
   }
 
+  private async processPullRequestConflicts(): Promise<boolean> {
+    if (typeof this.github.getPullRequestMergeState !== "function") return false;
+    let startedConflictResolution = false;
+    for (const job of this.state.listPullRequests()) {
+      if (!job.prNumber || !(await this.github.isPullRequestOpen(job.prNumber))) continue;
+      const mergeState = await this.github.getPullRequestMergeState(job.prNumber);
+      const interruptedMerge =
+        typeof this.repository.hasMergeInProgress === "function"
+          ? await this.repository.hasMergeInProgress(job.worktreePath).catch(() => false)
+          : false;
+      const conflicting =
+        mergeState.mergeable === "CONFLICTING" || mergeState.mergeStateStatus === "DIRTY";
+      if (!interruptedMerge && !conflicting) {
+        if (
+          mergeState.mergeable === "MERGEABLE" &&
+          job.lastError?.startsWith(CONFLICT_BLOCK_PREFIX)
+        ) {
+          this.state.setStatus(job.issueNumber, "pr_open");
+          await this.github.markPullRequestOpen(job.issueNumber);
+          await this.github.commentPullRequest(
+            job.prNumber,
+            "✅ The base-branch conflict is no longer present. Automatic PR tracking has resumed.",
+          );
+        }
+        continue;
+      }
+      const eventKey = `merge-conflict:${job.prNumber}:${mergeState.baseBranch}:${mergeState.headSha}:${mergeState.baseSha}`;
+      if (this.state.hasProcessed(eventKey)) continue;
+      startedConflictResolution = true;
+      await this.handleMergeConflict(
+        job,
+        mergeState.headSha,
+        mergeState.baseSha,
+        mergeState.baseBranch,
+        eventKey,
+      );
+    }
+    return startedConflictResolution;
+  }
+
+  private async handleMergeConflict(
+    job: IssueJob,
+    pullRequestHead: string,
+    pullRequestBase: string,
+    pullRequestBaseBranch: string,
+    eventKey: string,
+  ): Promise<void> {
+    const worktree = await this.repository.ensureIssueWorktree(
+      job.issueNumber,
+      job.branch,
+      job.worktreePath,
+    );
+    try {
+      if (pullRequestBaseBranch !== this.config.baseBranch) {
+        throw new Error(
+          `Pull request targets ${pullRequestBaseBranch}, but this worker is configured for ${this.config.baseBranch}`,
+        );
+      }
+      const localHead = await this.repository.headRevision(worktree.path);
+      if (localHead !== pullRequestHead) {
+        await this.repository.recoverBaseMergePush(
+          worktree.path,
+          worktree.branch,
+          pullRequestHead,
+          pullRequestBase,
+        );
+        await this.github.markPullRequestOpen(job.issueNumber);
+        await this.github.commentPullRequest(
+          job.prNumber!,
+          "🔀 Recovered and pushed an interrupted base-branch conflict resolution.",
+        );
+        this.state.completeEvent(job.issueNumber, eventKey, "pr_open");
+        return;
+      }
+
+      const merge = await this.repository.beginBaseMerge(
+        worktree.path,
+        worktree.branch,
+        pullRequestHead,
+      );
+      if (merge.conflicts.length === 0) {
+        if (merge.mergeInProgress) {
+          await this.assertPullRequestMergeContext(
+            job.prNumber!,
+            pullRequestHead,
+            merge.baseSha,
+          );
+          await this.repository.finishBaseMerge(
+            worktree.path,
+            worktree.branch,
+            job.issueNumber,
+            pullRequestHead,
+          );
+        } else if (
+          !merge.alreadyCurrent &&
+          (await this.repository.hasUnpushedCommits(worktree.path, worktree.branch))
+        ) {
+          await this.repository.pushIfAhead(worktree.path, worktree.branch);
+        }
+        await this.github.markPullRequestOpen(job.issueNumber);
+        await this.github.commentPullRequest(
+          job.prNumber!,
+          `🔀 Updated the feature branch from \`${this.config.baseBranch}\` without rebasing. No manual conflict resolution was required.`,
+        );
+        this.state.completeEvent(job.issueNumber, eventKey, "pr_open");
+        return;
+      }
+
+      const result = await this.agent.run({
+        worktree: worktree.path,
+        sessionDir: join(this.config.dataDir, "sessions", `issue-${job.issueNumber}`),
+        sessionFile: job.sessionFile,
+        prompt: buildMergeConflictPrompt({
+          issueNumber: job.issueNumber,
+          prNumber: job.prNumber!,
+          baseBranch: this.config.baseBranch,
+          baseSha: merge.baseSha,
+          headSha: pullRequestHead,
+          conflicts: merge.conflicts,
+        }),
+        logFile: join(this.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
+        visualVerification: false,
+      });
+      this.state.setSession(job.issueNumber, result.sessionFile);
+      if (isBlockedFinalOutput(result.finalText)) throw new Error(result.finalText);
+      await this.assertPullRequestMergeContext(
+        job.prNumber!,
+        pullRequestHead,
+        merge.baseSha,
+      );
+      await this.repository.finishBaseMerge(
+        worktree.path,
+        worktree.branch,
+        job.issueNumber,
+        pullRequestHead,
+      );
+      await this.github.markPullRequestOpen(job.issueNumber);
+      await this.github.commentPullRequest(
+        job.prNumber!,
+        `🔀 Base-branch conflicts resolved and pushed without rebasing. I will monitor the new checks automatically.\n\n${markdownSummary(result.finalText)}`,
+      );
+      this.state.completeEvent(job.issueNumber, eventKey, "pr_open");
+    } catch (error) {
+      if (isInterruptedRun(error)) throw error;
+      const localHead = await this.repository.headRevision(worktree.path).catch(() => null);
+      if (
+        !(error instanceof BranchDivergenceError) &&
+        localHead &&
+        localHead !== pullRequestHead
+      ) {
+        this.state.setStatus(job.issueNumber, "pr_open", errorText(error));
+        throw error;
+      }
+      await this.repository.abortBaseMerge(worktree.path).catch(() => undefined);
+      const message = `${CONFLICT_BLOCK_PREFIX} ${errorText(error)}`;
+      await this.github.markBlocked(job.issueNumber, message).catch(() => undefined);
+      await this.github.commentPullRequest(
+        job.prNumber!,
+        `⛔ I could not safely resolve the base-branch conflict. Human resolution is required.\n\n${markdownSummary(message)}`,
+      );
+      this.state.completeEvent(job.issueNumber, eventKey, "pr_open", message);
+    }
+  }
+
+  private async assertPullRequestMergeContext(
+    prNumber: number,
+    expectedHead: string,
+    expectedBase: string,
+  ): Promise<void> {
+    const current = await this.github.getPullRequestMergeState(prNumber);
+    if (
+      current.baseBranch !== this.config.baseBranch ||
+      current.headSha !== expectedHead ||
+      current.baseSha !== expectedBase
+    ) {
+      throw new BranchDivergenceError(
+        `Pull request merge context moved while resolving conflicts (base ${current.baseBranch}@${current.baseSha}, head ${current.headSha})`,
+      );
+    }
+  }
+
   private async processPullRequestFeedback(): Promise<void> {
     for (const job of this.state.listReviewJobs()) await this.processFeedbackJob(job);
   }
@@ -290,6 +475,7 @@ export class IssueWorker {
     if (checks.state === "pending") return;
 
     if (checks.state === "passed") {
+      if (job.lastError?.startsWith(CONFLICT_BLOCK_PREFIX)) return;
       const eventKey = `ci-pass:${job.prNumber}:${checks.headSha}`;
       if (this.state.hasProcessed(eventKey)) return;
       const repairedAttempts = job.ciAttempts;

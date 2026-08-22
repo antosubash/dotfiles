@@ -6,6 +6,7 @@ import type {
   PullRequestChecks,
   PullRequestFeedback,
   PullRequestInfo,
+  PullRequestMergeState,
 } from "./types.js";
 
 const WORKER_MARKER = "<!-- pi-issue-worker -->";
@@ -330,6 +331,32 @@ export class GitHubClient {
       ".state",
     ]);
     return state === "OPEN";
+  }
+
+  async getPullRequestMergeState(prNumber: number): Promise<PullRequestMergeState> {
+    const output = await this.gh([
+      "pr",
+      "view",
+      String(prNumber),
+      "--repo",
+      this.config.repository,
+      "--json",
+      "baseRefName,baseRefOid,headRefOid,mergeable,mergeStateStatus",
+    ]);
+    const state = JSON.parse(output) as {
+      baseRefName: string;
+      baseRefOid: string;
+      headRefOid: string;
+      mergeable: PullRequestMergeState["mergeable"];
+      mergeStateStatus: string;
+    };
+    return {
+      headSha: state.headRefOid,
+      baseSha: state.baseRefOid,
+      baseBranch: state.baseRefName,
+      mergeable: state.mergeable,
+      mergeStateStatus: state.mergeStateStatus,
+    };
   }
 
   async getPullRequestChecks(

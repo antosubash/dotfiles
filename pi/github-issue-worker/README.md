@@ -18,14 +18,19 @@ creation belong to the controller. Pi edits and verifies code inside an issue-sp
    GitHub CLI use, git mutation, secret paths, CI workflows, and configured protected paths.
 4. The controller validates the changed path set, commits, pushes, and opens a **draft** PR with
    `Closes #<number>`.
-5. The worker monitors the draft PR's check rollup. It waits for pending jobs, extracts bounded and
+5. The worker monitors mergeability. When the configured base conflicts with the feature branch, the
+   controller merges the freshly fetched base without rebasing, the same Pi session resolves unprotected
+   conflicts and runs focused checks, and the controller validates and pushes the merge commit. Protected
+   or ambiguous conflicts are blocked for human resolution.
+6. The worker monitors the draft PR's check rollup. It waits for pending jobs, extracts bounded and
    scrubbed excerpts from completed failed Actions jobs, and sends actionable failures back to the same
    Pi session. The controller commits and pushes a repair, then monitors the new head. Attempts are
    bounded by `PI_WORKER_MAX_CI_FIX_ATTEMPTS` (default `3`); persistent or external failures are marked
    `pi-blocked` for human investigation.
-6. Trusted formal reviews and inline review comments are sent back to the same Pi session. PR
+7. Trusted formal reviews and inline review comments are sent back to the same Pi session. PR
    conversation comments require an explicit `/pi` command.
-7. Every review and CI-head event is persisted in SQLite, making handling idempotent across restarts.
+8. Every review, conflicting head/base pair, and CI-head event is persisted in SQLite, making handling
+   idempotent across restarts.
 
 Each repository child handles its work sequentially. This is intentional: repositories with integration
 databases, browser sessions, or expensive builds should not be fanned out accidentally. A per-profile
@@ -94,7 +99,7 @@ PI_WORKER_PROTECTED_PATHS=.git,.github/workflows,.pi
 PI_WORKER_APP_URL=http://localhost:3000
 # Optional additional hosts for sandboxed build/browser verification (comma-separated)
 PI_WORKER_SANDBOX_ALLOWED_DOMAINS=
-PI_WORKER_MODEL=openai-codex/gpt-5.6-luna
+PI_WORKER_MODEL=openai-codex/gpt-5.6-terra
 PI_WORKER_THINKING_LEVEL=high
 PI_WORKER_MAX_CI_FIX_ATTEMPTS=3
 ```

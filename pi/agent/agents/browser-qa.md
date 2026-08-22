@@ -1,7 +1,7 @@
 ---
 name: browser-qa
 description: Browser QA specialist using playwright-cli with an isolated named browser session
-model: openai-codex/gpt-5.6-luna
+model: openai-codex/gpt-5.6-terra
 tools: read, write, bash
 ---
 

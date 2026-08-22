@@ -38,6 +38,8 @@ export function isProtectedChange(path: string, protectedPrefixes: readonly stri
   });
 }
 
+export class BranchDivergenceError extends Error {}
+
 export class RepositoryManager {
   readonly controlPath: string;
   readonly worktreesRoot: string;
@@ -245,6 +247,241 @@ export class RepositoryManager {
       }
     }
     return files;
+  }
+
+  async beginBaseMerge(
+    worktree: string,
+    branch: string,
+    expectedHead: string,
+  ): Promise<{
+    baseSha: string;
+    conflicts: string[];
+    alreadyCurrent: boolean;
+    mergeInProgress: boolean;
+  }> {
+    await this.validateWorktree(worktree, branch);
+    if ((await this.headRevision(worktree)) !== expectedHead) {
+      throw new Error(`Feature worktree moved from expected pull request head ${expectedHead}`);
+    }
+    await this.assertRemoteBranchRevision(worktree, branch, expectedHead);
+    await this.fetchBase();
+    const baseRef = `origin/${this.config.baseBranch}`;
+    const fetchedBaseSha = (await this.run("git", ["rev-parse", baseRef], { cwd: worktree })).stdout.trim();
+    const mergeHead = await this.run("git", ["rev-parse", "--verify", "-q", "MERGE_HEAD"], {
+      cwd: worktree,
+      allowFailure: true,
+    });
+    let mergeInProgress = mergeHead.exitCode === 0;
+    const baseSha = mergeInProgress ? mergeHead.stdout.trim() : fetchedBaseSha;
+    if (mergeInProgress) {
+      const trustedAncestor = await this.run(
+        "git",
+        ["merge-base", "--is-ancestor", baseSha, baseRef],
+        { cwd: worktree, allowFailure: true },
+      );
+      if (trustedAncestor.exitCode !== 0) {
+        await this.abortBaseMerge(worktree);
+        throw new Error(`Existing merge head ${baseSha} is not part of the trusted ${baseRef} history`);
+      }
+    } else {
+      const changed = await this.changedFiles(worktree);
+      if (changed.length > 0) {
+        throw new Error(`Cannot update from ${baseRef} with existing worktree changes: ${changed.join(", ")}`);
+      }
+      const current = await this.run("git", ["merge-base", "--is-ancestor", baseRef, "HEAD"], {
+        cwd: worktree,
+        allowFailure: true,
+      });
+      if (current.exitCode === 0) {
+        return { baseSha, conflicts: [], alreadyCurrent: true, mergeInProgress: false };
+      }
+      const merged = await this.run("git", ["merge", "--no-commit", "--no-ff", baseRef], {
+        cwd: worktree,
+        allowFailure: true,
+        timeoutMs: 10 * 60_000,
+      });
+      if (merged.exitCode !== 0) {
+        const conflicts = await this.unmergedFiles(worktree);
+        if (conflicts.length === 0) {
+          await this.abortBaseMerge(worktree);
+          throw new Error(`Unable to merge ${baseRef}: ${merged.stderr || merged.stdout}`);
+        }
+      }
+      mergeInProgress = true;
+    }
+    const conflicts = await this.unmergedFiles(worktree);
+    const protectedConflicts = conflicts.filter((path) =>
+      isProtectedChange(path, this.config.protectedPaths),
+    );
+    if (protectedConflicts.length > 0) {
+      await this.abortBaseMerge(worktree);
+      throw new Error(`Merge conflicts touch protected paths: ${protectedConflicts.join(", ")}`);
+    }
+    return { baseSha, conflicts, alreadyCurrent: false, mergeInProgress };
+  }
+
+  async hasMergeInProgress(worktree: string): Promise<boolean> {
+    const mergeHead = await this.run("git", ["rev-parse", "--verify", "-q", "MERGE_HEAD"], {
+      cwd: worktree,
+      allowFailure: true,
+    });
+    return mergeHead.exitCode === 0;
+  }
+
+  async unmergedFiles(worktree: string): Promise<string[]> {
+    const result = await this.run("git", ["diff", "--name-only", "--diff-filter=U", "-z"], {
+      cwd: worktree,
+    });
+    return result.stdout.split("\0").filter(Boolean);
+  }
+
+  async finishBaseMerge(
+    worktree: string,
+    branch: string,
+    issueNumber: number,
+    expectedHead: string,
+  ): Promise<void> {
+    await this.validateWorktree(worktree, branch);
+    const mergeHead = await this.run("git", ["rev-parse", "--verify", "-q", "MERGE_HEAD"], {
+      cwd: worktree,
+      allowFailure: true,
+    });
+    if (mergeHead.exitCode !== 0) throw new Error("No base merge is in progress");
+    const trustedMergeBase = mergeHead.stdout.trim();
+    const conflicts = await this.unmergedFiles(worktree);
+    for (const path of conflicts) {
+      const content = await readFile(join(worktree, path), "utf8").catch(() => "");
+      if (/^(?:<<<<<<< |=======|>>>>>>> )/m.test(content)) {
+        throw new Error(`Pi left conflict markers in ${path}`);
+      }
+    }
+    await this.run("git", ["add", "--all"], { cwd: worktree });
+    const unresolved = await this.unmergedFiles(worktree);
+    if (unresolved.length > 0) {
+      throw new Error(`Pi left unresolved merge conflicts: ${unresolved.join(", ")}`);
+    }
+    const staged = await this.run(
+      "git",
+      ["diff", "--cached", "--no-renames", "--name-only", "-z"],
+      { cwd: worktree },
+    );
+    const stagedFiles = staged.stdout.split("\0").filter(Boolean);
+    for (const path of stagedFiles) {
+      const content = await readFile(join(worktree, path), "utf8").catch(() => "");
+      if (/^(?:<<<<<<< |\|\|\|\|\|\|\| |=======|>>>>>>> )/m.test(content)) {
+        await this.run("git", ["reset"], { cwd: worktree });
+        throw new Error(`Merge result still contains conflict markers in ${path}`);
+      }
+    }
+    for (const path of stagedFiles.filter((candidate) =>
+      isProtectedChange(candidate, this.config.protectedPaths),
+    )) {
+      const inherited = await this.run(
+        "git",
+        ["diff", "--cached", "--quiet", trustedMergeBase, "--", path],
+        { cwd: worktree, allowFailure: true },
+      );
+      if (inherited.exitCode !== 0) {
+        await this.run("git", ["reset"], { cwd: worktree });
+        throw new Error(`Protected path differs from the trusted base during merge: ${path}`);
+      }
+    }
+    await this.run("git", ["commit", "-m", `merge: update ${this.config.baseBranch} for #${issueNumber}`], {
+      cwd: worktree,
+      timeoutMs: 5 * 60_000,
+    });
+    await this.assertRemoteBranchRevision(worktree, branch, expectedHead);
+    await this.pushIfAhead(worktree, branch);
+  }
+
+  async recoverBaseMergePush(
+    worktree: string,
+    branch: string,
+    expectedHead: string,
+    expectedBase: string,
+  ): Promise<void> {
+    await this.validateWorktree(worktree, branch);
+    const localHead = await this.headRevision(worktree);
+    const revision = (
+      await this.run("git", ["rev-list", "--parents", "-n", "1", localHead], { cwd: worktree })
+    ).stdout.trim().split(/\s+/);
+    if (revision.length !== 3 || revision[1] !== expectedHead) {
+      throw new BranchDivergenceError(
+        `Local head ${localHead} is not the expected controller-created base merge`,
+      );
+    }
+    const baseParent = revision[2]!;
+    if (baseParent !== expectedBase) {
+      throw new BranchDivergenceError(
+        `Merge parent ${baseParent} does not match the expected trusted base ${expectedBase}`,
+      );
+    }
+    const changed = await this.run(
+      "git",
+      ["diff", "--no-renames", "--name-only", "-z", expectedHead, localHead],
+      { cwd: worktree },
+    );
+    const changedFiles = changed.stdout.split("\0").filter(Boolean);
+    for (const path of changedFiles) {
+      const content = await readFile(join(worktree, path), "utf8").catch(() => "");
+      if (/^(?:<<<<<<< |\|\|\|\|\|\|\| |=======|>>>>>>> )/m.test(content)) {
+        throw new BranchDivergenceError(`Recovered merge contains conflict markers in ${path}`);
+      }
+    }
+    for (const path of changedFiles.filter((candidate) =>
+      isProtectedChange(candidate, this.config.protectedPaths),
+    )) {
+      const inherited = await this.run(
+        "git",
+        ["diff", "--quiet", baseParent, localHead, "--", path],
+        { cwd: worktree, allowFailure: true },
+      );
+      if (inherited.exitCode !== 0) {
+        throw new BranchDivergenceError(
+          `Recovered merge modified protected path beyond the trusted base: ${path}`,
+        );
+      }
+    }
+    const remoteHead = await this.remoteBranchRevision(worktree, branch);
+    if (remoteHead === localHead) return;
+    if (remoteHead !== expectedHead) {
+      throw new BranchDivergenceError(
+        `Remote branch moved from expected head ${expectedHead} to ${remoteHead || "missing"}`,
+      );
+    }
+    await this.pushIfAhead(worktree, branch);
+  }
+
+  private async remoteBranchRevision(worktree: string, branch: string): Promise<string | null> {
+    const remote = await this.run(
+      "git",
+      ["ls-remote", "--heads", "origin", `refs/heads/${branch}`],
+      { cwd: worktree, timeoutMs: 120_000 },
+    );
+    return remote.stdout.trim().split(/\s+/)[0] || null;
+  }
+
+  private async assertRemoteBranchRevision(
+    worktree: string,
+    branch: string,
+    expectedHead: string,
+  ): Promise<void> {
+    const remoteHead = await this.remoteBranchRevision(worktree, branch);
+    if (remoteHead !== expectedHead) {
+      throw new BranchDivergenceError(
+        `Remote branch moved from expected head ${expectedHead} to ${remoteHead || "missing"}`,
+      );
+    }
+  }
+
+  async abortBaseMerge(worktree: string): Promise<void> {
+    const mergeHead = await this.run("git", ["rev-parse", "--verify", "-q", "MERGE_HEAD"], {
+      cwd: worktree,
+      allowFailure: true,
+    });
+    if (mergeHead.exitCode === 0) {
+      await this.run("git", ["merge", "--abort"], { cwd: worktree, allowFailure: true });
+    }
   }
 
   async commitAndPush(

@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Read-only implementation planner that turns requirements and reconnaissance into actionable steps
-model: openai-codex/gpt-5.6-luna
+model: openai-codex/gpt-5.6-terra
 tools: read, grep, find, ls
 ---
 

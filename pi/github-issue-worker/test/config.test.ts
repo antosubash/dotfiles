@@ -22,7 +22,7 @@ test("loadConfig uses a hashed default when no legacy directory exists", () => {
     assert.equal(config.workingLabel, "pi-working");
     assert.equal(config.baseBranch, "develop");
     assert.equal(config.maxCiFixAttempts, 3);
-    assert.equal(config.model, "openai-codex/gpt-5.6-luna");
+    assert.equal(config.model, "openai-codex/gpt-5.6-terra");
     assert.deepEqual(config.protectedPaths, [".git", ".github/workflows", ".pi"]);
   } finally {
     rmSync(home, { recursive: true, force: true });

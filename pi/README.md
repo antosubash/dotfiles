@@ -34,10 +34,10 @@ The extension maps Claude model tiers when loading shared agents:
 | Claude tier | Pi model |
 |---|---|
 | Haiku | `openai-codex/gpt-5.6-luna` |
-| Sonnet | `openai-codex/gpt-5.6-luna` |
+| Sonnet | `openai-codex/gpt-5.6-terra` |
 | Opus/Fable | `openai-codex/gpt-5.6-sol` |
 
-Pi-specific `scout`, `planner`, `worker`, `reviewer`, `reviewer-fast`, and `browser-qa` agents live beside the shared specialists. `/ship` uses the full Luna reviewer once, then the Mini reviewer only for known findings and fix/QA deltas. P2/P3 advisories are reported without extending the blocking loop.
+Pi-specific `scout`, `planner`, `worker`, `reviewer`, `reviewer-fast`, and `browser-qa` agents live beside the shared specialists. `/ship` uses the full Terra reviewer once, then the Luna reviewer only for known findings and fix/QA deltas. P2/P3 advisories are reported without extending the blocking loop.
 
 ## Loop state
 
