@@ -220,6 +220,18 @@ export function sandboxConfig(
     .split(":")
     .filter((path) => path.startsWith(`${home}/`))
     .map((path) => resolve(path));
+  const visualVerification = options.visualVerification === true;
+  const playwrightBrowserPath = resolve(
+    process.env.PLAYWRIGHT_BROWSERS_PATH ||
+      (process.platform === "darwin"
+        ? join(home, "Library", "Caches", "ms-playwright")
+        : join(home, ".cache", "ms-playwright")),
+  );
+  const playwrightFfmpegPaths = visualVerification && existsSync(playwrightBrowserPath)
+    ? readdirSync(playwrightBrowserPath, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith("ffmpeg-"))
+        .map((entry) => join(playwrightBrowserPath, entry.name))
+    : [];
   const readPaths = [
     ...new Set([
       worktree,
@@ -227,10 +239,10 @@ export function sandboxConfig(
       WORKER_RUNTIME_ROOT,
       ...gitMetadataPaths(worktree),
       ...pathReadPaths,
+      ...playwrightFfmpegPaths,
       ...(options.dockerSocket ? [options.dockerSocket] : []),
     ]),
   ];
-  const visualVerification = options.visualVerification === true;
   const socketAccessRequested = visualVerification || Boolean(options.dockerSocket);
   const linuxSocketAccess = socketAccessRequested && process.platform === "linux";
   const hiddenRunEntries = linuxSocketAccess
@@ -557,7 +569,9 @@ export class PiAgentRunner {
     await writeFile(join(sandboxTemp, ".owner-pid"), `${process.pid}\n`, { mode: 0o600 });
     const previousSandboxTemp = process.env.CLAUDE_CODE_TMPDIR;
     const previousTmpdir = process.env.TMPDIR;
+    const previousPlaywrightDaemonDir = process.env.PLAYWRIGHT_DAEMON_SESSION_DIR;
     process.env.CLAUDE_CODE_TMPDIR = sandboxTemp;
+    process.env.PLAYWRIGHT_DAEMON_SESSION_DIR = join(sandboxTemp, "playwright-daemon");
     if ((visualVerification || dockerAccess) && process.platform === "linux") {
       process.env.TMPDIR = sandboxTemp;
     }
@@ -692,6 +706,11 @@ export class PiAgentRunner {
           else process.env.CLAUDE_CODE_TMPDIR = previousSandboxTemp;
           if (previousTmpdir === undefined) delete process.env.TMPDIR;
           else process.env.TMPDIR = previousTmpdir;
+          if (previousPlaywrightDaemonDir === undefined) {
+            delete process.env.PLAYWRIGHT_DAEMON_SESSION_DIR;
+          } else {
+            process.env.PLAYWRIGHT_DAEMON_SESSION_DIR = previousPlaywrightDaemonDir;
+          }
           await rm(sandboxTemp, { recursive: true, force: true });
         }
       }
