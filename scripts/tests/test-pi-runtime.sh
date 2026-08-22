@@ -33,11 +33,19 @@ cat > "$TMP/probe.ts" <<EOF
 import * as fs from "node:fs";
 import { discoverAgents } from "${ROOT}/pi/agent/extensions/subagent/agents.ts";
 import subagentExtension, { buildChildPiArgs, MAX_CHAIN_STEPS } from "${ROOT}/pi/agent/extensions/subagent/index.ts";
+import { destructiveCommandRisks } from "${ROOT}/pi/agent/extensions/destructive-command-approval.ts";
 
 export default async function () {
   const found = discoverAgents(process.cwd(), "project").agents.find((agent) => agent.name === "runtime-alias");
   if (!found || found.model !== "openai-codex/gpt-5.6-luna" || found.tools?.join(",") !== "read,grep") {
     throw new Error("agent alias/tool discovery failed");
+  }
+
+  if (destructiveCommandRisks("rm -f /tmp/stale-log").length !== 0) {
+    throw new Error("routine forced cleanup should not prompt");
+  }
+  if (!destructiveCommandRisks("rm -rf build").includes("recursive file deletion")) {
+    throw new Error("recursive deletion approval guard regressed");
   }
 
   const baseAgent: any = {
