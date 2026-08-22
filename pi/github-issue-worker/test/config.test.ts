@@ -21,6 +21,8 @@ test("loadConfig uses a hashed default when no legacy directory exists", () => {
     assert.equal(config.readyLabel, "pi-ready");
     assert.equal(config.workingLabel, "pi-working");
     assert.equal(config.baseBranch, "develop");
+    assert.equal(config.maxCiFixAttempts, 3);
+    assert.equal(config.model, "openai-codex/gpt-5.6-luna");
     assert.deepEqual(config.protectedPaths, [".git", ".github/workflows", ".pi"]);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -60,6 +62,22 @@ test("loadConfig supports one instance profile per repository", () => {
   assert.equal(config.pullRequestLabel, "agent-pr-open");
   assert.deepEqual(config.protectedPaths, [".git", "ops/worker"]);
   assert.deepEqual([...config.trustedAssociations], ["OWNER", "MEMBER"]);
+});
+
+test("loadConfig validates and overrides the Pi model", () => {
+  assert.equal(
+    loadConfig({ ...base, PI_WORKER_MODEL: "openai-codex/gpt-5.6-sol" }).model,
+    "openai-codex/gpt-5.6-sol",
+  );
+  assert.throws(() => loadConfig({ ...base, PI_WORKER_MODEL: "gpt-5.6-luna" }), /provider\/model/);
+});
+
+test("loadConfig validates the CI repair attempt bound", () => {
+  assert.equal(loadConfig({ ...base, PI_WORKER_MAX_CI_FIX_ATTEMPTS: "2" }).maxCiFixAttempts, 2);
+  assert.throws(
+    () => loadConfig({ ...base, PI_WORKER_MAX_CI_FIX_ATTEMPTS: "0" }),
+    /PI_WORKER_MAX_CI_FIX_ATTEMPTS/,
+  );
 });
 
 test("loadConfig requires repository identity and an explicit base branch", () => {

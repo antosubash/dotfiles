@@ -37,7 +37,7 @@ require_text pi/agent/prompts/ship.md 'Read the `worktree-first` skill completel
 require_text pi/agent/prompts/ship.md 'never trust local `origin/HEAD` or guess main/master'
 require_text pi/agent/prompts/ship.md 'stop with safe migration instructions rather than creating a derived shipping branch'
 require_text pi/agent/prompts/ship.md 'GIT_COMMON_DIR="$(git -C "$WORK_CWD" rev-parse --path-format=absolute --git-common-dir)"'
-require_text pi/agent/agents/reviewer-fast.md 'model: openai-codex/gpt-5.4-mini'
+require_text pi/agent/agents/reviewer-fast.md 'model: openai-codex/gpt-5.6-luna'
 require_text pi/agent/agents/reviewer-fast.md 'Do not re-audit unchanged branch history.'
 require_text pi/agent/prompts/vf.md 'if ! mkdir "$VF_DIR"'
 require_text pi/agent/prompts/vf.md '`--qa-passed` requires an explicit `--qa-run-id`'

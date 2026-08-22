@@ -28,7 +28,9 @@ export interface WorkerConfig {
   dataDir: string;
   pollSeconds: number;
   maxIssuesPerPoll: number;
+  maxCiFixAttempts: number;
   thinkingLevel: ThinkingLevel;
+  model: string;
   trustedAssociations: ReadonlySet<string>;
   protectedPaths: readonly string[];
   appUrl: string | null;
@@ -103,6 +105,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       .filter(Boolean),
   ];
   const statePath = env.PI_WORKER_PLAYWRIGHT_STATE?.trim();
+  const model = env.PI_WORKER_MODEL?.trim() || "openai-codex/gpt-5.6-luna";
+  if (!/^[^/\s]+\/[^/\s]+$/.test(model)) {
+    throw new Error("PI_WORKER_MODEL must use provider/model format");
+  }
   const labelPrefix = env.PI_WORKER_LABEL_PREFIX?.trim() || "pi";
   const repositorySlug = repository.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const repositoryIdentityHash = createHash("sha256")
@@ -142,7 +148,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       env.PI_WORKER_MAX_ISSUES_PER_POLL || "",
       1,
     ),
+    maxCiFixAttempts: positiveInteger(
+      "PI_WORKER_MAX_CI_FIX_ATTEMPTS",
+      env.PI_WORKER_MAX_CI_FIX_ATTEMPTS || "",
+      3,
+    ),
     thinkingLevel: thinking as ThinkingLevel,
+    model,
     trustedAssociations: new Set(associations),
     protectedPaths,
     appUrl,

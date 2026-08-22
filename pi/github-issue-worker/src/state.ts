@@ -13,6 +13,8 @@ interface JobRow {
   pr_number: number | null;
   pr_url: string | null;
   visual_requested: number;
+  ci_attempts: number;
+  ci_head_sha: string | null;
   last_error: string | null;
   created_at: string;
   updated_at: string;
@@ -29,6 +31,8 @@ function mapJob(row: JobRow): IssueJob {
     prNumber: row.pr_number,
     prUrl: row.pr_url,
     visualRequested: row.visual_requested === 1,
+    ciAttempts: row.ci_attempts,
+    ciHeadSha: row.ci_head_sha,
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -53,6 +57,8 @@ export class WorkerState {
         pr_number INTEGER,
         pr_url TEXT,
         visual_requested INTEGER NOT NULL DEFAULT 0,
+        ci_attempts INTEGER NOT NULL DEFAULT 0,
+        ci_head_sha TEXT,
         last_error TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -64,6 +70,17 @@ export class WorkerState {
         FOREIGN KEY(issue_number) REFERENCES issue_jobs(issue_number) ON DELETE CASCADE
       );
     `);
+    const jobColumns = new Set(
+      (this.database.prepare("PRAGMA table_info(issue_jobs)").all() as Array<{ name: string }>).map(
+        (column) => column.name,
+      ),
+    );
+    if (!jobColumns.has("ci_attempts")) {
+      this.database.exec("ALTER TABLE issue_jobs ADD COLUMN ci_attempts INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!jobColumns.has("ci_head_sha")) {
+      this.database.exec("ALTER TABLE issue_jobs ADD COLUMN ci_head_sha TEXT");
+    }
   }
 
   claim(issue: GitHubIssue, branch: string, worktreePath: string, visualRequested: boolean): IssueJob {
@@ -77,6 +94,8 @@ export class WorkerState {
           title = excluded.title,
           status = 'claimed',
           visual_requested = MAX(issue_jobs.visual_requested, excluded.visual_requested),
+          ci_attempts = 0,
+          ci_head_sha = NULL,
           last_error = NULL,
           updated_at = excluded.updated_at`,
       )
@@ -101,7 +120,7 @@ export class WorkerState {
     const rows = this.database
       .prepare(
         `SELECT * FROM issue_jobs
-         WHERE status IN ('claimed', 'implementing', 'pr_open', 'addressing_review')
+         WHERE status IN ('claimed', 'implementing', 'pr_open', 'addressing_review', 'addressing_ci', 'committing_ci', 'reporting_ci_block', 'reporting_ci_pr_comment')
          ORDER BY issue_number`,
       )
       .all() as unknown as JobRow[];
@@ -123,7 +142,7 @@ export class WorkerState {
     const rows = this.database
       .prepare(
         `SELECT * FROM issue_jobs
-         WHERE status IN ('pr_open', 'addressing_review') AND pr_number IS NOT NULL
+         WHERE status IN ('pr_open', 'addressing_review', 'addressing_ci', 'committing_ci', 'reporting_ci_block', 'reporting_ci_pr_comment') AND pr_number IS NOT NULL
          ORDER BY issue_number`,
       )
       .all() as unknown as JobRow[];
@@ -152,10 +171,69 @@ export class WorkerState {
       .run(prNumber, prUrl, new Date().toISOString(), issueNumber);
   }
 
+  setCiHead(issueNumber: number, headSha: string): void {
+    this.database
+      .prepare("UPDATE issue_jobs SET ci_head_sha = ?, updated_at = ? WHERE issue_number = ?")
+      .run(headSha, new Date().toISOString(), issueNumber);
+  }
+
+  recordCiAttempt(issueNumber: number, headSha: string): number {
+    const current = this.requireJob(issueNumber);
+    if (current.ciHeadSha === headSha && current.ciAttempts > 0) return current.ciAttempts;
+    this.database
+      .prepare(
+        `UPDATE issue_jobs
+         SET ci_attempts = ci_attempts + 1, ci_head_sha = ?, updated_at = ?
+         WHERE issue_number = ?`,
+      )
+      .run(headSha, new Date().toISOString(), issueNumber);
+    return this.requireJob(issueNumber).ciAttempts;
+  }
+
+  resetCiAttempts(issueNumber: number, headSha: string): void {
+    this.database
+      .prepare(
+        `UPDATE issue_jobs
+         SET ci_attempts = 0, ci_head_sha = ?, last_error = NULL, updated_at = ?
+         WHERE issue_number = ?`,
+      )
+      .run(headSha, new Date().toISOString(), issueNumber);
+  }
+
   hasProcessed(eventKey: string): boolean {
     return Boolean(
       this.database.prepare("SELECT 1 FROM processed_events WHERE event_key = ?").get(eventKey),
     );
+  }
+
+  completeEvent(
+    issueNumber: number,
+    eventKey: string,
+    status: IssueStatus,
+    error: string | null = null,
+  ): void {
+    const now = new Date().toISOString();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database
+        .prepare(
+          "INSERT OR IGNORE INTO processed_events(event_key, issue_number, processed_at) VALUES (?, ?, ?)",
+        )
+        .run(eventKey, issueNumber, now);
+      this.database
+        .prepare(
+          "UPDATE issue_jobs SET status = ?, last_error = ?, updated_at = ? WHERE issue_number = ?",
+        )
+        .run(status, error, now, issueNumber);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  forgetProcessed(eventKey: string): void {
+    this.database.prepare("DELETE FROM processed_events WHERE event_key = ?").run(eventKey);
   }
 
   markProcessed(issueNumber: number, eventKey: string): void {

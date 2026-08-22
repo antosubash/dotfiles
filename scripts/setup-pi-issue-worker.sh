@@ -28,6 +28,9 @@ printf 'Installing Pi GitHub issue worker from %s\n' "$PACKAGE_DIR"
 cd "$PACKAGE_DIR"
 npm ci
 npm run check
+if [ "$(uname -s)" = "Linux" ] && command -v playwright-cli >/dev/null 2>&1; then
+    PI_WORKER_BROWSER_SMOKE=1 npx tsx --test test/browser-sandbox.integration.test.ts
+fi
 
 PACK_DIR="$(mktemp -d)"
 cleanup() {

@@ -226,6 +226,10 @@ export class RepositoryManager {
       .some((line) => resolve(line.slice("worktree ".length)) === expected);
   }
 
+  async headRevision(worktree: string): Promise<string> {
+    return (await this.run("git", ["rev-parse", "HEAD"], { cwd: worktree })).stdout.trim();
+  }
+
   async changedFiles(worktree: string): Promise<string[]> {
     const result = await this.run("git", ["status", "--porcelain", "-z"], { cwd: worktree });
     const entries = result.stdout.split("\0").filter(Boolean);
@@ -284,6 +288,24 @@ export class RepositoryManager {
     return { commit, files: stagedFiles };
   }
 
+  async clearAgentChanges(worktree: string, branch: string): Promise<void> {
+    await this.validateWorktree(worktree, branch);
+    try {
+      await this.run("git", ["reset", "--hard", "HEAD"], { cwd: worktree });
+      await this.run("git", ["clean", "-fdx", "-e", ".qa"], { cwd: worktree });
+    } catch (cleanupError) {
+      try {
+        await this.run("git", ["worktree", "remove", "--force", worktree], {
+          cwd: this.controlPath,
+        });
+      } catch (removalError) {
+        throw new Error(
+          `Unable to clean or remove blocked agent worktree: ${String(cleanupError)}; ${String(removalError)}`,
+        );
+      }
+    }
+  }
+
   async hasCommitsAhead(worktree: string): Promise<boolean> {
     await this.fetchBase();
     const result = await this.run(
@@ -292,6 +314,34 @@ export class RepositoryManager {
       { cwd: worktree },
     );
     return Number.parseInt(result.stdout.trim() || "0", 10) > 0;
+  }
+
+  async hasUnpushedCommits(worktree: string, branch: string): Promise<boolean> {
+    const remoteBranch = await this.run(
+      "git",
+      ["ls-remote", "--exit-code", "--heads", "origin", `refs/heads/${branch}`],
+      { cwd: worktree, allowFailure: true, timeoutMs: 120_000 },
+    );
+    if (remoteBranch.exitCode !== 0) return this.hasCommitsAhead(worktree);
+    await this.run(
+      "git",
+      ["fetch", "origin", `refs/heads/${branch}:refs/remotes/origin/${branch}`],
+      { cwd: worktree, timeoutMs: 5 * 60_000 },
+    );
+    const result = await this.run(
+      "git",
+      ["rev-list", "--left-right", "--count", `origin/${branch}...HEAD`],
+      { cwd: worktree },
+    );
+    const [behindText = "0", aheadText = "0"] = result.stdout.trim().split(/\s+/);
+    const behind = Number.parseInt(behindText, 10);
+    const ahead = Number.parseInt(aheadText, 10);
+    if (behind > 0) {
+      throw new Error(
+        `Remote branch origin/${branch} moved independently; automatic rebase or force-push is forbidden`,
+      );
+    }
+    return ahead > 0;
   }
 
   async pushIfAhead(worktree: string, branch: string): Promise<void> {

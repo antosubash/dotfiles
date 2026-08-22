@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { ProfileLock } from "../src/lock.js";
 import { WorkerState } from "../src/state.js";
 import type { GitHubIssue } from "../src/types.js";
@@ -30,6 +31,30 @@ test("a profile lock rejects a concurrent worker", async () => {
   }
 });
 
+test("state migrates pre-CI databases in place", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-worker-state-migration-"));
+  const path = join(directory, "state.sqlite");
+  try {
+    new WorkerState(path).close();
+    const legacy = new DatabaseSync(path);
+    legacy.exec("ALTER TABLE issue_jobs DROP COLUMN ci_attempts");
+    legacy.exec("ALTER TABLE issue_jobs DROP COLUMN ci_head_sha");
+    legacy.close();
+
+    const migrated = new WorkerState(path);
+    const inspection = new DatabaseSync(path);
+    const columns = (inspection.prepare("PRAGMA table_info(issue_jobs)").all() as Array<{ name: string }>).map(
+      (column) => column.name,
+    );
+    inspection.close();
+    assert.ok(columns.includes("ci_attempts"));
+    assert.ok(columns.includes("ci_head_sha"));
+    migrated.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("state persists jobs, pull requests, and event idempotency", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-worker-state-"));
   const path = join(directory, "state.sqlite");
@@ -42,7 +67,11 @@ test("state persists jobs, pull requests, and event idempotency", async () => {
     assert.equal(retitled.worktreePath, "/tmp/worktree");
     state.setSession(42, "/tmp/session.jsonl");
     state.setPullRequest(42, 99, "https://github.com/example/repo/pull/99");
+    assert.equal(state.recordCiAttempt(42, "head-one"), 1);
+    assert.equal(state.recordCiAttempt(42, "head-one"), 1);
+    assert.equal(state.recordCiAttempt(42, "head-two"), 2);
     state.markProcessed(42, "review:7");
+    state.completeEvent(42, "ci-pass:99:head-two", "pr_open");
     state.close();
 
     const reopened = new WorkerState(path);
@@ -50,7 +79,10 @@ test("state persists jobs, pull requests, and event idempotency", async () => {
     assert.equal(job.prNumber, 99);
     assert.equal(job.status, "pr_open");
     assert.equal(job.sessionFile, "/tmp/session.jsonl");
+    assert.equal(job.ciAttempts, 2);
+    assert.equal(job.ciHeadSha, "head-two");
     assert.equal(reopened.hasProcessed("review:7"), true);
+    assert.equal(reopened.hasProcessed("ci-pass:99:head-two"), true);
     reopened.close();
   } finally {
     await rm(directory, { recursive: true, force: true });

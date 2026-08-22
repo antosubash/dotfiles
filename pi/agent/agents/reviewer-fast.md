@@ -1,7 +1,7 @@
 ---
 name: reviewer-fast
 description: Fast focused confirmation reviewer for a known finding ledger and a small fix or QA delta
-model: openai-codex/gpt-5.4-mini
+model: openai-codex/gpt-5.6-luna
 tools: read, grep, find, ls, bash
 ---
 

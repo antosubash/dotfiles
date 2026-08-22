@@ -3,6 +3,10 @@ export type IssueStatus =
   | "implementing"
   | "pr_open"
   | "addressing_review"
+  | "addressing_ci"
+  | "committing_ci"
+  | "reporting_ci_block"
+  | "reporting_ci_pr_comment"
   | "blocked"
   | "stopped"
   | "completed";
@@ -31,6 +35,8 @@ export interface IssueJob {
   prNumber: number | null;
   prUrl: string | null;
   visualRequested: boolean;
+  ciAttempts: number;
+  ciHeadSha: string | null;
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
@@ -52,6 +58,19 @@ export interface PullRequestFeedback {
 export interface PullRequestInfo {
   number: number;
   url: string;
+}
+
+export interface PullRequestCheckFailure {
+  name: string;
+  conclusion: string;
+  detailsUrl: string | null;
+  excerpt: string | null;
+}
+
+export interface PullRequestChecks {
+  headSha: string;
+  state: "none" | "pending" | "passed" | "failed";
+  failures: PullRequestCheckFailure[];
 }
 
 export interface AgentRunResult {

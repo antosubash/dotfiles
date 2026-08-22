@@ -36,7 +36,7 @@ import subagentExtension, { buildChildPiArgs, MAX_CHAIN_STEPS } from "${ROOT}/pi
 
 export default async function () {
   const found = discoverAgents(process.cwd(), "project").agents.find((agent) => agent.name === "runtime-alias");
-  if (!found || found.model !== "openai-codex/gpt-5.4-mini" || found.tools?.join(",") !== "read,grep") {
+  if (!found || found.model !== "openai-codex/gpt-5.6-luna" || found.tools?.join(",") !== "read,grep") {
     throw new Error("agent alias/tool discovery failed");
   }
 

@@ -51,6 +51,8 @@ drwx------ pi-issue-worker
 | `--check` fails while service is healthy | profile lock is already held by the service | stop the service before interactive checks |
 | Issue remains untouched | no exact ready label, wrong repository, closed issue, or worker unhealthy | inspect labels, queue, service, and profile |
 | Conversation feedback is ignored | comment lacks `/pi` or author association is untrusted | use `/pi ...` from a configured association |
+| Draft PR checks fail with no worker response | old installation, worker stopped, or PR job missing from local state | update/restart, inspect `gh pr checks`, issue labels, and the journal |
+| Chromium reports `Unix sockets are blocked` or `ProcessSingleton` errors | outdated visual sandbox or an overlong temp/socket path | update, then run the browser smoke test below |
 | Worker is idle but memory use is high | each profile loads an independent Pi SDK/model runtime | reduce active profiles or run selected profiles |
 
 ## Supervisor and child lifecycle
@@ -165,6 +167,26 @@ cd ~/dotfiles
 ./scripts/setup-pi-issue-worker.sh
 systemctl --user restart pi-issue-worker-supervisor.service
 ```
+
+### Browser or Playwright socket failures
+
+Current Linux visual runs use a short private directory under `/run/user/<uid>`, hide `/tmp`, `/var`,
+the home directory, and unrelated runtime entries, and permit Unix sockets only for the requested browser run. Verify the complete
+stateful Playwright path from an updated package checkout:
+
+```bash
+cd ~/dotfiles/pi/github-issue-worker
+PI_WORKER_BROWSER_SMOKE=1 npx tsx --test test/browser-sandbox.integration.test.ts
+```
+
+An error containing `listen EINVAL` can mean the Unix socket path exceeded Linux's roughly 108-byte
+limit. Do not override `CLAUDE_CODE_TMPDIR` with a long path. `Unix sockets are blocked` usually means an
+older worker did not enable the visual-only socket mode. `ProcessSingleton` errors generally mean the
+private temp directory was absent or not writable. Reinstall and restart after updating.
+
+Linux seccomp cannot allowlist Unix sockets by path. The visual mode therefore relies on filesystem and
+network-namespace isolation to hide host socket locations and should run under a dedicated OS account.
+Non-visual Pi runs keep Unix sockets blocked.
 
 ## Authentication problems
 
@@ -327,6 +349,35 @@ Typical causes:
 
 After correcting the cause, use the documented retry command on the PR when one exists, or reapply the ready label to a blocked initial issue.
 
+## Draft PR CI is failing or unattended
+
+Inspect the current rollup without printing logs:
+
+```bash
+gh pr checks 123 --repo acme/widgets
+gh pr view 123 --repo acme/widgets --json headRefOid,statusCheckRollup
+```
+
+The worker waits while any check is pending. Once all registered checks complete, it handles each failed
+head SHA once, retrieves only bounded failed-job output, scrubs common credentials, and asks the existing
+issue session for a focused repair. A pushed repair starts a new check cycle. The default maximum is
+three attempts and can be changed per profile:
+
+```dotenv
+PI_WORKER_MAX_CI_FIX_ATTEMPTS=3
+```
+
+When the worker marks `pi-blocked`, inspect the PR and issue comments. External outages, missing CI
+secrets, flaky infrastructure, protected workflow changes, and failures that produce no safe tracked
+change intentionally require a human. After resolving the blocker, `/pi retry` clears the handled marker
+for the current head and starts a fresh bounded repair cycle in the persistent session. The worker never
+reruns Actions directly, weakens tests, changes protected workflow
+files, merges, force-pushes, or rebases automatically.
+
+If a PR created by an older installation has never been monitored, update and restart the worker. Confirm
+the source issue still has `pi-pr-open`, the PR is open, and the profile child is healthy. An interrupted
+`addressing_ci` run resumes from SQLite without incrementing the same head twice.
+
 ## PR feedback is ignored
 
 Formal reviews and inline review comments are accepted automatically only from configured trusted associations. Ordinary PR conversation comments must begin with `/pi`:
@@ -372,7 +423,9 @@ systemctl --user start pi-issue-worker-supervisor.service
 systemctl --user status pi-issue-worker-supervisor.service
 ```
 
-Claimed implementations and `addressing_review` jobs resume from SQLite and persistent Pi sessions. Existing commits and draft PRs are rediscovered instead of blindly duplicated.
+Claimed implementations, `addressing_review` jobs, and interrupted `addressing_ci` repairs resume from
+SQLite and persistent Pi sessions. Existing commits and draft PRs are rediscovered instead of blindly
+duplicated; handled CI head SHAs and bounded attempt counts remain idempotent across restarts.
 
 ## Collecting a diagnostic summary
 
