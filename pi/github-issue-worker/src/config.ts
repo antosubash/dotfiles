@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { realpathSync, statSync } from "node:fs";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 
@@ -40,6 +40,8 @@ export interface WorkerConfig {
   sandboxAllowedDomains: readonly string[];
   allowDocker: boolean;
   dockerSocket: string | null;
+  publishEvidence: boolean;
+  evidenceBranch: string;
 }
 
 function expandPath(value: string, home = homedir()): string {
@@ -139,10 +141,32 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     : directoryExists(legacyDataDir)
       ? legacyDataDir
       : hashedDataDir;
-  const allowDocker = booleanFlag("PI_WORKER_ALLOW_DOCKER", env.PI_WORKER_ALLOW_DOCKER);
-  let dockerSocket = allowDocker
-    ? expandPath(env.PI_WORKER_DOCKER_SOCKET?.trim() || "/var/run/docker.sock", home)
-    : null;
+  const configuredDockerSocket = expandPath(
+    env.PI_WORKER_DOCKER_SOCKET?.trim() || "/var/run/docker.sock",
+    home,
+  );
+  const automaticDocker = (() => {
+    try {
+      if (!statSync(configuredDockerSocket).isSocket()) return false;
+      accessSync(configuredDockerSocket, constants.R_OK | constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  const allowDocker = env.PI_WORKER_ALLOW_DOCKER === undefined
+    ? automaticDocker
+    : booleanFlag("PI_WORKER_ALLOW_DOCKER", env.PI_WORKER_ALLOW_DOCKER);
+  let dockerSocket = allowDocker ? configuredDockerSocket : null;
+  const evidenceBranch = env.PI_WORKER_EVIDENCE_BRANCH?.trim() || "pi-evidence";
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(evidenceBranch) ||
+    evidenceBranch.includes("..") ||
+    evidenceBranch.endsWith("/") ||
+    evidenceBranch === baseBranch
+  ) {
+    throw new Error("PI_WORKER_EVIDENCE_BRANCH is not a safe Git branch name");
+  }
   if (dockerSocket) {
     try {
       if (!statSync(dockerSocket).isSocket()) {
@@ -193,5 +217,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     sandboxAllowedDomains: [...new Set(sandboxAllowedDomains)],
     allowDocker,
     dockerSocket,
+    publishEvidence: booleanFlag(
+      "PI_WORKER_PUBLISH_EVIDENCE",
+      env.PI_WORKER_PUBLISH_EVIDENCE ?? "1",
+    ),
+    evidenceBranch,
   };
 }

@@ -155,6 +155,12 @@ export class WorkerState {
       .run(status, error, new Date().toISOString(), issueNumber);
   }
 
+  requestVisualEvidence(issueNumber: number): void {
+    this.database
+      .prepare("UPDATE issue_jobs SET visual_requested = 1, updated_at = ? WHERE issue_number = ?")
+      .run(new Date().toISOString(), issueNumber);
+  }
+
   setSession(issueNumber: number, sessionFile: string): void {
     this.database
       .prepare("UPDATE issue_jobs SET session_file = ?, updated_at = ? WHERE issue_number = ?")

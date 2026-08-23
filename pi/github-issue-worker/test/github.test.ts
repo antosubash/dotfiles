@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { loadConfig } from "../src/config.js";
 import {
+  GitHubClient,
   classifyPullRequestChecks,
   extractFailureExcerpt,
   isActionableFeedback,
@@ -76,6 +78,77 @@ test("pull request checks distinguish no checks, pending jobs, and actionable fa
     detailsUrl: "https://example.test",
     excerpt: null,
   });
+});
+
+test("evidence publication is idempotent and advances the branch without force", async () => {
+  const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+  const attachment = {
+    name: "desktop.png",
+    content: Buffer.from("png"),
+    mediaType: "image/png" as const,
+  };
+  const expectedPath = "qa/pr-7/abcdef123456/run/desktop.png";
+
+  for (const alreadyPublished of [true, false]) {
+    const calls: Array<{ args: readonly string[]; input?: string }> = [];
+    const client = new GitHubClient(
+      loadConfig({
+        PI_WORKER_REPOSITORY: "example/widgets",
+        PI_WORKER_BASE_BRANCH: "main",
+        PI_WORKER_ALLOW_DOCKER: "0",
+      }),
+      async (args, input) => {
+        calls.push({ args, ...(input === undefined ? {} : { input }) });
+        const endpoint = args.find((value) => value.startsWith("/repos/")) || "";
+        if (endpoint.includes("/git/ref/heads/")) return JSON.stringify({ object: { sha: "head" } });
+        if (endpoint.endsWith("/git/commits/head")) return JSON.stringify({ tree: { sha: "tree" } });
+        if (endpoint.includes("/git/trees/tree?")) {
+          return JSON.stringify({
+            tree: alreadyPublished
+              ? [{ path: expectedPath, type: "blob", sha: "blob" }]
+              : [],
+          });
+        }
+        if (endpoint.includes("/commits?sha=")) {
+          return JSON.stringify([[
+            {
+              sha: "head",
+              parents: [{ sha: "root" }],
+              commit: { message: "qa: publish evidence for PR #7", tree: { sha: "tree" } },
+            },
+            {
+              sha: "root",
+              parents: [],
+              commit: { message: "Initialize Pi QA evidence branch", tree: { sha: emptyTree } },
+            },
+          ]]);
+        }
+        if (args.includes("graphql")) {
+          return JSON.stringify({
+            data: {
+              repository: {
+                t0: { entries: [{ name: "qa", type: "tree" }] },
+                t1: { entries: [] },
+              },
+            },
+          });
+        }
+        if (endpoint.endsWith("/git/blobs")) return JSON.stringify({ sha: "blob" });
+        if (endpoint.endsWith("/git/trees")) return JSON.stringify({ sha: "next-tree" });
+        if (endpoint.endsWith("/git/commits")) return JSON.stringify({ sha: "next-head" });
+        if (endpoint.includes("/git/refs/heads/")) return "";
+        throw new Error(`Unexpected mock gh call: ${args.join(" ")}`);
+      },
+    );
+
+    const markdown = await client.publishEvidence(7, "abcdef1234567890", "run", [attachment]);
+    assert.match(markdown, /desktop\.png/);
+    const updates = calls.filter(({ args }) => args.includes("PATCH"));
+    assert.equal(updates.length, alreadyPublished ? 0 : 1);
+    if (!alreadyPublished) {
+      assert.deepEqual(JSON.parse(updates[0]!.input!), { sha: "next-head", force: false });
+    }
+  }
 });
 
 test("CI excerpts redact common credentials and focus on failure context", () => {

@@ -55,9 +55,9 @@ test("worker claims an approved issue and opens a draft PR", async () => {
       branch: "pi/issue-42-add-reusable-behavior",
       path: join(root, "worktree"),
     }),
-    changedFiles: async () => (changed ? ["src/change.ts"] : []),
+    changedFiles: async () => (changed ? ["server/change.py"] : []),
     hasCommitsAhead: async () => false,
-    commitAndPush: async () => ({ commit: "abc", files: ["src/change.ts"] }),
+    commitAndPush: async () => ({ commit: "abc", files: ["server/change.py"] }),
     pushIfAhead: async () => undefined,
   };
   const agent = {
@@ -272,8 +272,8 @@ test("trusted review feedback reuses the job and records event idempotency", asy
   };
   const repository = {
     ensureIssueWorktree: async () => ({ branch: "pi/issue-42", path: join(root, "worktree") }),
-    changedFiles: async () => (changed ? ["src/change.ts"] : []),
-    commitAndPush: async () => ({ commit: "def", files: ["src/change.ts"] }),
+    changedFiles: async () => (changed ? ["server/change.py"] : []),
+    commitAndPush: async () => ({ commit: "def", files: ["server/change.py"] }),
   };
   const agent = {
     run: async () => {

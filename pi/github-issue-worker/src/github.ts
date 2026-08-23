@@ -1,4 +1,5 @@
 import type { WorkerConfig } from "./config.js";
+import type { EvidenceAttachment } from "./evidence.js";
 import { execFile } from "./exec.js";
 import type {
   GitHubIssue,
@@ -112,14 +113,218 @@ export function extractFailureExcerpt(raw: string, maximum = 12_000): string {
 }
 
 export class GitHubClient {
-  constructor(private readonly config: WorkerConfig) {}
+  constructor(
+    private readonly config: WorkerConfig,
+    private readonly ghRunner?: (args: readonly string[], input?: string) => Promise<string>,
+  ) {}
 
   private async gh(args: readonly string[], input?: string): Promise<string> {
+    if (this.ghRunner) return await this.ghRunner(args, input);
     const result = await execFile("gh", args, {
       ...(input === undefined ? {} : { input }),
       timeoutMs: 120_000,
     });
     return result.stdout.trim();
+  }
+
+  private async ensureEvidenceBranch(): Promise<{
+    headSha: string;
+    treeSha: string;
+    paths: ReadonlyMap<string, string>;
+  }> {
+    const branchPath = this.config.evidenceBranch.split("/").map(encodeURIComponent).join("/");
+    try {
+      const ref = JSON.parse(
+        await this.gh(["api", `/repos/${this.config.repository}/git/ref/heads/${branchPath}`]),
+      ) as { object: { sha: string } };
+      const head = JSON.parse(
+        await this.gh(["api", `/repos/${this.config.repository}/git/commits/${ref.object.sha}`]),
+      ) as { tree: { sha: string } };
+      const tree = JSON.parse(
+        await this.gh([
+          "api",
+          `/repos/${this.config.repository}/git/trees/${head.tree.sha}?recursive=1`,
+        ]),
+      ) as { tree: Array<{ path: string; type?: string; sha?: string }>; truncated?: boolean };
+      if (tree.truncated) {
+        throw new Error(`Refusing evidence branch ${this.config.evidenceBranch}: tree listing is truncated`);
+      }
+      const unsafe = tree.tree.find(
+        (entry) => entry.path !== "qa" && !entry.path.startsWith("qa/"),
+      );
+      if (unsafe) {
+        throw new Error(
+          `Refusing evidence branch ${this.config.evidenceBranch}: unexpected path ${unsafe.path}`,
+        );
+      }
+      const pages = JSON.parse(
+        await this.gh([
+          "api",
+          "--paginate",
+          "--slurp",
+          `/repos/${this.config.repository}/commits?sha=${encodeURIComponent(this.config.evidenceBranch)}&per_page=100`,
+        ]),
+      ) as Array<Array<{
+        sha: string;
+        parents: Array<{ sha: string }>;
+        commit: { message: string; tree: { sha: string } };
+      }>>;
+      const history = pages.flat();
+      if (history.length === 0 || history.length > 10_000 || history[0]!.sha !== ref.object.sha) {
+        throw new Error(`Refusing evidence branch ${this.config.evidenceBranch}: invalid history`);
+      }
+      for (let index = 0; index < history.length - 1; index += 1) {
+        const current = history[index]!;
+        const parent = history[index + 1]!;
+        if (
+          current.parents.length !== 1 ||
+          current.parents[0]!.sha !== parent.sha ||
+          !current.commit.message.startsWith("qa: publish evidence for PR #")
+        ) {
+          throw new Error(`Refusing evidence branch ${this.config.evidenceBranch}: untrusted ancestry`);
+        }
+      }
+      const root = history.at(-1)!;
+      if (
+        root.parents.length !== 0 ||
+        root.commit.tree.sha !== "4b825dc642cb6eb9a060e54bf8d69288fbee4904" ||
+        root.commit.message !== "Initialize Pi QA evidence branch"
+      ) {
+        throw new Error(`Refusing evidence branch ${this.config.evidenceBranch}: root is not worker-owned`);
+      }
+      const [owner, name] = this.config.repository.split("/") as [string, string];
+      for (let offset = 0; offset < history.length; offset += 50) {
+        const commits = history.slice(offset, offset + 50);
+        const selections = commits
+          .map(
+            (commit, index) =>
+              `t${index}: object(oid: \"${commit.commit.tree.sha}\") { ... on Tree { entries { name type } } }`,
+          )
+          .join("\n");
+        const response = JSON.parse(
+          await this.gh([
+            "api",
+            "graphql",
+            "-f",
+            `query=query { repository(owner: \"${owner}\", name: \"${name}\") { ${selections} } }`,
+          ]),
+        ) as {
+          data?: { repository?: Record<string, { entries?: Array<{ name: string; type: string }> } | null> };
+        };
+        for (let index = 0; index < commits.length; index += 1) {
+          const entries = response.data?.repository?.[`t${index}`]?.entries;
+          if (!entries || entries.some((entry) => entry.name !== "qa")) {
+            throw new Error(
+              `Refusing evidence branch ${this.config.evidenceBranch}: historical tree contains an unexpected path`,
+            );
+          }
+        }
+      }
+      return {
+        headSha: ref.object.sha,
+        treeSha: head.tree.sha,
+        paths: new Map(
+          tree.tree
+            .filter((entry) => entry.type === "blob" && entry.sha)
+            .map((entry) => [entry.path, entry.sha!] as const),
+        ),
+      };
+    } catch (error) {
+      if (!/HTTP 404|Not Found/i.test(error instanceof Error ? error.message : String(error))) {
+        throw error;
+      }
+    }
+    const emptyTreeSha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    const commit = JSON.parse(
+      await this.gh(
+        ["api", "--method", "POST", `/repos/${this.config.repository}/git/commits`, "--input", "-"],
+        JSON.stringify({ message: "Initialize Pi QA evidence branch", tree: emptyTreeSha, parents: [] }),
+      ),
+    ) as { sha: string };
+    try {
+      await this.gh(
+        ["api", "--method", "POST", `/repos/${this.config.repository}/git/refs`, "--input", "-"],
+        JSON.stringify({ ref: `refs/heads/${this.config.evidenceBranch}`, sha: commit.sha }),
+      );
+      return { headSha: commit.sha, treeSha: emptyTreeSha, paths: new Map() };
+    } catch (error) {
+      if (!/HTTP 422|Reference already exists/i.test(error instanceof Error ? error.message : String(error))) {
+        throw error;
+      }
+      return await this.ensureEvidenceBranch();
+    }
+  }
+
+  async publishEvidence(
+    prNumber: number,
+    headSha: string,
+    runId: string,
+    attachments: readonly EvidenceAttachment[],
+  ): Promise<string> {
+    if (!this.config.publishEvidence || attachments.length === 0) return "";
+    const branch = await this.ensureEvidenceBranch();
+    const treeEntries: Array<{ path: string; mode: "100644"; type: "blob"; sha: string }> = [];
+    const published: Array<{ name: string; mediaType: EvidenceAttachment["mediaType"]; htmlUrl: string }> = [];
+    for (const attachment of attachments) {
+      const relativeParts = [
+        "qa",
+        `pr-${prNumber}`,
+        headSha.slice(0, 12),
+        runId,
+        attachment.name,
+      ];
+      const relativePath = relativeParts.join("/");
+      const blob = JSON.parse(
+        await this.gh(
+          ["api", "--method", "POST", `/repos/${this.config.repository}/git/blobs`, "--input", "-"],
+          JSON.stringify({ content: attachment.content.toString("base64"), encoding: "base64" }),
+        ),
+      ) as { sha: string };
+      treeEntries.push({ path: relativePath, mode: "100644", type: "blob", sha: blob.sha });
+      const encodedPath = relativeParts.map(encodeURIComponent).join("/");
+      const htmlUrl = `https://github.com/${this.config.repository}/blob/${encodeURIComponent(this.config.evidenceBranch)}/${encodedPath}`;
+      published.push({ name: attachment.name, mediaType: attachment.mediaType, htmlUrl });
+    }
+    const markdown = () => {
+      const lines = published.map((item) =>
+        item.mediaType.startsWith("image/")
+          ? `[![${item.name}](${item.htmlUrl}?raw=1)](${item.htmlUrl})`
+          : `- [Download ${item.name}](${item.htmlUrl}?raw=1)`,
+      );
+      return `\n\n### Attached QA evidence\n${lines.join("\n\n")}`;
+    };
+    if (treeEntries.every((entry) => branch.paths.get(entry.path) === entry.sha)) {
+      return markdown();
+    }
+    const tree = JSON.parse(
+      await this.gh(
+        ["api", "--method", "POST", `/repos/${this.config.repository}/git/trees`, "--input", "-"],
+        JSON.stringify({ base_tree: branch.treeSha, tree: treeEntries }),
+      ),
+    ) as { sha: string };
+    const commit = JSON.parse(
+      await this.gh(
+        ["api", "--method", "POST", `/repos/${this.config.repository}/git/commits`, "--input", "-"],
+        JSON.stringify({
+          message: `qa: publish evidence for PR #${prNumber}`,
+          tree: tree.sha,
+          parents: [branch.headSha],
+        }),
+      ),
+    ) as { sha: string };
+    const branchPath = this.config.evidenceBranch.split("/").map(encodeURIComponent).join("/");
+    await this.gh(
+      [
+        "api",
+        "--method",
+        "PATCH",
+        `/repos/${this.config.repository}/git/refs/heads/${branchPath}`,
+        "--input",
+        "-",
+      ],
+      JSON.stringify({ sha: commit.sha, force: false }),
+    );
+    return markdown();
   }
 
   private async apiPages(endpoint: string): Promise<RawFeedback[]> {

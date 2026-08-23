@@ -52,7 +52,7 @@ Workflow:
 4. Run the most relevant formatting, static checks, and tests practical for the changed surface. Do not claim checks you did not run.
 5. Review the final diff for unrelated or sensitive changes.
 6. Do not stage, commit, push, open a PR, edit GitHub, or change branches; the controller handles those steps.
-${visualInstructions(options.config, options.evidenceDir, false)}
+${visualInstructions(options.config, options.evidenceDir, options.evidenceDir !== null)}
 End with a concise summary containing:
 - implementation summary
 - changed areas
@@ -100,6 +100,22 @@ End with a concise summary of each feedback item, the response, checks run, evid
 `;
 }
 
+export function buildUiVerificationPrompt(options: {
+  config: WorkerConfig;
+  issueNumber: number;
+  prNumber: number | null;
+  evidenceDir: string;
+}): string {
+  return `Perform final visual QA for UI work on issue #${options.issueNumber}${options.prNumber ? ` / PR #${options.prNumber}` : ""}.
+
+Do not make speculative product changes. Launch the application using repository instructions, verify the changed
+UI behavior on desktop and mobile, exercise validation/error states relevant to the change, inspect console and
+failed requests, and record truthful evidence. Do not stage, commit, push, use GitHub CLI, or change branches.
+${visualInstructions(options.config, options.evidenceDir, true)}
+End with a concise visual result, scenarios checked, and evidence paths. End with BLOCKED if the app cannot be
+launched or the changed UI cannot be verified.`;
+}
+
 export function buildMergeConflictPrompt(options: {
   issueNumber: number;
   prNumber: number;
@@ -132,11 +148,13 @@ End with a concise summary of conflict decisions, changed files, verification co
 }
 
 export function buildCiFailurePrompt(options: {
+  config: WorkerConfig;
   issueNumber: number;
   prNumber: number;
   headSha: string;
   attempt: number;
   failures: PullRequestCheckFailure[];
+  evidenceDir: string | null;
 }): string {
   return `Repair CI failures on pull request #${options.prNumber} for issue #${options.issueNumber}.
 
@@ -157,7 +175,7 @@ full test command when the failure only appears during full collection. For brow
 failures on Linux, keep the app server and complete playwright-cli open/interact/capture/close sequence in one
 bash tool call with cleanup traps. Do not stage, commit, push, comment, use GitHub CLI, or change branches; the
 controller owns those operations.
-
+${visualInstructions(options.config, options.evidenceDir, options.evidenceDir !== null)}
 If the failure is external, flaky, requires secrets, or cannot be safely fixed in repository code, make no
 speculative change and end with BLOCKED plus the exact reason and recommended human action.
 

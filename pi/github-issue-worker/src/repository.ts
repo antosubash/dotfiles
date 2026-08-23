@@ -232,6 +232,35 @@ export class RepositoryManager {
     return (await this.run("git", ["rev-parse", "HEAD"], { cwd: worktree })).stdout.trim();
   }
 
+  async filesChangedBetween(
+    worktree: string,
+    fromRevision: string,
+    toRevision?: string,
+  ): Promise<string[]> {
+    const result = await this.run(
+      "git",
+      [
+        "diff",
+        "--no-renames",
+        "--name-only",
+        "-z",
+        fromRevision,
+        ...(toRevision ? [toRevision] : []),
+      ],
+      { cwd: worktree },
+    );
+    return result.stdout.split("\0").filter(Boolean);
+  }
+
+  async filesAheadOfBase(worktree: string): Promise<string[]> {
+    const result = await this.run(
+      "git",
+      ["diff", "--no-renames", "--name-only", "-z", `origin/${this.config.baseBranch}...HEAD`],
+      { cwd: worktree },
+    );
+    return result.stdout.split("\0").filter(Boolean);
+  }
+
   async changedFiles(worktree: string): Promise<string[]> {
     const result = await this.run("git", ["status", "--porcelain", "-z"], { cwd: worktree });
     const entries = result.stdout.split("\0").filter(Boolean);
