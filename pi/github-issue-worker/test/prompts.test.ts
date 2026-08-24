@@ -17,4 +17,10 @@ test("visual verification prefers truthful source-backed previews over unrelated
   assert.match(prompt, /Never fabricate an ad-hoc mock page/);
   assert.match(prompt, /full repository stack when the changed behavior genuinely requires backend integration/);
   assert.match(prompt, /cannot reach host-loopback services outside the sandbox/);
+  assert.match(prompt, /never guess ports from launchSettings/);
+  assert.match(prompt, /aspire describe --apphost <path-to-AppHost\.csproj> --format Json --non-interactive/);
+  assert.match(prompt, /identify each required resource by name/);
+  assert.match(prompt, /read its current `urls` value from Aspire's runtime state/);
+  assert.match(prompt, /instead of inferring ports from environment references/);
+  assert.match(prompt, /verify each required endpoint directly before opening the browser/);
 });
