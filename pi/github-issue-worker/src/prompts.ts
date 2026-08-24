@@ -16,6 +16,8 @@ Visual verification is requested. Treat verification as part of completion, but 
 - Evidence directory: ${evidenceDir}
 - App URL: ${config.appUrl ?? "discover the local URL from the repository's run instructions"}
 - Optional protected Playwright storage state: ${config.playwrightState ?? "not configured"}
+- Prefer the narrowest checked-in source-backed preview route when it renders the changed production content through the real production components without requiring unrelated backend services. A standalone frontend is preferable to a full stack for such a route. Never fabricate an ad-hoc mock page or use a preview that does not exercise the changed source.
+- Use the full repository stack when the changed behavior genuinely requires backend integration. Linux visual runs cannot reach host-loopback services outside the sandbox; all required app services must run inside the same bash tool call or use an explicitly exposed Docker socket/network path. Fail quickly with the exact dependency blocker instead of waiting repeatedly on an unreachable host service.
 - Use a unique playwright-cli session, take an accessibility snapshot before interaction, and inspect console errors and failed requests.
 - On Linux, keep the app server and the complete playwright-cli open/interact/capture/close sequence in one bash tool call with cleanup traps. The private browser sandbox and its Unix sockets exist only for that command lifetime.
 - Save desktop and relevant mobile screenshots, snapshot.txt, console.log, requests.txt, and report.md under the evidence directory.
@@ -108,8 +110,8 @@ export function buildUiVerificationPrompt(options: {
 }): string {
   return `Perform final visual QA for UI work on issue #${options.issueNumber}${options.prNumber ? ` / PR #${options.prNumber}` : ""}.
 
-Do not make speculative product changes. Launch the application using repository instructions, verify the changed
-UI behavior on desktop and mobile, exercise validation/error states relevant to the change, inspect console and
+Do not make speculative product changes. Launch the narrowest truthful repository-provided application or source-backed
+preview described below, verify the changed UI behavior on desktop and mobile, exercise validation/error states relevant to the change, inspect console and
 failed requests, and record truthful evidence. Do not stage, commit, push, use GitHub CLI, or change branches.
 ${visualInstructions(options.config, options.evidenceDir, true)}
 End with a concise visual result, scenarios checked, and evidence paths. End with BLOCKED if the app cannot be
