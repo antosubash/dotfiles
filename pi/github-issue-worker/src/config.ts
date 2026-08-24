@@ -29,6 +29,7 @@ export interface WorkerConfig {
   pollSeconds: number;
   maxIssuesPerPoll: number;
   maxCiFixAttempts: number;
+  agentTimeoutMinutes: number;
   thinkingLevel: ThinkingLevel;
   model: string;
   trustedAssociations: ReadonlySet<string>;
@@ -70,6 +71,17 @@ function positiveInteger(name: string, value: string, fallback: number): number 
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`);
   }
+  return parsed;
+}
+
+function boundedPositiveInteger(
+  name: string,
+  value: string,
+  fallback: number,
+  maximum: number,
+): number {
+  const parsed = positiveInteger(name, value, fallback);
+  if (parsed > maximum) throw new Error(`${name} must be at most ${maximum}`);
   return parsed;
 }
 
@@ -201,6 +213,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       "PI_WORKER_MAX_CI_FIX_ATTEMPTS",
       env.PI_WORKER_MAX_CI_FIX_ATTEMPTS || "",
       3,
+    ),
+    agentTimeoutMinutes: boundedPositiveInteger(
+      "PI_WORKER_AGENT_TIMEOUT_MINUTES",
+      env.PI_WORKER_AGENT_TIMEOUT_MINUTES || "",
+      60,
+      1_440,
     ),
     thinkingLevel: thinking as ThinkingLevel,
     model,

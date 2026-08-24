@@ -102,6 +102,7 @@ PI_WORKER_SANDBOX_ALLOWED_DOMAINS=
 PI_WORKER_MODEL=openai-codex/gpt-5.6-terra
 PI_WORKER_THINKING_LEVEL=high
 PI_WORKER_MAX_CI_FIX_ATTEMPTS=3
+PI_WORKER_AGENT_TIMEOUT_MINUTES=60
 # Docker is automatic when the socket exists; set 0 to disable it.
 # PI_WORKER_ALLOW_DOCKER=0
 # PI_WORKER_DOCKER_SOCKET=/var/run/docker.sock
@@ -251,6 +252,11 @@ host-namespace, device, host-mount, and socket-forwarding flags.
 This is **not normal sandboxing**. Docker daemon access can provide host-level control and bypass Sandbox
 Runtime filesystem/network boundaries; command filtering is not a security boundary. Run the worker only
 on a dedicated disposable machine/account with no unrelated credentials or workloads.
+
+Agent runs have two anti-stall safeguards: a final `agent_settled` event releases a Pi SDK prompt that
+fails to settle after a short grace period, and `PI_WORKER_AGENT_TIMEOUT_MINUTES` places a hard ceiling on
+runs that never reach a terminal event. The normal controller path then records the final result, clears
+partial source changes for `BLOCKED` output, and updates GitHub instead of wedging the repository profile.
 
 ## State and recovery
 

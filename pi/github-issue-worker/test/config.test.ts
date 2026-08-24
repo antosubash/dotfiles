@@ -23,6 +23,7 @@ test("loadConfig uses a hashed default when no legacy directory exists", () => {
     assert.equal(config.workingLabel, "pi-working");
     assert.equal(config.baseBranch, "develop");
     assert.equal(config.maxCiFixAttempts, 3);
+    assert.equal(config.agentTimeoutMinutes, 60);
     assert.equal(config.model, "openai-codex/gpt-5.6-terra");
     assert.deepEqual(config.protectedPaths, [".git", ".github/workflows", ".pi"]);
     assert.equal(config.allowDocker, config.dockerSocket !== null);
@@ -74,6 +75,18 @@ test("loadConfig validates and overrides the Pi model", () => {
     "openai-codex/gpt-5.6-sol",
   );
   assert.throws(() => loadConfig({ ...base, PI_WORKER_MODEL: "gpt-5.6-luna" }), /provider\/model/);
+});
+
+test("loadConfig validates agent and CI timeout bounds", () => {
+  assert.equal(loadConfig({ ...base, PI_WORKER_AGENT_TIMEOUT_MINUTES: "15" }).agentTimeoutMinutes, 15);
+  assert.throws(
+    () => loadConfig({ ...base, PI_WORKER_AGENT_TIMEOUT_MINUTES: "0" }),
+    /PI_WORKER_AGENT_TIMEOUT_MINUTES/,
+  );
+  assert.throws(
+    () => loadConfig({ ...base, PI_WORKER_AGENT_TIMEOUT_MINUTES: "1441" }),
+    /at most 1440/,
+  );
 });
 
 test("loadConfig validates the CI repair attempt bound", () => {
