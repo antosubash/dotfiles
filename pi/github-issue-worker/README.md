@@ -18,9 +18,19 @@ creation belong to the controller. Pi edits and verifies code inside an issue-sp
    GitHub CLI use, git mutation, secret paths, CI workflows, and configured protected paths.
 4. The controller validates the changed path set, commits, pushes, and opens a **draft** PR with
    `Closes #<number>`.
-5. Trusted formal reviews and inline review comments are sent back to the same Pi session. PR
+5. The worker monitors mergeability. When the configured base conflicts with the feature branch, the
+   controller merges the freshly fetched base without rebasing, the same Pi session resolves unprotected
+   conflicts and runs focused checks, and the controller validates and pushes the merge commit. Protected
+   or ambiguous conflicts are blocked for human resolution.
+6. The worker monitors the draft PR's check rollup. It waits for pending jobs, extracts bounded and
+   scrubbed excerpts from completed failed Actions jobs, and sends actionable failures back to the same
+   Pi session. The controller commits and pushes a repair, then monitors the new head. Attempts are
+   bounded by `PI_WORKER_MAX_CI_FIX_ATTEMPTS` (default `3`); persistent or external failures are marked
+   `pi-blocked` for human investigation.
+7. Trusted formal reviews and inline review comments are sent back to the same Pi session. PR
    conversation comments require an explicit `/pi` command.
-6. Every event is persisted in SQLite, making comment handling idempotent across restarts.
+8. Every review, conflicting head/base pair, and CI-head event is persisted in SQLite, making handling
+   idempotent across restarts.
 
 Each repository child handles its work sequentially. This is intentional: repositories with integration
 databases, browser sessions, or expensive builds should not be fanned out accidentally. A per-profile
@@ -89,7 +99,14 @@ PI_WORKER_PROTECTED_PATHS=.git,.github/workflows,.pi
 PI_WORKER_APP_URL=http://localhost:3000
 # Optional additional hosts for sandboxed build/browser verification (comma-separated)
 PI_WORKER_SANDBOX_ALLOWED_DOMAINS=
+PI_WORKER_MODEL=openai-codex/gpt-5.6-terra
 PI_WORKER_THINKING_LEVEL=high
+PI_WORKER_MAX_CI_FIX_ATTEMPTS=3
+# Docker is automatic when the socket exists; set 0 to disable it.
+# PI_WORKER_ALLOW_DOCKER=0
+# PI_WORKER_DOCKER_SOCKET=/var/run/docker.sock
+PI_WORKER_PUBLISH_EVIDENCE=1
+PI_WORKER_EVIDENCE_BRANCH=pi-evidence
 ```
 
 Validate GitHub and Pi authentication without changing GitHub, then run one poll interactively:
@@ -125,7 +142,8 @@ journalctl --user -u pi-issue-worker@widgets.service -f
 ```
 
 The supplied hardened units permit controller writes under `~/.local/share/pi-issue-worker`,
-`~/.cache`, and `~/.pi/agent` (the Pi SDK locks and may refresh its auth state). Sandboxed agent commands
+`~/.cache`, `~/.pi/agent` (the Pi SDK locks and may refresh its auth state), and the private user runtime
+root used for visual browser sockets. Sandboxed agent commands
 still cannot read the Pi agent directory. If a profile sets a different data directory, add that directory
 to `ReadWritePaths` in a systemd override. Pi bash commands also run inside Anthropic Sandbox Runtime:
 reads are denied across the home directory except the issue
@@ -209,14 +227,30 @@ Visual evidence is local and intentionally untracked:
     └── report.md
 ```
 
-The controller adds `/.qa/` to its private control clone's Git exclude and never stages it. GitHub CLI
-cannot attach local images to PR comments, so comments contain text summaries and local evidence paths;
-a maintainer may manually attach selected files. Old timestamped runs are removed after
-`PI_WORKER_QA_RETENTION_DAYS`.
+The controller adds `/.qa/` to its private control clone's Git exclude and never stages it on the feature
+branch. By default it rejects symlinked evidence, decodes and deterministically re-encodes PNG/GIF/WebM
+inside a credential-free networkless media sandbox, enforces per-file and per-run size limits, publishes
+sanitized artifacts to the orphan `PI_WORKER_EVIDENCE_BRANCH`, and embeds the images/GIF in the PR
+comment. Set `PI_WORKER_PUBLISH_EVIDENCE=0` to keep evidence local only. Old local timestamped runs are
+removed after `PI_WORKER_QA_RETENTION_DAYS`; published branch history is retained.
 
 Pi uses a unique `playwright-cli` session, takes an accessibility snapshot before interaction, checks
 console/network failures, and closes the browser session. GIF requests record WebM and use `ffmpeg` for
-conversion.
+conversion. On Linux, browser runs receive a short-lived private temporary directory and complete the
+server/browser workflow in one sandbox command so Playwright's daemon and sockets are cleaned up. Private
+browser temp directories older than 24 hours are removed before later agent runs. Every visual response
+includes a controller-generated artifact manifest, even when the model omits evidence paths from its prose.
+
+## Automatic Docker access
+
+When `PI_WORKER_DOCKER_SOCKET` (default `/var/run/docker.sock`) exists and is accessible, Docker is
+available automatically to implementation, review, conflict, and CI-repair runs. Set
+`PI_WORKER_ALLOW_DOCKER=0` to disable it explicitly. The worker still blocks common privileged,
+host-namespace, device, host-mount, and socket-forwarding flags.
+
+This is **not normal sandboxing**. Docker daemon access can provide host-level control and bypass Sandbox
+Runtime filesystem/network boundaries; command filtering is not a security boundary. Run the worker only
+on a dedicated disposable machine/account with no unrelated credentials or workloads.
 
 ## State and recovery
 
@@ -232,9 +266,10 @@ PI_WORKER_DATA_DIR/
 └── state.sqlite      # jobs and processed GitHub event IDs
 ```
 
-A restart resumes claimed/implementing issues and replays unprocessed feedback for
-`addressing_review` jobs. If a commit was already produced, it is pushed and used to create the missing
-PR instead of rerunning implementation. Existing open PRs are rediscovered by
+A restart resumes claimed/implementing issues, unprocessed feedback for `addressing_review` jobs, and
+interrupted `addressing_ci` repairs in the persistent issue session. CI attempts and handled head SHAs
+survive restarts, preventing duplicate repair loops. If a commit was already produced, it is pushed and
+used to create the missing PR instead of rerunning implementation. Existing open PRs are rediscovered by
 branch name.
 
 ## Security model and limitations
@@ -249,6 +284,16 @@ branch name.
   extension runs in the controller process.
 - The agent policy blocks common GitHub/git mutation, privilege escalation, recursive deletion, secret
   paths, CI workflows, and configured protected paths. The controller checks paths again before commit.
+  Explicit `BLOCKED` results are never committed; tracked, untracked, and ignored partial changes are
+  cleared while ignored `.qa` evidence is retained.
+- Docker is automatically exposed when the configured daemon socket exists. It deliberately weakens the
+  sandbox and should be used only on a dedicated disposable worker host; set `PI_WORKER_ALLOW_DOCKER=0`
+  where that risk is unacceptable.
+- Linux visual runs must permit Unix sockets because Chromium and Playwright require them. This is
+  enabled only for explicitly requested visual verification or diagnosed browser CI failures; the sandbox hides the home directory and
+  `/tmp` and `/var`, masks unrelated `/run` entries, and exposes only a unique private runtime temp
+  subtree plus Sandbox Runtime's network bridge. Linux seccomp cannot filter Unix sockets by path, so a dedicated OS account remains
+  important defense in depth.
 - Run under a dedicated OS account and dedicated GitHub identity as additional defense in depth.
 - Model credentials are used by the controller/Pi host process and are never exposed to sandboxed bash.
   Never approve hostile issues.

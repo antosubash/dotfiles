@@ -33,11 +33,11 @@ The extension maps Claude model tiers when loading shared agents:
 
 | Claude tier | Pi model |
 |---|---|
-| Haiku | `openai-codex/gpt-5.4-mini` |
-| Sonnet | `openai-codex/gpt-5.6-luna` |
+| Haiku | `openai-codex/gpt-5.6-luna` |
+| Sonnet | `openai-codex/gpt-5.6-terra` |
 | Opus/Fable | `openai-codex/gpt-5.6-sol` |
 
-Pi-specific `scout`, `planner`, `worker`, `reviewer`, `reviewer-fast`, and `browser-qa` agents live beside the shared specialists. `/ship` uses the full Luna reviewer once, then the Mini reviewer only for known findings and fix/QA deltas. P2/P3 advisories are reported without extending the blocking loop.
+Pi-specific `scout`, `planner`, `worker`, `reviewer`, `reviewer-fast`, and `browser-qa` agents live beside the shared specialists. `/ship` uses the full Terra reviewer once, then the Luna reviewer only for known findings and fix/QA deltas. P2/P3 advisories are reported without extending the blocking loop.
 
 ## Loop state
 
@@ -59,7 +59,8 @@ Project-local Pi resources retain Pi's normal trust prompt (`defaultProjectTrust
 
 `github-issue-worker/` is a repository-neutral Node.js service built on the Pi SDK. It picks up issues
 only after a maintainer applies the configured ready label, works in a fresh isolated worktree, opens a
-draft PR, and continues trusted review feedback in the same persistent Pi session. Each child and
+draft PR, monitors its checks with bounded automatic CI repair, and continues trusted review feedback
+in the same persistent Pi session. Each child and
 environment profile serves one repository. The optional `pi-issue-worker-supervisor` runs multiple
 profile-isolated children while preserving separate processes, state, clones, worktrees, and sessions.
 

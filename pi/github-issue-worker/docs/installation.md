@@ -144,6 +144,8 @@ Recommended production settings:
 PI_WORKER_LABEL_PREFIX=pi
 PI_WORKER_POLL_SECONDS=60
 PI_WORKER_MAX_ISSUES_PER_POLL=1
+PI_WORKER_MAX_CI_FIX_ATTEMPTS=3
+PI_WORKER_MODEL=openai-codex/gpt-5.6-terra
 PI_WORKER_THINKING_LEVEL=high
 PI_WORKER_TRUSTED_ASSOCIATIONS=OWNER,MEMBER,COLLABORATOR
 PI_WORKER_PROTECTED_PATHS=.git,.github/workflows,.pi
@@ -258,6 +260,18 @@ systemctl --user restart pi-issue-worker-supervisor.service
 
 The sandbox automatically permits reads from user-home directories present in `PATH`; writes remain limited to the issue worktree and temporary space.
 
+When visual verification is required, validate the installed Chromium/Playwright path from the package
+checkout before enabling production work:
+
+```bash
+cd ~/dotfiles/pi/github-issue-worker
+PI_WORKER_BROWSER_SMOKE=1 npx tsx --test test/browser-sandbox.integration.test.ts
+```
+
+The Linux visual profile temporarily permits Unix sockets for Chromium and Playwright, while denying
+reads from the home directory and common socket locations and exposing only a unique private temporary
+subtree. Keep the worker on a dedicated OS account.
+
 ## 7. Start the worker
 
 ### Recommended: one supervisor for all profiles
@@ -316,7 +330,11 @@ pi-ready → pi-working → pi-pr-open
                          ↘ pi-blocked
 ```
 
-The worker comments when it claims the issue and when it opens a draft PR. Human review and merge remain mandatory.
+The worker comments when it claims the issue and when it opens a draft PR. It then waits for the PR
+check rollup. Completed failures trigger up to `PI_WORKER_MAX_CI_FIX_ATTEMPTS` repairs in the original
+persistent Pi session; each pushed head is monitored independently. Passing checks are reported once,
+and exhausted, external, or unsafe-to-fix failures receive `pi-blocked` and require a human. Human review
+and merge remain mandatory.
 
 ## 9. Update or disable
 

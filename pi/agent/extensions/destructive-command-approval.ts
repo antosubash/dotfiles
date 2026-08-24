@@ -9,7 +9,8 @@ type RiskRule = {
 };
 
 const RISK_RULES: RiskRule[] = [
-  { description: "recursive or forced file deletion", pattern: /\brm\b[^\n;&|]*(?:-[a-z]*[rf][a-z]*|--recursive|--force)\b/i },
+  // `rm -f` is routine idempotent cleanup; prompt only when deletion is recursive.
+  { description: "recursive file deletion", pattern: /\brm\b[^\n;&|]*(?:-[a-z]*r[a-z]*|--recursive)\b/i },
   { description: "find command deleting files", pattern: /\bfind\b[^\n;&|]*\s-delete\b/i },
   { description: "privileged command", pattern: /(^|[;&|]\s*|\s)sudo\s/i },
   { description: "discarding Git working-tree or index changes", pattern: /\bgit\s+(?:reset\s+--hard|clean\b[^\n;&|]*(?:-[a-z]*f|--force)|checkout\s+--\s+[.]|restore\s+(?:--worktree\s+)?(?:[.]|:\/))/i },
@@ -22,14 +23,18 @@ const RISK_RULES: RiskRule[] = [
   { description: "forced process termination", pattern: /\b(?:kill\s+-9|pkill\b|killall\b)/i },
 ];
 
+export function destructiveCommandRisks(command: string): string[] {
+  return RISK_RULES
+    .filter(({ pattern }) => pattern.test(command))
+    .map(({ description }) => description);
+}
+
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     if (!isToolCallEventType("bash", event)) return;
 
     const command = event.input.command;
-    const risks = RISK_RULES
-      .filter(({ pattern }) => pattern.test(command))
-      .map(({ description }) => description);
+    const risks = destructiveCommandRisks(command);
 
     if (risks.length === 0) return;
 

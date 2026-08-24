@@ -7,6 +7,7 @@ export interface ExecOptions {
   input?: string;
   timeoutMs?: number;
   allowFailure?: boolean;
+  maxOutputChars?: number;
 }
 
 export async function execFile(
@@ -24,10 +25,16 @@ export async function execFile(
     let stderr = "";
     let timedOut = false;
 
+    const appendOutput = (current: string, chunk: string): string => {
+      const combined = current + chunk;
+      return options.maxOutputChars && combined.length > options.maxOutputChars
+        ? combined.slice(-options.maxOutputChars)
+        : combined;
+    };
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => (stdout += chunk));
-    child.stderr.on("data", (chunk: string) => (stderr += chunk));
+    child.stdout.on("data", (chunk: string) => (stdout = appendOutput(stdout, chunk)));
+    child.stderr.on("data", (chunk: string) => (stderr = appendOutput(stderr, chunk)));
     child.on("error", reject);
 
     const timer = options.timeoutMs

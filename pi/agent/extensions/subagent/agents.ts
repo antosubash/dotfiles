@@ -11,8 +11,8 @@ export type AgentScope = "user" | "project" | "both";
 // Allow the shared Claude agent definitions to keep their model tiers while Pi
 // dispatches them to the equivalent models available in this setup.
 const CLAUDE_MODEL_ALIASES = {
-	haiku: "openai-codex/gpt-5.4-mini",
-	sonnet: "openai-codex/gpt-5.6-luna",
+	haiku: "openai-codex/gpt-5.6-luna",
+	sonnet: "openai-codex/gpt-5.6-terra",
 	opus: "openai-codex/gpt-5.6-sol",
 	fable: "openai-codex/gpt-5.6-sol",
 } as const;

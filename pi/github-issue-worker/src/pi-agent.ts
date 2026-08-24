@@ -1,6 +1,25 @@
 import { spawn } from "node:child_process";
-import { access, appendFile, mkdir } from "node:fs/promises";
-import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  access,
+  appendFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,7 +79,12 @@ function normalizeToolPath(cwd: string, input: unknown): string | null {
   return local.startsWith("../") || local === ".." ? null : local;
 }
 
-export function commandBlockReason(command: string, protectedPaths: readonly string[]): string | null {
+export function commandBlockReason(
+  command: string,
+  protectedPaths: readonly string[],
+  options: { dockerAccess?: boolean } = {},
+): string | null {
+  const inspectedCommand = command.replace(/\\\r?\n/g, " ");
   const rules: Array<[RegExp, string]> = [
     [/\bgh\s+/i, "GitHub CLI writes and reads belong to the controller"],
     [/\bgit\b[^\n]*(?:\bpush|\bcommit|\badd|\breset|\bclean|\brebase|\bcheckout|\bswitch|\bworktree)\b/i, "git mutation belongs to the controller"],
@@ -68,12 +92,24 @@ export function commandBlockReason(command: string, protectedPaths: readonly str
     [/\brm\b[^\n]*(?:-[a-z]*r[a-z]*|--recursive)\b/i, "recursive deletion is forbidden"],
     [/appsettings\.secrets\.json/i, "secret files are protected"],
     [/(^|[\s/'"])\.env(?:[\s/'".]|$)/i, ".env files are protected"],
+    [
+      /\bdocker(?:-compose)?\b/i,
+      options.dockerAccess
+        ? ""
+        : "Docker requires an explicit trusted /pi request and PI_WORKER_ALLOW_DOCKER=1",
+    ],
   ];
   for (const [pattern, reason] of rules) {
-    if (pattern.test(command)) return reason;
+    if (reason && pattern.test(inspectedCommand)) return reason;
+  }
+  if (
+    options.dockerAccess &&
+    /\bdocker(?:-compose)?\b[^\n]*(?:--privileged|--pid(?:=|\s+)host|--network(?:=|\s+)host|--device(?:=|\s+)|--mount(?:=|\s+)|--volume(?:=|\s+)|(?:^|\s)-v(?:\S*|\s+)|\/var\/run\/docker\.sock|\/run\/docker\.sock)/i.test(inspectedCommand)
+  ) {
+    return "Docker host mounts, host namespaces, devices, privileged mode, and socket forwarding are forbidden";
   }
   for (const path of protectedPaths) {
-    if (path && command.includes(path)) return `protected path referenced: ${path}`;
+    if (path && inspectedCommand.includes(path)) return `protected path referenced: ${path}`;
   }
   return null;
 }
@@ -109,9 +145,59 @@ interface AgentRunOptions {
   sessionFile: string | null;
   prompt: string;
   logFile: string;
+  visualVerification?: boolean;
+  dockerAccess?: boolean;
 }
 
 const GITHUB_SECRET_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"] as const;
+const STALE_SANDBOX_TEMP_AGE_MS = 24 * 60 * 60 * 1_000;
+
+function sandboxTempRoot(visualVerification: boolean): string {
+  if (!visualVerification || process.platform !== "linux") return "/tmp";
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error("Visual sandbox requires a numeric Linux user ID");
+  const root = `/run/user/${uid}`;
+  try {
+    accessSync(root, constants.R_OK | constants.W_OK | constants.X_OK);
+  } catch {
+    throw new Error(`Visual sandbox requires a private writable runtime directory at ${root}`);
+  }
+  return root;
+}
+
+export async function removeStaleSandboxTemps(
+  root = "/tmp",
+  now = Date.now(),
+): Promise<void> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const currentUid = process.getuid?.();
+  await Promise.all(
+    entries
+      .filter((entry) => entry.name.startsWith("piw-"))
+      .map(async (entry) => {
+        const path = join(root, entry.name);
+        const info = await lstat(path).catch(() => null);
+        if (!info || (currentUid !== undefined && info.uid !== currentUid)) return;
+        if (now - info.mtimeMs < STALE_SANDBOX_TEMP_AGE_MS) return;
+        const ownerPid = Number.parseInt(
+          await readFile(join(path, ".owner-pid"), "utf8").catch(() => ""),
+          10,
+        );
+        if (Number.isSafeInteger(ownerPid) && ownerPid > 0) {
+          try {
+            process.kill(ownerPid, 0);
+            return;
+          } catch (error) {
+            const code = error instanceof Error && "code" in error
+              ? (error as NodeJS.ErrnoException).code
+              : undefined;
+            if (code === "EPERM") return;
+          }
+        }
+        await rm(path, { recursive: true, force: true });
+      }),
+  );
+}
 
 function gitMetadataPaths(worktree: string): string[] {
   const gitFile = resolve(worktree, ".git");
@@ -123,25 +209,90 @@ function gitMetadataPaths(worktree: string): string[] {
   return [gitDir, resolve(gitDir, "..", "..")];
 }
 
-export function sandboxConfig(worktree: string, config: WorkerConfig): SandboxRuntimeConfig {
+export function sandboxConfig(
+  worktree: string,
+  config: WorkerConfig,
+  options: { privateTemp?: string; visualVerification?: boolean; dockerSocket?: string | null } = {},
+): SandboxRuntimeConfig {
   const home = resolve(process.env.HOME || homedir());
+  const privateTemp = resolve(options.privateTemp || "/tmp");
   const pathReadPaths = (process.env.PATH || "")
     .split(":")
     .filter((path) => path.startsWith(`${home}/`))
     .map((path) => resolve(path));
+  const visualVerification = options.visualVerification === true;
+  const playwrightBrowserPath = resolve(
+    process.env.PLAYWRIGHT_BROWSERS_PATH ||
+      (process.platform === "darwin"
+        ? join(home, "Library", "Caches", "ms-playwright")
+        : join(home, ".cache", "ms-playwright")),
+  );
+  const playwrightFfmpegPaths = visualVerification && existsSync(playwrightBrowserPath)
+    ? readdirSync(playwrightBrowserPath, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith("ffmpeg-"))
+        .map((entry) => join(playwrightBrowserPath, entry.name))
+    : [];
   const readPaths = [
-    ...new Set([worktree, WORKER_RUNTIME_ROOT, ...gitMetadataPaths(worktree), ...pathReadPaths]),
+    ...new Set([
+      worktree,
+      privateTemp,
+      WORKER_RUNTIME_ROOT,
+      ...gitMetadataPaths(worktree),
+      ...pathReadPaths,
+      ...playwrightFfmpegPaths,
+      ...(options.dockerSocket ? [options.dockerSocket] : []),
+    ]),
   ];
+  const socketAccessRequested = visualVerification || Boolean(options.dockerSocket);
+  const linuxSocketAccess = socketAccessRequested && process.platform === "linux";
+  const hiddenRunEntries = linuxSocketAccess
+    ? [
+        ...readdirSync("/run", { withFileTypes: true })
+          .filter((entry) => entry.name !== "user" && !entry.isSymbolicLink())
+          .map((entry) => resolve("/run", entry.name))
+          .filter((path) => path !== options.dockerSocket),
+        ...readdirSync("/run/user", { withFileTypes: true })
+          .filter(
+            (entry) =>
+              !entry.isSymbolicLink() &&
+              resolve("/run/user", entry.name) !== dirname(privateTemp),
+          )
+          .map((entry) => resolve("/run/user", entry.name)),
+        ...readdirSync(dirname(privateTemp), { withFileTypes: true })
+          .filter((entry) => !entry.isSymbolicLink())
+          .map((entry) => resolve(dirname(privateTemp), entry.name))
+          .filter((path) => path !== privateTemp && path !== options.dockerSocket),
+      ]
+    : [];
+  const visualSocketPolicy = socketAccessRequested
+    ? process.platform === "linux"
+      ? { allowAllUnixSockets: true }
+      : {
+          allowUnixSockets: [
+            ...(visualVerification ? [privateTemp] : []),
+            ...(options.dockerSocket ? [options.dockerSocket] : []),
+          ],
+        }
+    : {};
   return {
     network: {
       allowedDomains: [...config.sandboxAllowedDomains],
       deniedDomains: [],
       allowLocalBinding: true,
+      ...visualSocketPolicy,
     },
     filesystem: {
-      denyRead: [home],
+      denyRead: [
+        home,
+        ...hiddenRunEntries,
+        ...(linuxSocketAccess ? ["/tmp", "/var"] : []),
+      ],
       allowRead: readPaths,
-      allowWrite: [worktree, "/tmp"],
+      allowWrite: [
+        worktree,
+        ...(linuxSocketAccess ? [privateTemp] : ["/tmp"]),
+        ...(options.dockerSocket ? [options.dockerSocket] : []),
+      ],
       denyWrite: [
         resolve(home, ".ssh"),
         resolve(home, ".aws"),
@@ -150,6 +301,17 @@ export function sandboxConfig(worktree: string, config: WorkerConfig): SandboxRu
       ],
     },
   };
+}
+
+export function assertVisualSandboxIsolation(wrappedCommand: string): void {
+  if (!/\bbwrap\b/.test(wrappedCommand) || !/--unshare-net\b/.test(wrappedCommand)) {
+    throw new Error("Visual sandbox must use an isolated Linux network namespace");
+  }
+  for (const path of ["/tmp", "/var"]) {
+    if (!wrappedCommand.includes(`--tmpfs ${path}`)) {
+      throw new Error(`Visual sandbox must hide host socket directory ${path}`);
+    }
+  }
 }
 
 export function sandboxEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -260,6 +422,7 @@ export async function stopTrackedProcessGroup(processGroupFile: string): Promise
 export function createSandboxedBashOperations(
   processGroupFile: string,
   shutdownSignal?: AbortSignal,
+  environmentOverrides: NodeJS.ProcessEnv = {},
 ): BashOperations {
   return {
     async exec(command, cwd, { onData, signal, timeout }) {
@@ -268,7 +431,7 @@ export function createSandboxedBashOperations(
         const child = spawn("bash", ["-c", wrappedCommand], {
           cwd,
           detached: true,
-          env: sandboxEnvironment(),
+          env: { ...sandboxEnvironment(), ...environmentOverrides },
           stdio: ["ignore", "pipe", "pipe"],
         });
         if (!child.pid) {
@@ -357,11 +520,22 @@ export class PiAgentRunner {
     });
   }
 
-  async assertAvailable(): Promise<void> {
-    const available = await (await this.modelRuntimePromise).getAvailable();
-    if (available.length === 0) {
-      throw new Error(`No authenticated Pi model is available in ${this.config.agentDir}`);
+  private async selectedModel() {
+    const runtime = await this.modelRuntimePromise;
+    const available = await runtime.getAvailable();
+    const selected = available.find(
+      (model) => `${model.provider}/${model.id}` === this.config.model,
+    );
+    if (!selected) {
+      throw new Error(
+        `Configured Pi model ${this.config.model} is not available or authenticated in ${this.config.agentDir}`,
+      );
     }
+    return selected;
+  }
+
+  async assertAvailable(): Promise<void> {
+    await this.selectedModel();
   }
 
   async run(options: AgentRunOptions): Promise<AgentRunResult> {
@@ -383,17 +557,47 @@ export class PiAgentRunner {
     await mkdir(options.sessionDir, { recursive: true });
     await mkdir(dirname(options.logFile), { recursive: true });
     const processGroupFile = activeCommandProcessGroupPath(this.config.dataDir);
+    const visualVerification = options.visualVerification === true;
+    const dockerAccess = options.dockerAccess === true;
+    if (dockerAccess && (!this.config.allowDocker || !this.config.dockerSocket)) {
+      throw new Error("Docker access was requested but is not enabled for this worker profile");
+    }
+    const tempRoot = sandboxTempRoot(visualVerification || dockerAccess);
+    await removeStaleSandboxTemps(tempRoot);
+    // Keep this short: Unix-domain browser socket paths are limited to roughly 108 bytes on Linux.
+    const sandboxTemp = await mkdtemp(join(tempRoot, "piw-"));
+    await writeFile(join(sandboxTemp, ".owner-pid"), `${process.pid}\n`, { mode: 0o600 });
+    const previousSandboxTemp = process.env.CLAUDE_CODE_TMPDIR;
+    const previousTmpdir = process.env.TMPDIR;
+    const previousPlaywrightDaemonDir = process.env.PLAYWRIGHT_DAEMON_SESSION_DIR;
+    process.env.CLAUDE_CODE_TMPDIR = sandboxTemp;
+    process.env.PLAYWRIGHT_DAEMON_SESSION_DIR = join(sandboxTemp, "playwright-daemon");
+    if ((visualVerification || dockerAccess) && process.platform === "linux") {
+      process.env.TMPDIR = sandboxTemp;
+    }
     const shutdownController = new AbortController();
     const onInterrupt = () => shutdownController.abort();
     process.on("SIGINT", onInterrupt);
     process.on("SIGTERM", onInterrupt);
     let sandboxInitialized = true;
     try {
-      await SandboxManager.initialize(sandboxConfig(options.worktree, this.config));
+      await SandboxManager.initialize(
+        sandboxConfig(options.worktree, this.config, {
+          privateTemp: sandboxTemp,
+          visualVerification: options.visualVerification === true,
+          dockerSocket: dockerAccess ? this.config.dockerSocket : null,
+        }),
+      );
+      if (process.platform === "linux" && (visualVerification || dockerAccess)) {
+        assertVisualSandboxIsolation(await SandboxManager.wrapWithSandbox("true"));
+      }
       const settingsManager = SettingsManager.create(options.worktree, this.config.agentDir);
       const sandboxedBashOperations = createSandboxedBashOperations(
         processGroupFile,
         shutdownController.signal,
+        dockerAccess && this.config.dockerSocket
+          ? { DOCKER_HOST: `unix://${this.config.dockerSocket}` }
+          : {},
       );
       const loader = new DefaultResourceLoader({
         cwd: options.worktree,
@@ -415,7 +619,9 @@ export class PiAgentRunner {
               pi.on("tool_call", (event) => {
                 const input = event.input as { command?: unknown; path?: unknown };
                 if (event.toolName === "bash" && typeof input.command === "string") {
-                  const reason = commandBlockReason(input.command, this.config.protectedPaths);
+                  const reason = commandBlockReason(input.command, this.config.protectedPaths, {
+                    dockerAccess,
+                  });
                   if (reason) return { block: true, reason, terminate: false };
                 }
                 if (["read", "write", "edit"].includes(event.toolName)) {
@@ -447,10 +653,12 @@ export class PiAgentRunner {
         ? SessionManager.open(options.sessionFile, options.sessionDir, options.worktree)
         : SessionManager.create(options.worktree, options.sessionDir);
       const modelRuntime = await this.modelRuntimePromise;
+      const model = await this.selectedModel();
       const { session, modelFallbackMessage } = await createAgentSession({
         cwd: options.worktree,
         agentDir: this.config.agentDir,
         modelRuntime,
+        model,
         thinkingLevel: this.config.thinkingLevel,
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
         resourceLoader: loader,
@@ -491,7 +699,20 @@ export class PiAgentRunner {
       try {
         await stopTrackedProcessGroup(processGroupFile);
       } finally {
-        if (sandboxInitialized) await SandboxManager.reset();
+        try {
+          if (sandboxInitialized) await SandboxManager.reset();
+        } finally {
+          if (previousSandboxTemp === undefined) delete process.env.CLAUDE_CODE_TMPDIR;
+          else process.env.CLAUDE_CODE_TMPDIR = previousSandboxTemp;
+          if (previousTmpdir === undefined) delete process.env.TMPDIR;
+          else process.env.TMPDIR = previousTmpdir;
+          if (previousPlaywrightDaemonDir === undefined) {
+            delete process.env.PLAYWRIGHT_DAEMON_SESSION_DIR;
+          } else {
+            process.env.PLAYWRIGHT_DAEMON_SESSION_DIR = previousPlaywrightDaemonDir;
+          }
+          await rm(sandboxTemp, { recursive: true, force: true });
+        }
       }
     }
   }

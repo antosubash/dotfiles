@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 
@@ -28,7 +28,9 @@ export interface WorkerConfig {
   dataDir: string;
   pollSeconds: number;
   maxIssuesPerPoll: number;
+  maxCiFixAttempts: number;
   thinkingLevel: ThinkingLevel;
+  model: string;
   trustedAssociations: ReadonlySet<string>;
   protectedPaths: readonly string[];
   appUrl: string | null;
@@ -36,6 +38,10 @@ export interface WorkerConfig {
   qaRetentionDays: number;
   agentDir: string;
   sandboxAllowedDomains: readonly string[];
+  allowDocker: boolean;
+  dockerSocket: string | null;
+  publishEvidence: boolean;
+  evidenceBranch: string;
 }
 
 function expandPath(value: string, home = homedir()): string {
@@ -50,6 +56,13 @@ function directoryExists(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function booleanFlag(name: string, value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized || ["0", "false", "no"].includes(normalized)) return false;
+  if (["1", "true", "yes"].includes(normalized)) return true;
+  throw new Error(`${name} must be 1/true/yes or 0/false/no`);
 }
 
 function positiveInteger(name: string, value: string, fallback: number): number {
@@ -103,6 +116,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       .filter(Boolean),
   ];
   const statePath = env.PI_WORKER_PLAYWRIGHT_STATE?.trim();
+  const model = env.PI_WORKER_MODEL?.trim() || "openai-codex/gpt-5.6-terra";
+  if (!/^[^/\s]+\/[^/\s]+$/.test(model)) {
+    throw new Error("PI_WORKER_MODEL must use provider/model format");
+  }
   const labelPrefix = env.PI_WORKER_LABEL_PREFIX?.trim() || "pi";
   const repositorySlug = repository.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const repositoryIdentityHash = createHash("sha256")
@@ -124,6 +141,44 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     : directoryExists(legacyDataDir)
       ? legacyDataDir
       : hashedDataDir;
+  const configuredDockerSocket = expandPath(
+    env.PI_WORKER_DOCKER_SOCKET?.trim() || "/var/run/docker.sock",
+    home,
+  );
+  const automaticDocker = (() => {
+    try {
+      if (!statSync(configuredDockerSocket).isSocket()) return false;
+      accessSync(configuredDockerSocket, constants.R_OK | constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  const allowDocker = env.PI_WORKER_ALLOW_DOCKER === undefined
+    ? automaticDocker
+    : booleanFlag("PI_WORKER_ALLOW_DOCKER", env.PI_WORKER_ALLOW_DOCKER);
+  let dockerSocket = allowDocker ? configuredDockerSocket : null;
+  const evidenceBranch = env.PI_WORKER_EVIDENCE_BRANCH?.trim() || "pi-evidence";
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(evidenceBranch) ||
+    evidenceBranch.includes("..") ||
+    evidenceBranch.endsWith("/") ||
+    evidenceBranch === baseBranch
+  ) {
+    throw new Error("PI_WORKER_EVIDENCE_BRANCH is not a safe Git branch name");
+  }
+  if (dockerSocket) {
+    try {
+      if (!statSync(dockerSocket).isSocket()) {
+        throw new Error("path is not a Unix socket");
+      }
+      dockerSocket = realpathSync(dockerSocket);
+    } catch (error) {
+      throw new Error(
+        `PI_WORKER_DOCKER_SOCKET must reference an accessible Unix socket: ${dockerSocket} (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
+  }
 
   return {
     repository,
@@ -142,7 +197,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       env.PI_WORKER_MAX_ISSUES_PER_POLL || "",
       1,
     ),
+    maxCiFixAttempts: positiveInteger(
+      "PI_WORKER_MAX_CI_FIX_ATTEMPTS",
+      env.PI_WORKER_MAX_CI_FIX_ATTEMPTS || "",
+      3,
+    ),
     thinkingLevel: thinking as ThinkingLevel,
+    model,
     trustedAssociations: new Set(associations),
     protectedPaths,
     appUrl,
@@ -154,5 +215,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     ),
     agentDir: expandPath(env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent", home),
     sandboxAllowedDomains: [...new Set(sandboxAllowedDomains)],
+    allowDocker,
+    dockerSocket,
+    publishEvidence: booleanFlag(
+      "PI_WORKER_PUBLISH_EVIDENCE",
+      env.PI_WORKER_PUBLISH_EVIDENCE ?? "1",
+    ),
+    evidenceBranch,
   };
 }

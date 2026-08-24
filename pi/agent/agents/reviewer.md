@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Read-only code review specialist for correctness, security, regressions, and meaningful test gaps
-model: openai-codex/gpt-5.6-luna
+model: openai-codex/gpt-5.6-terra
 tools: read, grep, find, ls, bash
 ---
 

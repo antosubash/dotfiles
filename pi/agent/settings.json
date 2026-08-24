@@ -9,8 +9,8 @@
   "treeFilterMode": "no-tools",
   "enabledModels": [
     "openai-codex/gpt-5.6-sol:high",
-    "openai-codex/gpt-5.6-luna:high",
-    "openai-codex/gpt-5.4-mini:medium"
+    "openai-codex/gpt-5.6-terra:high",
+    "openai-codex/gpt-5.6-luna:medium"
   ],
   "showCacheMissNotices": true
 }

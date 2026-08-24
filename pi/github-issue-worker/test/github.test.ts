@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isActionableFeedback, parseWorkerCommand } from "../src/github.js";
+import { loadConfig } from "../src/config.js";
+import {
+  GitHubClient,
+  classifyPullRequestChecks,
+  extractFailureExcerpt,
+  isActionableFeedback,
+  parseWorkerCommand,
+} from "../src/github.js";
 import type { PullRequestFeedback } from "../src/types.js";
 
 function feedback(overrides: Partial<PullRequestFeedback> = {}): PullRequestFeedback {
@@ -42,4 +49,127 @@ test("same-login maintainer commands remain actionable when using personal gh au
 test("commands are normalized", () => {
   assert.equal(parseWorkerCommand("/PI Verify GIF\nextra"), "verify gif");
   assert.equal(parseWorkerCommand("ordinary text"), null);
+});
+
+test("pull request checks distinguish no checks, pending jobs, and actionable failures", () => {
+  const none = classifyPullRequestChecks({ headRefOid: "abc", statusCheckRollup: [] });
+  assert.equal(none.state, "none");
+
+  const pending = classifyPullRequestChecks({
+    headRefOid: "abc",
+    statusCheckRollup: [
+      { name: "lint", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://github.com/x/y/actions/runs/1/job/2" },
+      { name: "tests", status: "IN_PROGRESS", conclusion: "" },
+    ],
+  });
+  assert.equal(pending.state, "pending");
+
+  const failed = classifyPullRequestChecks({
+    headRefOid: "abc",
+    statusCheckRollup: [
+      { name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
+      { context: "tests", state: "FAILURE", targetUrl: "https://example.test" },
+    ],
+  });
+  assert.equal(failed.state, "failed");
+  assert.deepEqual(failed.failures[0], {
+    name: "tests",
+    conclusion: "FAILURE",
+    detailsUrl: "https://example.test",
+    excerpt: null,
+  });
+});
+
+test("evidence publication is idempotent and advances the branch without force", async () => {
+  const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+  const attachment = {
+    name: "desktop.png",
+    content: Buffer.from("png"),
+    mediaType: "image/png" as const,
+  };
+  const expectedPath = "qa/pr-7/abcdef123456/run/desktop.png";
+
+  for (const alreadyPublished of [true, false]) {
+    const calls: Array<{ args: readonly string[]; input?: string }> = [];
+    const client = new GitHubClient(
+      loadConfig({
+        PI_WORKER_REPOSITORY: "example/widgets",
+        PI_WORKER_BASE_BRANCH: "main",
+        PI_WORKER_ALLOW_DOCKER: "0",
+      }),
+      async (args, input) => {
+        calls.push({ args, ...(input === undefined ? {} : { input }) });
+        const endpoint = args.find((value) => value.startsWith("/repos/")) || "";
+        if (endpoint.includes("/git/ref/heads/")) return JSON.stringify({ object: { sha: "head" } });
+        if (endpoint.endsWith("/git/commits/head")) return JSON.stringify({ tree: { sha: "tree" } });
+        if (endpoint.includes("/git/trees/tree?")) {
+          return JSON.stringify({
+            tree: alreadyPublished
+              ? [{ path: expectedPath, type: "blob", sha: "blob" }]
+              : [],
+          });
+        }
+        if (endpoint.includes("/commits?sha=")) {
+          return JSON.stringify([[
+            {
+              sha: "head",
+              parents: [{ sha: "root" }],
+              commit: { message: "qa: publish evidence for PR #7", tree: { sha: "tree" } },
+            },
+            {
+              sha: "root",
+              parents: [],
+              commit: { message: "Initialize Pi QA evidence branch", tree: { sha: emptyTree } },
+            },
+          ]]);
+        }
+        if (args.includes("graphql")) {
+          return JSON.stringify({
+            data: {
+              repository: {
+                t0: { entries: [{ name: "qa", type: "tree" }] },
+                t1: { entries: [] },
+              },
+            },
+          });
+        }
+        if (endpoint.endsWith("/git/blobs")) return JSON.stringify({ sha: "blob" });
+        if (endpoint.endsWith("/git/trees")) return JSON.stringify({ sha: "next-tree" });
+        if (endpoint.endsWith("/git/commits")) return JSON.stringify({ sha: "next-head" });
+        if (endpoint.includes("/git/refs/heads/")) return "";
+        throw new Error(`Unexpected mock gh call: ${args.join(" ")}`);
+      },
+    );
+
+    const markdown = await client.publishEvidence(7, "abcdef1234567890", "run", [attachment]);
+    assert.match(markdown, /desktop\.png/);
+    const updates = calls.filter(({ args }) => args.includes("PATCH"));
+    assert.equal(updates.length, alreadyPublished ? 0 : 1);
+    if (!alreadyPublished) {
+      assert.deepEqual(JSON.parse(updates[0]!.input!), { sha: "next-head", force: false });
+    }
+  }
+});
+
+test("CI excerpts redact common credentials and focus on failure context", () => {
+  const excerpt = extractFailureExcerpt([
+    "setup line that should not be selected",
+    "token=github_pat_abcdefghijklmnopqrstuvwxyz123456",
+    "{\"token\":\"structured-secret-value-123456789\"}",
+    "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signaturevalue123456",
+    "postgres://worker:database-password@example.test/db",
+    "AWS_SECRET_ACCESS_KEY=short-but-sensitive",
+    "clientSecret=tiny-secret",
+    "refresh_token=tiny-token",
+    "PASSWORD=\"two word secret\"",
+    "DB_PASS=shortvalue",
+    "-----BEGIN PRIVATE KEY-----\\nprivate-material\\n-----END PRIVATE KEY-----",
+    "context before",
+    "AssertionError: expected 1 to equal 2",
+    "context after",
+    "tail noise",
+  ].join("\n"));
+  assert.doesNotMatch(excerpt, /github_pat_|structured-secret|database-password|short-but-sensitive|tiny-secret|tiny-token|two word secret|shortvalue|private-material|eyJhbGci/);
+  assert.match(excerpt, /REDACTED/);
+  assert.match(excerpt, /AssertionError/);
 });
