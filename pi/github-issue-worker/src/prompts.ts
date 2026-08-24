@@ -9,6 +9,15 @@ function untrustedJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+const contentOnlyInstructions = `
+Content ownership policy:
+- Before editing copy, layout data, page-builder JSON, or other content, determine whether the repository treats it as canonical product source or only as seed/demo/fixture/fallback content for a runtime CMS or tenant configuration.
+- If the requested bug fix is only a change to runtime-managed content, do not update seed scripts, seed payloads, fixtures, migrations, snapshots, or fallback/demo content to make the issue appear fixed. Do not mutate remote runtime content from this worker.
+- Make no unrelated repository change. Instead, end with BLOCKED and provide a precise operator runbook using the repository's documented admin UI or API: identify the target environment and tenant, page/entity and slug, exact block/field/property and intended value, save/publish steps, cache or revalidation step if applicable, and the URL/check that confirms the result.
+- If the current branch already contains a seed-only change for a runtime-managed content issue, restore the seed content to its base intent before returning that runbook.
+- Edit checked-in content only when repository documentation or production loading code confirms that file is the authoritative production source rather than a seeder.
+`;
+
 function visualInstructions(config: WorkerConfig, evidenceDir: string | null, gif: boolean): string {
   if (!evidenceDir) return "";
   return `
@@ -55,6 +64,7 @@ Workflow:
 4. Run the most relevant formatting, static checks, and tests practical for the changed surface. Do not claim checks you did not run.
 5. Review the final diff for unrelated or sensitive changes.
 6. Do not stage, commit, push, open a PR, edit GitHub, or change branches; the controller handles those steps.
+${contentOnlyInstructions}
 ${visualInstructions(options.config, options.evidenceDir, options.evidenceDir !== null)}
 End with a concise summary containing:
 - implementation summary
@@ -92,6 +102,7 @@ ${untrustedJson(
 Inspect the current branch and existing implementation, make only the changes needed to address valid feedback,
 and run relevant checks. If feedback conflicts with repository rules or is ambiguous, explain the blocker instead
 of making a speculative change. Do not stage, commit, push, comment, or change branches.
+${contentOnlyInstructions}
 ${visualInstructions(options.config, options.evidenceDir, options.gifRequested)}
 ${options.dockerAccess ? `
 Docker access was explicitly granted by a trusted maintainer and enabled by the machine owner for this run.
