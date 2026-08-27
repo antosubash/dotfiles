@@ -63,6 +63,10 @@ test("visual verification prefers truthful source-backed previews over unrelated
   assert.match(prompt, /real production components/);
   assert.match(prompt, /A standalone frontend is preferable to a full stack/);
   assert.match(prompt, /Never fabricate an ad-hoc mock page/);
+  assert.match(prompt, /component or stylesheet change whose behavior does not depend on CMS values/);
+  assert.match(prompt, /imports the exact production component, production configuration, and production styles/);
+  assert.match(prompt, /Do not require a backend merely to retrieve interchangeable copy or numbers/);
+  assert.match(prompt, /must not duplicate production markup, add preview-only styling, or hard-code the expected geometry/);
   assert.match(prompt, /full repository stack when the changed behavior genuinely requires backend integration/);
   assert.match(prompt, /cannot reach host-loopback services outside the sandbox/);
   assert.match(prompt, /never guess ports from launchSettings/);
