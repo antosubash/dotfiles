@@ -1,7 +1,23 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { GitHubIssue, IssueJob, IssueStatus } from "./types.js";
+import type {
+  EvidenceRunRecord,
+  EvidenceRunStatus,
+  GitHubIssue,
+  IssueJob,
+  IssueStatus,
+} from "./types.js";
+
+interface EvidenceRunRow {
+  issue_number: number;
+  pr_number: number;
+  run_id: string;
+  status: EvidenceRunStatus;
+  detail: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 interface JobRow {
   issue_number: number;
@@ -18,6 +34,18 @@ interface JobRow {
   last_error: string | null;
   created_at: string;
   updated_at: string;
+}
+
+function mapEvidenceRun(row: EvidenceRunRow): EvidenceRunRecord {
+  return {
+    issueNumber: row.issue_number,
+    prNumber: row.pr_number === -1 ? null : row.pr_number,
+    runId: row.run_id,
+    status: row.status,
+    detail: row.detail,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function mapJob(row: JobRow): IssueJob {
@@ -69,6 +97,19 @@ export class WorkerState {
         processed_at TEXT NOT NULL,
         FOREIGN KEY(issue_number) REFERENCES issue_jobs(issue_number) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS evidence_runs (
+        issue_number INTEGER NOT NULL,
+        pr_number INTEGER NOT NULL DEFAULT -1,
+        run_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        detail TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(issue_number, pr_number, run_id),
+        FOREIGN KEY(issue_number) REFERENCES issue_jobs(issue_number) ON DELETE CASCADE,
+        CHECK(pr_number = -1 OR pr_number > 0),
+        CHECK(status IN ('pending', 'valid', 'published', 'blocked', 'invalid-terminal'))
+      );
     `);
     const jobColumns = new Set(
       (this.database.prepare("PRAGMA table_info(issue_jobs)").all() as Array<{ name: string }>).map(
@@ -114,6 +155,13 @@ export class WorkerState {
     const job = this.getJob(issueNumber);
     if (!job) throw new Error(`No state found for issue #${issueNumber}`);
     return job;
+  }
+
+  listBlocked(): IssueJob[] {
+    const rows = this.database
+      .prepare("SELECT * FROM issue_jobs WHERE status = 'blocked' ORDER BY issue_number")
+      .all() as unknown as JobRow[];
+    return rows.map(mapJob);
   }
 
   listActive(): IssueJob[] {
@@ -204,6 +252,115 @@ export class WorkerState {
          WHERE issue_number = ?`,
       )
       .run(headSha, new Date().toISOString(), issueNumber);
+  }
+
+  recordEvidenceRun(
+    issueNumber: number,
+    prNumber: number | null,
+    runId: string,
+    status: EvidenceRunStatus = "pending",
+    detail: string | null = null,
+  ): EvidenceRunRecord {
+    if (!/^\d{8}T\d{6}Z$/.test(runId)) throw new Error(`Invalid evidence run id: ${runId}`);
+    const normalizedPr = prNumber ?? -1;
+    const now = new Date().toISOString();
+    this.database
+      .prepare(
+        `INSERT INTO evidence_runs (
+          issue_number, pr_number, run_id, status, detail, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(issue_number, pr_number, run_id) DO UPDATE SET
+          status = CASE
+            WHEN evidence_runs.status IN ('published', 'blocked', 'invalid-terminal')
+              THEN evidence_runs.status
+            ELSE excluded.status
+          END,
+          detail = COALESCE(excluded.detail, evidence_runs.detail),
+          updated_at = excluded.updated_at`,
+      )
+      .run(issueNumber, normalizedPr, runId, status, detail, now, now);
+    return this.requireEvidenceRun(issueNumber, prNumber, runId);
+  }
+
+  setEvidenceRunStatus(
+    issueNumber: number,
+    prNumber: number | null,
+    runId: string,
+    status: EvidenceRunStatus,
+    detail: string | null = null,
+  ): EvidenceRunRecord {
+    const current = this.requireEvidenceRun(issueNumber, prNumber, runId);
+    if (["published", "blocked", "invalid-terminal"].includes(current.status) && current.status !== status) {
+      return current;
+    }
+    this.database
+      .prepare(
+        `UPDATE evidence_runs SET status = ?, detail = ?, updated_at = ?
+         WHERE issue_number = ? AND pr_number = ? AND run_id = ?`,
+      )
+      .run(status, detail, new Date().toISOString(), issueNumber, prNumber ?? -1, runId);
+    return this.requireEvidenceRun(issueNumber, prNumber, runId);
+  }
+
+  getEvidenceRun(
+    issueNumber: number,
+    prNumber: number | null,
+    runId: string,
+  ): EvidenceRunRecord | null {
+    const row = this.database
+      .prepare(
+        `SELECT * FROM evidence_runs
+         WHERE issue_number = ? AND pr_number = ? AND run_id = ?`,
+      )
+      .get(issueNumber, prNumber ?? -1, runId) as EvidenceRunRow | undefined;
+    return row ? mapEvidenceRun(row) : null;
+  }
+
+  requireEvidenceRun(
+    issueNumber: number,
+    prNumber: number | null,
+    runId: string,
+  ): EvidenceRunRecord {
+    const run = this.getEvidenceRun(issueNumber, prNumber, runId);
+    if (!run) throw new Error(`No evidence state found for issue #${issueNumber}, run ${runId}`);
+    return run;
+  }
+
+  listPublishableEvidence(issueNumber: number, prNumber: number): EvidenceRunRecord[] {
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM evidence_runs
+         WHERE issue_number = ? AND pr_number = ? AND status IN ('pending', 'valid')
+         ORDER BY run_id`,
+      )
+      .all(issueNumber, prNumber) as unknown as EvidenceRunRow[];
+    return rows.map(mapEvidenceRun);
+  }
+
+  associatePendingEvidence(issueNumber: number, prNumber: number): void {
+    const pending = this.database
+      .prepare("SELECT * FROM evidence_runs WHERE issue_number = ? AND pr_number = -1 ORDER BY run_id")
+      .all(issueNumber) as unknown as EvidenceRunRow[];
+    const now = new Date().toISOString();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const row of pending) {
+        this.database
+          .prepare(
+            `INSERT OR IGNORE INTO evidence_runs (
+              issue_number, pr_number, run_id, status, detail, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(issueNumber, prNumber, row.run_id, row.status, row.detail, row.created_at, now);
+      }
+      this.database
+        .prepare("DELETE FROM evidence_runs WHERE issue_number = ? AND pr_number = -1")
+        .run(issueNumber);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   hasProcessed(eventKey: string): boolean {

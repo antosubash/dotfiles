@@ -55,6 +55,35 @@ test("state migrates pre-CI databases in place", async () => {
   }
 });
 
+test("evidence state associates pending runs and terminal failures never republish", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-worker-evidence-state-"));
+  const path = join(directory, "state.sqlite");
+  try {
+    const state = new WorkerState(path);
+    state.claim(issue, "pi/issue-42", "/tmp/worktree", true);
+    state.recordEvidenceRun(42, null, "20260101T010101Z");
+    state.setEvidenceRunStatus(42, null, "20260101T010101Z", "valid");
+    state.recordEvidenceRun(42, null, "20260101T020202Z", "blocked", "backend unavailable");
+    state.associatePendingEvidence(42, 99);
+    assert.deepEqual(
+      state.listPublishableEvidence(42, 99).map((run) => [run.runId, run.status]),
+      [["20260101T010101Z", "valid"]],
+    );
+    state.setEvidenceRunStatus(42, 99, "20260101T010101Z", "published");
+    state.recordEvidenceRun(42, 99, "20260101T010101Z", "pending");
+    assert.equal(state.requireEvidenceRun(42, 99, "20260101T010101Z").status, "published");
+    assert.equal(state.requireEvidenceRun(42, 99, "20260101T020202Z").status, "blocked");
+    assert.deepEqual(state.listPublishableEvidence(42, 99), []);
+    state.close();
+
+    const reopened = new WorkerState(path);
+    assert.equal(reopened.requireEvidenceRun(42, 99, "20260101T010101Z").status, "published");
+    reopened.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("state persists jobs, pull requests, and event idempotency", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-worker-state-"));
   const path = join(directory, "state.sqlite");

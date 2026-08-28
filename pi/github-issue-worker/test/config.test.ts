@@ -25,7 +25,8 @@ test("loadConfig uses a hashed default when no legacy directory exists", () => {
     assert.equal(config.maxCiFixAttempts, 3);
     assert.equal(config.agentTimeoutMinutes, 60);
     assert.equal(config.model, "openai-codex/gpt-5.6-terra");
-    assert.deepEqual(config.protectedPaths, [".git", ".github/workflows", ".pi"]);
+    assert.deepEqual(config.protectedPaths, [".git", ".github/workflows", ".pi", ".pi-worker"]);
+    assert.equal(config.qaManifestPath, ".pi-worker/qa.json");
     assert.equal(config.allowDocker, config.dockerSocket !== null);
     assert.equal(config.publishEvidence, true);
     assert.equal(config.evidenceBranch, "pi-evidence");
@@ -45,9 +46,18 @@ test("loadConfig reuses an existing slug-only legacy directory", () => {
   }
 });
 
-test("loadConfig leaves an explicit data directory selected", () => {
-  const config = loadConfig({ ...base, PI_WORKER_DATA_DIR: "/custom/worker-data" });
+test("loadConfig leaves explicit data and QA manifest paths selected", () => {
+  const config = loadConfig({
+    ...base,
+    PI_WORKER_DATA_DIR: "/custom/worker-data",
+    PI_WORKER_QA_MANIFEST: "ops/pi-qa.json",
+  });
   assert.equal(config.dataDir, "/custom/worker-data");
+  assert.equal(config.qaManifestPath, "ops/pi-qa.json");
+  assert.throws(
+    () => loadConfig({ ...base, PI_WORKER_QA_MANIFEST: "../outside.json" }),
+    /escapes the repository/,
+  );
 });
 
 test("default state directories distinguish repository identities that slug alike", () => {

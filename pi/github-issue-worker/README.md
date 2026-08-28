@@ -208,7 +208,23 @@ Trusted repository owners, members, and collaborators can write:
 
 Formal PR reviews and inline review comments from trusted associations are processed automatically.
 Ordinary PR conversation text is ignored unless it starts with `/pi`. Worker-authored comments carry a
-hidden marker and are ignored, preventing feedback loops.
+hidden marker and are ignored, preventing feedback loops. A trusted `/pi retry` comment posted on a
+blocked issue is also processed automatically: the controller reclaims the existing worktree/session and
+updates labels without requiring a separate `pi-ready` edit. Commands older than the latest blocked state
+are ignored.
+
+## Repository QA manifest
+
+Repositories may provide a strict, read-only `.pi-worker/qa.json` manifest (override with
+`PI_WORKER_QA_MANIFEST`). Version 1 can name the Aspire AppHost/resources, truthful preview routes, and
+validation commands represented as argument arrays rather than shell strings. The worker uses this trusted
+metadata to classify the least expensive truthful workflow, perform a PNG capability preflight before UI
+implementation, resolve Aspire runtime URLs, and avoid rediscovering commands on every issue.
+
+The controller rejects oversized, malformed, unknown-key, traversal, absolute-path, and symlinked
+manifests. `.pi-worker` is protected from agent writes by default. Component previews may use representative
+props only when they import the exact production component, configuration, and styles; preview-only markup,
+CSS, or expected geometry is false evidence.
 
 ## Visual evidence
 
@@ -274,9 +290,14 @@ PI_WORKER_DATA_DIR/
 
 A restart resumes claimed/implementing issues, unprocessed feedback for `addressing_review` jobs, and
 interrupted `addressing_ci` repairs in the persistent issue session. CI attempts and handled head SHAs
-survive restarts, preventing duplicate repair loops. If a commit was already produced, it is pushed and
-used to create the missing PR instead of rerunning implementation. Existing open PRs are rediscovered by
-branch name.
+survive restarts, preventing duplicate repair loops. Evidence runs have persistent `pending`, `valid`,
+`published`, `blocked`, and `invalid-terminal` states; failed historical captures are terminal and cannot
+poison a later successful PR or be retried on every poll. Runner/startup failures and isolated test timeouts
+are rerun once without spending an agent repair attempt; repeated or real assertion failures follow the
+normal bounded diagnosis path. If a commit was already produced, it is pushed and
+used to create the missing PR instead of rerunning implementation. Existing open PRs are rediscovered by branch name. Before implementation, the controller also rejects an
+open PR on another branch that already references the same issue, preventing overlapping worker and grouped
+feature PRs.
 
 ## Security model and limitations
 

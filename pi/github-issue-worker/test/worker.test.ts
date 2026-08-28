@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -84,16 +84,75 @@ test("worker claims an approved issue and opens a draft PR", async () => {
   }
 });
 
+test("trusted issue /pi retry restarts a blocked job without manual label changes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-blocked-retry-"));
+  const state = new WorkerState(join(root, "state.sqlite"));
+  state.claim(issue, "pi/issue-42-add-reusable-behavior", join(root, "worktree"), false);
+  state.setStatus(42, "blocked", "old blocker");
+  let claims = 0;
+  const command: PullRequestFeedback = {
+    eventKey: "conversation:retry-42",
+    source: "conversation",
+    id: 2,
+    body: "/pi retry",
+    author: "maintainer",
+    authorAssociation: "MEMBER",
+    createdAt: "2999-01-01T00:00:00Z",
+    url: null,
+  };
+  const github = {
+    listIssueCommands: async () => [command],
+    listReadyIssues: async () => [],
+    getIssue: async () => issue,
+    claimIssue: async () => { claims += 1; },
+    findOpenPullRequest: async () => null,
+    findOpenPullRequestsForIssue: async () => [],
+    markBlocked: async () => undefined,
+    isPullRequestOpen: async () => true,
+    listFeedback: async () => [],
+    getPullRequestChecks: async () => ({ headSha: "abc", state: "pending", failures: [] }),
+  };
+  const repository = {
+    branchForIssue: () => "pi/issue-42-add-reusable-behavior",
+    pathForIssue: () => join(root, "worktree"),
+    ensureIssueWorktree: async () => ({
+      branch: "pi/issue-42-add-reusable-behavior",
+      path: join(root, "worktree"),
+    }),
+    changedFiles: async () => ["src/partial.ts"],
+    hasCommitsAhead: async () => false,
+    clearAgentChanges: async () => undefined,
+  };
+  const agent = {
+    run: async () => ({ sessionFile: join(root, "session.jsonl"), finalText: "BLOCKED\nStill blocked." }),
+  };
+  try {
+    const worker = new IssueWorker(config(root), state, {
+      github: github as unknown as GitHubClient,
+      repository: repository as unknown as RepositoryManager,
+      agent: agent as unknown as PiAgentRunner,
+    });
+    await worker.tick();
+    assert.equal(claims, 1);
+    assert.equal(state.requireJob(42).status, "blocked");
+    assert.equal(state.hasProcessed(command.eventKey), true);
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("initial BLOCKED output cannot be committed or pushed", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-blocked-initial-"));
   const state = new WorkerState(join(root, "state.sqlite"));
   let commits = 0;
+  const visualIssue = { ...issue, labels: [{ name: "pi-visual" }] };
   const github = {
-    listReadyIssues: async () => [issue],
+    listReadyIssues: async () => [visualIssue],
     claimIssue: async () => undefined,
     findOpenPullRequest: async () => null,
     markBlocked: async () => undefined,
-    getIssue: async () => issue,
+    getIssue: async () => visualIssue,
     isPullRequestOpen: async () => true,
     listFeedback: async () => [],
     getPullRequestChecks: async () => ({ headSha: "abc", state: "pending", failures: [] }),
@@ -125,6 +184,9 @@ test("initial BLOCKED output cannot be committed or pushed", async () => {
     await worker.tick();
     assert.equal(commits, 0);
     assert.equal(state.requireJob(42).status, "blocked");
+    const runs = await readdir(join(root, "worktree", ".qa", "issues", "42", "pr-pending", "runs"));
+    assert.equal(runs.length, 1);
+    assert.equal(state.requireEvidenceRun(42, null, runs[0]!).status, "blocked");
   } finally {
     state.close();
     await rm(root, { recursive: true, force: true });
@@ -320,6 +382,49 @@ test("pending CI checks are observed without invoking the agent", async () => {
     await worker.tick();
     assert.equal(runs, 0);
     assert.equal(state.requireJob(42).status, "pr_open");
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runner infrastructure failures rerun without invoking Pi", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-ci-infra-"));
+  const state = new WorkerState(join(root, "state.sqlite"));
+  state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
+  state.setPullRequest(42, 77, "https://github.com/example/widgets/pull/77");
+  let reruns = 0;
+  let rerunPending = false;
+  let agentRuns = 0;
+  const failures = [{
+    name: "build",
+    conclusion: "STARTUP_FAILURE",
+    detailsUrl: "https://github.com/example/widgets/actions/runs/123/job/456",
+    excerpt: "The job was not acquired by Runner",
+  }];
+  const github = {
+    listReadyIssues: async () => [],
+    isPullRequestOpen: async () => true,
+    listFeedback: async () => [],
+    getPullRequestChecks: async () =>
+      rerunPending
+        ? ({ headSha: "infra-head", state: "pending", failures: [] } as const)
+        : ({ headSha: "infra-head", state: "failed", failures } as const),
+    rerunFailedWorkflowRuns: async () => { reruns += 1; rerunPending = true; return 1; },
+    commentPullRequest: async () => undefined,
+  };
+  try {
+    const worker = new IssueWorker(config(root), state, {
+      github: github as unknown as GitHubClient,
+      repository: {} as RepositoryManager,
+      agent: { run: async () => { agentRuns += 1; throw new Error("unexpected"); } } as unknown as PiAgentRunner,
+    });
+    await worker.tick();
+    await worker.tick();
+    assert.equal(reruns, 1);
+    assert.equal(agentRuns, 0);
+    assert.equal(state.hasProcessed("ci-rerun:77:infra-head"), true);
+    assert.equal(state.hasProcessed("ci-failure:77:infra-head"), false);
   } finally {
     state.close();
     await rm(root, { recursive: true, force: true });
@@ -864,6 +969,7 @@ test("trusted /pi retry reopens the same processed CI head with a fresh bounded 
   state.recordCiAttempt(42, "failed-sha");
   state.setStatus(42, "pr_open", "external blocker resolved");
   state.markProcessed(42, "ci-failure:77:failed-sha");
+  state.markProcessed(42, "ci-rerun:77:failed-sha");
   const retry: PullRequestFeedback = {
     eventKey: "conversation:retry-ci",
     source: "conversation",
@@ -910,6 +1016,7 @@ test("trusted /pi retry reopens the same processed CI head with a fresh bounded 
     assert.equal(state.requireJob(42).ciAttempts, 1);
     assert.equal(state.hasProcessed(retry.eventKey), true);
     assert.equal(state.hasProcessed("ci-failure:77:failed-sha"), true);
+    assert.equal(state.hasProcessed("ci-rerun:77:failed-sha"), false);
   } finally {
     state.close();
     await rm(root, { recursive: true, force: true });

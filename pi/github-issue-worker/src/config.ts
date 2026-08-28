@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
+import { safeRepositoryPath } from "./qa-manifest.js";
 
 export const THINKING_LEVELS = [
   "off",
@@ -43,6 +44,7 @@ export interface WorkerConfig {
   dockerSocket: string | null;
   publishEvidence: boolean;
   evidenceBranch: string;
+  qaManifestPath: string;
 }
 
 function expandPath(value: string, home = homedir()): string {
@@ -138,7 +140,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     .update(`${repository}\n${repositoryUrl}`)
     .digest("hex")
     .slice(0, 12);
-  const protectedPaths = (env.PI_WORKER_PROTECTED_PATHS || ".git,.github/workflows,.pi")
+  const protectedPaths = (env.PI_WORKER_PROTECTED_PATHS || ".git,.github/workflows,.pi,.pi-worker")
     .split(",")
     .map((value) => value.trim().replace(/^\.\//, "").replace(/\/$/, ""))
     .filter(Boolean);
@@ -240,5 +242,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       env.PI_WORKER_PUBLISH_EVIDENCE ?? "1",
     ),
     evidenceBranch,
+    qaManifestPath: safeRepositoryPath(
+      env.PI_WORKER_QA_MANIFEST?.trim() || ".pi-worker/qa.json",
+      "PI_WORKER_QA_MANIFEST",
+    ),
   };
 }

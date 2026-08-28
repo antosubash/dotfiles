@@ -57,8 +57,24 @@ test("visual verification prefers truthful source-backed previews over unrelated
     issueNumber: 548,
     prNumber: null,
     evidenceDir: ".qa/issues/548/pr-pending/runs/example",
+    qaManifest: {
+      version: 1,
+      aspire: {
+        apphost: "AppHost/AppHost.csproj",
+        resources: { frontend: "example-frontend" },
+      },
+      previews: {
+        stats: { path: "/styleshots?fixture=stats", category: "component" },
+      },
+      commands: { frontend: { argv: ["pnpm", "test"] } },
+    },
   });
 
+  assert.match(prompt, /Repository QA manifest \(trusted controller configuration\)/);
+  assert.match(prompt, /example-frontend/);
+  assert.match(prompt, /visual preflight/);
+  assert.match(prompt, /prove that a small `preflight\.png` can be captured/);
+  assert.match(prompt, /excludes preflight-named media from final evidence/);
   assert.match(prompt, /narrowest checked-in source-backed preview route/);
   assert.match(prompt, /real production components/);
   assert.match(prompt, /A standalone frontend is preferable to a full stack/);

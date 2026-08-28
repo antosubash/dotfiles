@@ -1,8 +1,9 @@
-import { lstat, readdir } from "node:fs/promises";
+import { lstat, readFile, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { classifyIssue } from "./classification.js";
 import type { WorkerConfig } from "./config.js";
 import {
-  collectEvidenceAttachments,
+  collectFinalEvidenceAttachments,
   convertWebmToGif,
   createEvidenceRun,
   findLatestEvidenceRun,
@@ -11,11 +12,13 @@ import {
   type EvidenceRun,
 } from "./evidence.js";
 import {
+  ciFailureDisposition,
   GitHubClient,
   isActionableFeedback,
   parseWorkerCommand,
 } from "./github.js";
 import { PiAgentRunner } from "./pi-agent.js";
+import { loadQaManifest } from "./qa-manifest.js";
 import {
   buildCiFailurePrompt,
   buildFeedbackPrompt,
@@ -136,6 +139,7 @@ export class IssueWorker {
 
   async tick(): Promise<void> {
     await this.resumeInterruptedIssues();
+    await this.processBlockedIssueCommands();
     const readyIssues = await this.github.listReadyIssues();
     for (const issue of readyIssues) {
       const current = this.state.getJob(issue.number);
@@ -160,6 +164,25 @@ export class IssueWorker {
     if (await this.processPullRequestConflicts()) return;
     await this.processPullRequestFeedback();
     await this.processPullRequestCi();
+  }
+
+  private async processBlockedIssueCommands(): Promise<void> {
+    if (typeof this.github.listIssueCommands !== "function") return;
+    for (const job of this.state.listBlocked()) {
+      const commands = (await this.github.listIssueCommands(job.issueNumber))
+        .filter(
+          (item) =>
+            item.createdAt > job.updatedAt &&
+            !this.state.hasProcessed(item.eventKey) &&
+            isActionableFeedback(item, this.config.trustedAssociations),
+        )
+        .filter((item) => parseWorkerCommand(item.body) === "retry");
+      const command = commands.at(-1);
+      if (!command) continue;
+      this.state.markProcessed(job.issueNumber, command.eventKey);
+      const issue = await this.github.getIssue(job.issueNumber);
+      await this.startIssue(issue).catch((error) => this.handleInitialFailure(issue.number, error));
+    }
   }
 
   private async resumeInterruptedIssues(): Promise<void> {
@@ -188,42 +211,96 @@ export class IssueWorker {
     }
   }
 
+  private async createTrackedEvidence(
+    worktree: string,
+    issueNumber: number,
+    prNumber: number | null,
+  ): Promise<EvidenceRun> {
+    const evidence = await createEvidenceRun(worktree, issueNumber, prNumber);
+    this.state.recordEvidenceRun(issueNumber, prNumber, evidence.runId);
+    return evidence;
+  }
+
   private async runUiVerification(
     job: IssueJob,
     worktree: string,
     prNumber: number | null,
   ): Promise<EvidenceRun> {
     this.state.requestVisualEvidence(job.issueNumber);
-    const evidence = await createEvidenceRun(worktree, job.issueNumber, prNumber);
-    const result = await this.agent.run({
-      worktree,
-      sessionDir: join(this.config.dataDir, "sessions", `issue-${job.issueNumber}`),
-      sessionFile: job.sessionFile,
-      prompt: buildUiVerificationPrompt({
-        config: this.config,
-        issueNumber: job.issueNumber,
-        prNumber,
-        evidenceDir: evidence.relativeRunDir,
-      }),
-      logFile: join(this.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
-      visualVerification: true,
-      dockerAccess: this.config.allowDocker,
-    });
+    const evidence = await this.createTrackedEvidence(worktree, job.issueNumber, prNumber);
+    let result;
+    try {
+      result = await this.agent.run({
+        worktree,
+        sessionDir: join(this.config.dataDir, "sessions", `issue-${job.issueNumber}`),
+        sessionFile: job.sessionFile,
+        prompt: buildUiVerificationPrompt({
+          config: this.config,
+          issueNumber: job.issueNumber,
+          prNumber,
+          evidenceDir: evidence.relativeRunDir,
+          qaManifest: await loadQaManifest(worktree, this.config.qaManifestPath),
+        }),
+        logFile: join(this.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
+        visualVerification: true,
+        dockerAccess: this.config.allowDocker,
+      });
+    } catch (error) {
+      this.state.setEvidenceRunStatus(
+        evidence.issueNumber,
+        evidence.prNumber,
+        evidence.runId,
+        "invalid-terminal",
+        errorText(error),
+      );
+      throw error;
+    }
     this.state.setSession(job.issueNumber, result.sessionFile);
-    if (isBlockedFinalOutput(result.finalText)) throw new Error(result.finalText);
+    if (isBlockedFinalOutput(result.finalText)) {
+      this.state.setEvidenceRunStatus(
+        evidence.issueNumber,
+        evidence.prNumber,
+        evidence.runId,
+        "blocked",
+        result.finalText,
+      );
+      throw new Error(result.finalText);
+    }
     await this.finalizeEvidence(evidence);
     return evidence;
   }
 
   private async finalizeEvidence(evidence: EvidenceRun | null): Promise<void> {
     if (!evidence) return;
-    await finishRequestedGif(evidence.runDir);
-    const attachments = await collectEvidenceAttachments(evidence.runDir);
-    if (!attachments.some((item) => item.mediaType === "image/png")) {
-      throw new Error("Visual QA produced no PNG screenshot");
-    }
-    if (!attachments.some((item) => item.mediaType === "image/gif")) {
-      throw new Error("Visual QA produced no workflow GIF");
+    try {
+      await finishRequestedGif(evidence.runDir);
+      const attachments = await collectFinalEvidenceAttachments(evidence.runDir);
+      if (!attachments.some((item) => item.mediaType === "image/png")) {
+        throw new Error("Visual QA produced no PNG screenshot");
+      }
+      if (!attachments.some((item) => item.mediaType === "image/gif")) {
+        throw new Error("Visual QA produced no workflow GIF");
+      }
+      this.state.recordEvidenceRun(
+        evidence.issueNumber,
+        evidence.prNumber,
+        evidence.runId,
+        "valid",
+      );
+    } catch (error) {
+      const report = await readFile(join(evidence.runDir, "report.md"), "utf8").catch(() => "");
+      const blocked = /(?:^|\n)(?:##\s+Status\s*\n+)?\s*Blocked\s*:/i.test(report);
+      const detail = blocked && report.trim()
+        ? `Visual QA blocked.\n\n${report.trim().slice(0, 1_500)}`
+        : errorText(error);
+      this.state.recordEvidenceRun(
+        evidence.issueNumber,
+        evidence.prNumber,
+        evidence.runId,
+        blocked ? "blocked" : "invalid-terminal",
+        detail,
+      );
+      throw new Error(detail);
     }
   }
 
@@ -234,12 +311,19 @@ export class IssueWorker {
   ): Promise<{ note: string; eventKey: string } | null> {
     if (!evidence || typeof this.github.publishEvidence !== "function") return null;
     await this.finalizeEvidence(evidence);
-    const attachments = await collectEvidenceAttachments(evidence.runDir);
+    const attachments = await collectFinalEvidenceAttachments(evidence.runDir);
     if (attachments.length === 0) return null;
     const runId = basename(evidence.runDir);
     const eventKey = `evidence:${prNumber}:${runId}`;
     const headSha = await this.repository.headRevision(worktree);
     const note = await this.github.publishEvidence(prNumber, headSha, runId, attachments);
+    this.state.setEvidenceRunStatus(
+      evidence.issueNumber,
+      evidence.prNumber,
+      evidence.runId,
+      "published",
+      note ? null : "Evidence publication is disabled",
+    );
     if (!note) return null;
     return { note, eventKey };
   }
@@ -261,13 +345,40 @@ export class IssueWorker {
   private async processPendingEvidencePublications(): Promise<void> {
     for (const job of this.state.listReviewJobs()) {
       if (!job.prNumber || !(await this.github.isPullRequestOpen(job.prNumber))) continue;
-      const evidenceRuns = [
+      const discovered = [
         ...(await listEvidenceRuns(job.worktreePath, job.issueNumber, job.prNumber)),
         ...(await listEvidenceRuns(job.worktreePath, job.issueNumber, null)),
       ];
-      for (const evidence of evidenceRuns) {
-        const eventKey = `evidence:${job.prNumber}:${basename(evidence.runDir)}`;
-        if (this.state.hasProcessed(eventKey)) continue;
+      for (const evidence of discovered) {
+        if (!this.state.getEvidenceRun(job.issueNumber, evidence.prNumber, evidence.runId)) {
+          this.state.recordEvidenceRun(job.issueNumber, evidence.prNumber, evidence.runId);
+        }
+      }
+      this.state.associatePendingEvidence(job.issueNumber, job.prNumber);
+      const byRunId = new Map(discovered.map((run) => [run.runId, run]));
+      for (const record of this.state.listPublishableEvidence(job.issueNumber, job.prNumber)) {
+        const discoveredRun = byRunId.get(record.runId);
+        if (!discoveredRun) {
+          this.state.setEvidenceRunStatus(
+            job.issueNumber,
+            job.prNumber,
+            record.runId,
+            "invalid-terminal",
+            "Evidence directory is missing",
+          );
+          continue;
+        }
+        const evidence = { ...discoveredRun, prNumber: job.prNumber };
+        const eventKey = `evidence:${job.prNumber}:${record.runId}`;
+        if (this.state.hasProcessed(eventKey)) {
+          this.state.setEvidenceRunStatus(
+            job.issueNumber,
+            job.prNumber,
+            record.runId,
+            "published",
+          );
+          continue;
+        }
         try {
           const published = await this.publishEvidence(job.prNumber, job.worktreePath, evidence);
           if (!published) continue;
@@ -276,13 +387,17 @@ export class IssueWorker {
             `Recovered pending QA evidence publication.${published.note}`,
           );
           this.state.markProcessed(job.issueNumber, published.eventKey);
-          this.state.setStatus(job.issueNumber, "pr_open");
         } catch (error) {
-          this.state.setStatus(
-            job.issueNumber,
-            job.status,
-            `QA evidence publication remains pending for ${basename(evidence.runDir)}: ${errorText(error)}`,
-          );
+          const current = this.state.getEvidenceRun(job.issueNumber, job.prNumber, record.runId);
+          if (current && ["pending", "valid"].includes(current.status)) {
+            this.state.recordEvidenceRun(
+              job.issueNumber,
+              job.prNumber,
+              record.runId,
+              current.status,
+              `Publication retry pending: ${errorText(error)}`,
+            );
+          }
         }
       }
     }
@@ -316,6 +431,14 @@ export class IssueWorker {
       await this.github.markPullRequestOpen(issue.number);
       return;
     }
+    if (typeof this.github.findOpenPullRequestsForIssue === "function") {
+      const overlaps = await this.github.findOpenPullRequestsForIssue(issue.number, job.branch);
+      if (overlaps.length > 0) {
+        throw new Error(
+          `An existing open pull request already references issue #${issue.number}: ${overlaps.map((pull) => pull.url).join(", ")}. Review or close the overlapping work before retrying.`,
+        );
+      }
+    }
 
     const worktree = await this.repository.ensureIssueWorktree(
       issue.number,
@@ -336,7 +459,7 @@ export class IssueWorker {
     const changedBeforeRun = await this.repository.changedFiles(worktree.path);
     const alreadyAhead = await this.repository.hasCommitsAhead(worktree.path);
     if (changedBeforeRun.length > 0 || !alreadyAhead) {
-      if (visual) evidence = await createEvidenceRun(worktree.path, issue.number, null);
+      if (visual) evidence = await this.createTrackedEvidence(worktree.path, issue.number, null);
       let result;
       try {
         result = await this.agent.run({
@@ -347,12 +470,23 @@ export class IssueWorker {
             config: this.config,
             issue,
             evidenceDir: evidence?.relativeRunDir ?? null,
+            qaManifest: await loadQaManifest(worktree.path, this.config.qaManifestPath),
+            category: classifyIssue(issue),
           }),
           logFile,
           visualVerification: evidence !== null,
           dockerAccess: this.config.allowDocker,
         });
       } catch (error) {
+        if (evidence) {
+          this.state.setEvidenceRunStatus(
+            evidence.issueNumber,
+            evidence.prNumber,
+            evidence.runId,
+            "invalid-terminal",
+            errorText(error),
+          );
+        }
         await this.repository.clearAgentChanges(worktree.path, worktree.branch);
         throw new Error(
           `${errorText(error)}${await visualEvidenceNote(evidence?.runDir ?? null, evidence?.relativeRunDir ?? null)}`,
@@ -361,6 +495,15 @@ export class IssueWorker {
       this.state.setSession(issue.number, result.sessionFile);
       finalText = result.finalText;
       if (isBlockedFinalOutput(finalText)) {
+        if (evidence) {
+          this.state.setEvidenceRunStatus(
+            evidence.issueNumber,
+            evidence.prNumber,
+            evidence.runId,
+            "blocked",
+            finalText,
+          );
+        }
         await this.repository.clearAgentChanges(worktree.path, worktree.branch);
         throw new Error(
           `${finalText}${await visualEvidenceNote(evidence?.runDir ?? null, evidence?.relativeRunDir ?? null)}`,
@@ -420,6 +563,8 @@ export class IssueWorker {
         pullRequestBody(issue, finalText),
       ));
     this.state.setPullRequest(issue.number, pull.number, pull.url);
+    this.state.associatePendingEvidence(issue.number, pull.number);
+    if (evidence?.prNumber === null) evidence = { ...evidence, prNumber: pull.number };
     await this.github.markPullRequestOpen(issue.number);
     const evidenceNote = await visualEvidenceNote(
       evidence?.runDir ?? null,
@@ -757,6 +902,28 @@ export class IssueWorker {
     }
     const recoveringCommittedHead =
       job.status === "committing_ci" && job.ciHeadSha === checks.headSha;
+    const detailedChecks = await this.github.getPullRequestChecks(job.prNumber, true);
+    if (detailedChecks.state !== "failed" || detailedChecks.headSha !== checks.headSha) return;
+    const disposition = ciFailureDisposition(detailedChecks.failures);
+    const rerunEventKey = `ci-rerun:${job.prNumber}:${checks.headSha}`;
+    if (
+      !recoveringCommittedHead &&
+      disposition !== "code" &&
+      !this.state.hasProcessed(rerunEventKey) &&
+      typeof this.github.rerunFailedWorkflowRuns === "function"
+    ) {
+      const rerunCount = await this.github.rerunFailedWorkflowRuns(detailedChecks.failures);
+      if (rerunCount > 0) {
+        await this.github.commentPullRequest(
+          job.prNumber,
+          disposition === "infrastructure"
+            ? `🔄 Automatically rerunning ${rerunCount} workflow run${rerunCount === 1 ? "" : "s"} that failed because of runner or GitHub Actions infrastructure.`
+            : `🔄 Automatically rerunning ${rerunCount} workflow run${rerunCount === 1 ? "" : "s"} after an isolated test timeout. A repeated failure will require normal diagnosis.`,
+        );
+        this.state.markProcessed(job.issueNumber, rerunEventKey);
+        return;
+      }
+    }
     const hasActionableFailure = checks.failures.some((failure) =>
       ["FAILURE", "ERROR"].includes(failure.conclusion),
     );
@@ -775,8 +942,6 @@ export class IssueWorker {
       await this.reportCiBlock(job, eventKey, message);
       return;
     }
-    const detailedChecks = await this.github.getPullRequestChecks(job.prNumber, true);
-    if (detailedChecks.state !== "failed" || detailedChecks.headSha !== checks.headSha) return;
     await this.handleCiFailure(job, detailedChecks, eventKey);
   }
 
@@ -840,7 +1005,7 @@ export class IssueWorker {
       );
     if (ciVisual) this.state.requestVisualEvidence(job.issueNumber);
     let evidence = ciVisual
-      ? await createEvidenceRun(worktree.path, job.issueNumber, job.prNumber)
+      ? await this.createTrackedEvidence(worktree.path, job.issueNumber, job.prNumber)
       : null;
     let result;
     try {
@@ -856,6 +1021,7 @@ export class IssueWorker {
           attempt,
           failures: checks.failures,
           evidenceDir: evidence?.relativeRunDir ?? null,
+          qaManifest: await loadQaManifest(worktree.path, this.config.qaManifestPath),
         }),
         logFile: join(this.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
         visualVerification: ciVisual,
@@ -1018,6 +1184,7 @@ export class IssueWorker {
       commands.every((command) => command === "retry");
     if (onlyCiRetry) {
       this.state.forgetProcessed(`ci-failure:${job.prNumber}:${job.ciHeadSha}`);
+      this.state.forgetProcessed(`ci-rerun:${job.prNumber}:${job.ciHeadSha}`);
       this.state.resetCiAttempts(job.issueNumber, "");
       this.state.setStatus(job.issueNumber, "pr_open");
       for (const item of feedback) this.state.markProcessed(job.issueNumber, item.eventKey);
@@ -1070,7 +1237,7 @@ export class IssueWorker {
     const gifRequested = visualRequested;
     const dockerRequested = this.config.allowDocker;
     let evidence = visualRequested
-      ? await createEvidenceRun(worktree.path, job.issueNumber, job.prNumber)
+      ? await this.createTrackedEvidence(worktree.path, job.issueNumber, job.prNumber)
       : null;
     this.state.setStatus(job.issueNumber, "addressing_review");
     let controllerPhase = false;
@@ -1088,6 +1255,7 @@ export class IssueWorker {
           evidenceDir: evidence?.relativeRunDir ?? null,
           gifRequested,
           dockerAccess: dockerRequested,
+          qaManifest: await loadQaManifest(worktree.path, this.config.qaManifestPath),
         }),
         logFile: join(this.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
         visualVerification: evidence !== null,

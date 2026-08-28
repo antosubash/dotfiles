@@ -1,4 +1,6 @@
+import type { IssueCategory } from "./classification.js";
 import type { WorkerConfig } from "./config.js";
+import type { QaManifest } from "./qa-manifest.js";
 import type {
   GitHubIssue,
   PullRequestCheckFailure,
@@ -18,13 +20,28 @@ Content ownership policy:
 - Edit checked-in content only when repository documentation or production loading code confirms that file is the authoritative production source rather than a seeder.
 `;
 
-function visualInstructions(config: WorkerConfig, evidenceDir: string | null, gif: boolean): string {
+function qaManifestInstructions(manifest: QaManifest | null | undefined): string {
+  if (!manifest) return "";
+  return `
+Repository QA manifest (trusted controller configuration):
+${JSON.stringify(manifest, null, 2)}
+Use the named preview, Aspire resource, and argv-based validation metadata that matches the changed surface. The manifest is guidance, not permission to weaken sandboxing or execute shell text.
+`;
+}
+
+function visualInstructions(
+  config: WorkerConfig,
+  evidenceDir: string | null,
+  gif: boolean,
+  manifest?: QaManifest | null,
+): string {
   if (!evidenceDir) return "";
   return `
 Visual verification is requested. Treat verification as part of completion, but do not fake evidence.
 - Evidence directory: ${evidenceDir}
 - App URL: ${config.appUrl ?? "discover the local URL from the repository's run instructions"}
 - Optional protected Playwright storage state: ${config.playwrightState ?? "not configured"}
+${qaManifestInstructions(manifest)}- Before editing UI code, perform a visual preflight with the selected repository preview/application: start it, resolve its actual URL, open it with Playwright, and prove that a small \`preflight.png\` can be captured in the evidence directory. If this capability probe fails, stop before implementation and report the precise blocker. The controller excludes preflight-named media from final evidence; after implementation you must capture separate final desktop/mobile PNG evidence.
 - Prefer the narrowest checked-in source-backed preview route when it renders the changed production content through the real production components without requiring unrelated backend services. A standalone frontend is preferable to a full stack for such a route. Never fabricate an ad-hoc mock page or use a preview that does not exercise the changed source.
 - For a component or stylesheet change whose behavior does not depend on CMS values, a checked-in development preview with representative props is truthful only when it imports the exact production component, production configuration, and production styles being changed. Do not require a backend merely to retrieve interchangeable copy or numbers. The preview must not duplicate production markup, add preview-only styling, or hard-code the expected geometry; if it does, it is false evidence.
 - Use the full repository stack when the changed behavior genuinely requires backend integration. Linux visual runs cannot reach host-loopback services outside the sandbox; all required app services must run inside the same bash tool call or use an explicitly exposed Docker socket/network path. Fail quickly with the exact dependency blocker instead of waiting repeatedly on an unreachable host service.
@@ -43,6 +60,8 @@ export function buildIssuePrompt(options: {
   config: WorkerConfig;
   issue: GitHubIssue;
   evidenceDir: string | null;
+  qaManifest?: QaManifest | null;
+  category?: IssueCategory;
 }): string {
   return `Implement the approved GitHub issue below in this repository.
 
@@ -58,6 +77,8 @@ ${untrustedJson({
 })}
 </untrusted-issue-json>
 
+Preflight classification: ${options.category ?? "not classified"}. Verify this against repository documentation before editing; if it is wrong, follow the repository evidence and explain the corrected category.
+
 Workflow:
 1. Read AGENTS.md and relevant repository documentation and inspect the current implementation.
 2. Determine a minimal, complete interpretation of the approved issue. If essential requirements are missing, stop with BLOCKED rather than guessing.
@@ -66,7 +87,7 @@ Workflow:
 5. Review the final diff for unrelated or sensitive changes.
 6. Do not stage, commit, push, open a PR, edit GitHub, or change branches; the controller handles those steps.
 ${contentOnlyInstructions}
-${visualInstructions(options.config, options.evidenceDir, options.evidenceDir !== null)}
+${visualInstructions(options.config, options.evidenceDir, options.evidenceDir !== null, options.qaManifest)}
 End with a concise summary containing:
 - implementation summary
 - changed areas
@@ -84,6 +105,7 @@ export function buildFeedbackPrompt(options: {
   evidenceDir: string | null;
   gifRequested: boolean;
   dockerAccess?: boolean;
+  qaManifest?: QaManifest | null;
 }): string {
   return `Address trusted maintainer feedback on pull request #${options.prNumber} for issue #${options.issueNumber}.
 
@@ -104,7 +126,7 @@ Inspect the current branch and existing implementation, make only the changes ne
 and run relevant checks. If feedback conflicts with repository rules or is ambiguous, explain the blocker instead
 of making a speculative change. Do not stage, commit, push, comment, or change branches.
 ${contentOnlyInstructions}
-${visualInstructions(options.config, options.evidenceDir, options.gifRequested)}
+${visualInstructions(options.config, options.evidenceDir, options.gifRequested, options.qaManifest)}
 ${options.dockerAccess ? `
 Docker access was explicitly granted by a trusted maintainer and enabled by the machine owner for this run.
 Use it only when repository-native non-Docker checks cannot verify the requested behavior. Never use privileged
@@ -120,13 +142,14 @@ export function buildUiVerificationPrompt(options: {
   issueNumber: number;
   prNumber: number | null;
   evidenceDir: string;
+  qaManifest?: QaManifest | null;
 }): string {
   return `Perform final visual QA for UI work on issue #${options.issueNumber}${options.prNumber ? ` / PR #${options.prNumber}` : ""}.
 
 Do not make speculative product changes. Launch the narrowest truthful repository-provided application or source-backed
 preview described below, verify the changed UI behavior on desktop and mobile, exercise validation/error states relevant to the change, inspect console and
 failed requests, and record truthful evidence. Do not stage, commit, push, use GitHub CLI, or change branches.
-${visualInstructions(options.config, options.evidenceDir, true)}
+${visualInstructions(options.config, options.evidenceDir, true, options.qaManifest)}
 End with a concise visual result, scenarios checked, and evidence paths. End with BLOCKED if the app cannot be
 launched or the changed UI cannot be verified.`;
 }
@@ -170,6 +193,7 @@ export function buildCiFailurePrompt(options: {
   attempt: number;
   failures: PullRequestCheckFailure[];
   evidenceDir: string | null;
+  qaManifest?: QaManifest | null;
 }): string {
   return `Repair CI failures on pull request #${options.prNumber} for issue #${options.issueNumber}.
 
@@ -190,7 +214,7 @@ full test command when the failure only appears during full collection. For brow
 failures on Linux, keep the app server and complete playwright-cli open/interact/capture/close sequence in one
 bash tool call with cleanup traps. Do not stage, commit, push, comment, use GitHub CLI, or change branches; the
 controller owns those operations.
-${visualInstructions(options.config, options.evidenceDir, options.evidenceDir !== null)}
+${visualInstructions(options.config, options.evidenceDir, options.evidenceDir !== null, options.qaManifest)}
 If the failure is external, flaky, requires secrets, or cannot be safely fixed in repository code, make no
 speculative change and end with BLOCKED plus the exact reason and recommended human action.
 
