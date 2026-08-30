@@ -160,6 +160,7 @@ export class IssueWorker {
       }
       await this.startIssue(issue).catch((error) => this.handleInitialFailure(issue.number, error));
     }
+    await this.processPendingPullRequestLabels();
     await this.processPendingEvidencePublications();
     if (await this.processPullRequestConflicts()) return;
     await this.processPullRequestFeedback();
@@ -418,10 +419,31 @@ export class IssueWorker {
     if (typeof this.github.labelPullRequestFromIssue !== "function") return;
     try {
       await this.github.labelPullRequestFromIssue(prNumber, issue);
+      this.state.markProcessed(issue.number, `pr-labels:${prNumber}`);
     } catch (error) {
       throw new RetryableControllerError(
         `Pull request #${prNumber} was opened but its labels could not be synchronized: ${errorText(error)}`,
       );
+    }
+  }
+
+  private async processPendingPullRequestLabels(): Promise<void> {
+    if (typeof this.github.labelPullRequestFromIssue !== "function") return;
+    for (const job of this.state.listReviewJobs()) {
+      if (!job.prNumber) continue;
+      const eventKey = `pr-labels:${job.prNumber}`;
+      if (this.state.hasProcessed(eventKey)) continue;
+      if (!(await this.github.isPullRequestOpen(job.prNumber))) continue;
+      try {
+        const issue = await this.github.getIssue(job.issueNumber);
+        await this.labelPullRequestFromIssue(job.prNumber, issue);
+      } catch (error) {
+        this.state.setStatus(
+          job.issueNumber,
+          "pr_open",
+          `Pull request label synchronization pending: ${errorText(error)}`,
+        );
+      }
     }
   }
 

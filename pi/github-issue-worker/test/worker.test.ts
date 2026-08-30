@@ -125,6 +125,36 @@ test("PR label synchronization retries without blocking an already-open pull req
   }
 });
 
+test("tracked open PRs created before the upgrade receive a one-time label backfill", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-pr-label-backfill-"));
+  const state = new WorkerState(join(root, "state.sqlite"));
+  state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
+  state.setPullRequest(42, 77, "https://github.com/example/widgets/pull/77");
+  let labels = 0;
+  const github = {
+    listReadyIssues: async () => [],
+    getIssue: async () => issue,
+    isPullRequestOpen: async () => true,
+    labelPullRequestFromIssue: async () => { labels += 1; },
+    listFeedback: async () => [],
+    getPullRequestChecks: async () => ({ headSha: "abc", state: "pending", failures: [] }),
+  };
+  try {
+    const worker = new IssueWorker(config(root), state, {
+      github: github as unknown as GitHubClient,
+      repository: {} as RepositoryManager,
+      agent: {} as PiAgentRunner,
+    });
+    await worker.tick();
+    await worker.tick();
+    assert.equal(labels, 1);
+    assert.equal(state.hasProcessed("pr-labels:77"), true);
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("trusted issue /pi retry restarts a blocked job without manual label changes", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-blocked-retry-"));
   const state = new WorkerState(join(root, "state.sqlite"));
