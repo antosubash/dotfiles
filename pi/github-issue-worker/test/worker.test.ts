@@ -40,6 +40,7 @@ test("worker claims an approved issue and opens a draft PR", async () => {
     claimIssue: async () => calls.push("claim"),
     findOpenPullRequest: async () => null,
     createDraftPullRequest: async () => ({ number: 77, url: "https://github.com/example/widgets/pull/77" }),
+    labelPullRequestFromIssue: async () => calls.push("label-pr"),
     markPullRequestOpen: async () => calls.push("pr-open"),
     commentIssue: async () => calls.push("comment-issue"),
     markBlocked: async () => calls.push("blocked"),
@@ -77,7 +78,47 @@ test("worker claims an approved issue and opens a draft PR", async () => {
     const job = state.requireJob(42);
     assert.equal(job.status, "pr_open");
     assert.equal(job.prNumber, 77);
-    assert.deepEqual(calls, ["claim", "pr-open", "comment-issue"]);
+    assert.deepEqual(calls, ["claim", "label-pr", "pr-open", "comment-issue"]);
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("PR label synchronization retries without blocking an already-open pull request", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-pr-label-retry-"));
+  const state = new WorkerState(join(root, "state.sqlite"));
+  state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
+  state.setStatus(42, "implementing");
+  let labelAttempts = 0;
+  let blocked = 0;
+  const github = {
+    listReadyIssues: async () => [],
+    getIssue: async () => issue,
+    findOpenPullRequest: async () => ({ number: 77, url: "https://github.com/example/widgets/pull/77" }),
+    labelPullRequestFromIssue: async () => {
+      labelAttempts += 1;
+      if (labelAttempts === 1) throw new Error("temporary API failure");
+    },
+    markPullRequestOpen: async () => undefined,
+    markBlocked: async () => { blocked += 1; },
+    isPullRequestOpen: async () => true,
+    listFeedback: async () => [],
+    getPullRequestChecks: async () => ({ headSha: "abc", state: "pending", failures: [] }),
+  };
+  try {
+    const worker = new IssueWorker(config(root), state, {
+      github: github as unknown as GitHubClient,
+      repository: {} as RepositoryManager,
+      agent: {} as PiAgentRunner,
+    });
+    await worker.tick();
+    assert.equal(state.requireJob(42).status, "implementing");
+    assert.equal(blocked, 0);
+    await worker.tick();
+    assert.equal(labelAttempts, 2);
+    assert.equal(state.requireJob(42).status, "pr_open");
+    assert.equal(state.requireJob(42).prNumber, 77);
   } finally {
     state.close();
     await rm(root, { recursive: true, force: true });

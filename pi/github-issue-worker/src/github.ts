@@ -546,6 +546,36 @@ export class GitHubClient {
       .map(({ number, html_url: url }) => ({ number, url }));
   }
 
+  async labelPullRequestFromIssue(
+    prNumber: number,
+    issue: GitHubIssue,
+  ): Promise<void> {
+    const transient = new Set([
+      this.config.readyLabel.toLowerCase(),
+      this.config.workingLabel.toLowerCase(),
+      this.config.blockedLabel.toLowerCase(),
+    ]);
+    const labels = new Map<string, string>([
+      [this.config.pullRequestLabel.toLowerCase(), this.config.pullRequestLabel],
+    ]);
+    for (const { name } of issue.labels) {
+      const normalized = name.trim().toLowerCase();
+      if (!normalized || transient.has(normalized) || labels.has(normalized)) continue;
+      labels.set(normalized, name);
+    }
+    await this.gh(
+      [
+        "api",
+        "--method",
+        "POST",
+        `/repos/${this.config.repository}/issues/${prNumber}/labels`,
+        "--input",
+        "-",
+      ],
+      JSON.stringify({ labels: [...labels.values()] }),
+    );
+  }
+
   async createDraftPullRequest(
     branch: string,
     title: string,

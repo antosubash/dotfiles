@@ -411,6 +411,20 @@ export class IssueWorker {
     await this.blockInitialIssue(issueNumber, error);
   }
 
+  private async labelPullRequestFromIssue(
+    prNumber: number,
+    issue: GitHubIssue,
+  ): Promise<void> {
+    if (typeof this.github.labelPullRequestFromIssue !== "function") return;
+    try {
+      await this.github.labelPullRequestFromIssue(prNumber, issue);
+    } catch (error) {
+      throw new RetryableControllerError(
+        `Pull request #${prNumber} was opened but its labels could not be synchronized: ${errorText(error)}`,
+      );
+    }
+  }
+
   private async startIssue(issue: GitHubIssue): Promise<void> {
     const branch = this.repository.branchForIssue(issue.number, issue.title);
     const worktreePath = this.repository.pathForIssue(issue.number);
@@ -427,6 +441,7 @@ export class IssueWorker {
   private async implementIssue(issue: GitHubIssue, job: IssueJob): Promise<void> {
     const existingPull = await this.github.findOpenPullRequest(job.branch);
     if (existingPull) {
+      await this.labelPullRequestFromIssue(existingPull.number, issue);
       this.state.setPullRequest(issue.number, existingPull.number, existingPull.url);
       await this.github.markPullRequestOpen(issue.number);
       return;
@@ -562,6 +577,7 @@ export class IssueWorker {
         pullRequestTitle(issue),
         pullRequestBody(issue, finalText),
       ));
+    await this.labelPullRequestFromIssue(pull.number, issue);
     this.state.setPullRequest(issue.number, pull.number, pull.url);
     this.state.associatePendingEvidence(issue.number, pull.number);
     if (evidence?.prNumber === null) evidence = { ...evidence, prNumber: pull.number };

@@ -121,6 +121,49 @@ test("open PR overlap detection excludes the worker branch", async () => {
   ]);
 });
 
+test("pull requests inherit source issue labels without transient worker state", async () => {
+  const calls: Array<{ args: readonly string[]; input?: string }> = [];
+  const client = new GitHubClient(
+    loadConfig({
+      PI_WORKER_REPOSITORY: "example/widgets",
+      PI_WORKER_BASE_BRANCH: "main",
+      PI_WORKER_LABEL_PREFIX: "agent",
+      PI_WORKER_ALLOW_DOCKER: "0",
+    }),
+    async (args, input) => {
+      calls.push({ args, ...(input === undefined ? {} : { input }) });
+      return "";
+    },
+  );
+  await client.labelPullRequestFromIssue(7, {
+    number: 42,
+    title: "Fix widget",
+    body: "Acceptance criteria",
+    url: "https://example.test/issues/42",
+    updatedAt: "2026-01-01T00:00:00Z",
+    labels: [
+      { name: "agent-ready" },
+      { name: "bug" },
+      { name: "agent-working" },
+      { name: "agent-visual" },
+      { name: "AGENT-PR-OPEN" },
+      { name: "agent-blocked" },
+    ],
+    author: { login: "maintainer" },
+  });
+  assert.deepEqual(calls[0]?.args, [
+    "api",
+    "--method",
+    "POST",
+    "/repos/example/widgets/issues/7/labels",
+    "--input",
+    "-",
+  ]);
+  assert.deepEqual(JSON.parse(calls[0]?.input || "{}"), {
+    labels: ["agent-pr-open", "bug", "agent-visual"],
+  });
+});
+
 test("evidence publication is idempotent and advances the branch without force", async () => {
   const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
   const attachment = {

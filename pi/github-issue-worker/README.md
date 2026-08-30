@@ -132,6 +132,12 @@ On first start, the worker creates these configurable-prefix labels:
 - `pi-blocked` — human help required
 - `pi-visual` — request local browser evidence
 
+When the worker opens or rediscovers a pull request for an issue, it also labels the PR itself.
+The PR receives `pi-pr-open` plus the issue's non-transient labels (for example `bug`, area,
+priority, and `pi-visual`). Queue/lifecycle labels `pi-ready`, `pi-working`, and `pi-blocked`
+remain on the source issue only. Label synchronization is idempotent and retried before the
+controller records the PR as open.
+
 ## Run one profile as a user service
 
 ```bash
