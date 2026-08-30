@@ -38,7 +38,7 @@ function visualInstructions(
   if (!evidenceDir) return "";
   return `
 Visual verification is requested. Treat verification as part of completion, but do not fake evidence.
-- Evidence directory: ${evidenceDir}
+- Evidence directory: ${evidenceDir} (create this assigned directory inside the worktree before capturing artifacts)
 - App URL: ${config.appUrl ?? "discover the local URL from the repository's run instructions"}
 - Optional protected Playwright storage state: ${config.playwrightState ?? "not configured"}
 ${qaManifestInstructions(manifest)}- Before editing UI code, perform a visual preflight with the selected repository preview/application: start it, resolve its actual URL, open it with Playwright, and prove that a small \`preflight.png\` can be captured in the evidence directory. If this capability probe fails, stop before implementation and report the precise blocker. The controller excludes preflight-named media from final evidence; after implementation you must capture separate final desktop/mobile PNG evidence.

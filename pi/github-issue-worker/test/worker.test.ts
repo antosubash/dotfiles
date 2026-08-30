@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -217,6 +217,7 @@ test("initial BLOCKED output cannot be committed or pushed", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-blocked-initial-"));
   const state = new WorkerState(join(root, "state.sqlite"));
   let commits = 0;
+  let evidenceRunId = "";
   const visualIssue = { ...issue, labels: [{ name: "pi-visual" }] };
   const github = {
     listReadyIssues: async () => [visualIssue],
@@ -231,7 +232,10 @@ test("initial BLOCKED output cannot be committed or pushed", async () => {
   const repository = {
     branchForIssue: () => "pi/issue-42-add-reusable-behavior",
     pathForIssue: () => join(root, "worktree"),
-    ensureIssueWorktree: async () => ({ branch: "pi/issue-42-add-reusable-behavior", path: join(root, "worktree") }),
+    ensureIssueWorktree: async () => {
+      await mkdir(join(root, "worktree"));
+      return { branch: "pi/issue-42-add-reusable-behavior", path: join(root, "worktree") };
+    },
     changedFiles: async () => ["src/partial.ts"],
     hasCommitsAhead: async () => false,
     clearAgentChanges: async () => undefined,
@@ -244,7 +248,10 @@ test("initial BLOCKED output cannot be committed or pushed", async () => {
     },
   };
   const agent = {
-    run: async () => ({ sessionFile: join(root, "session.jsonl"), finalText: "BLOCKED\nMissing acceptance criteria." }),
+    run: async (options: { prompt: string }) => {
+      evidenceRunId = options.prompt.match(/runs\/(\d{8}T\d{6}Z)/)?.[1] ?? "";
+      return { sessionFile: join(root, "session.jsonl"), finalText: "BLOCKED\nMissing acceptance criteria." };
+    },
   };
   try {
     const worker = new IssueWorker(config(root), state, {
@@ -255,9 +262,8 @@ test("initial BLOCKED output cannot be committed or pushed", async () => {
     await worker.tick();
     assert.equal(commits, 0);
     assert.equal(state.requireJob(42).status, "blocked");
-    const runs = await readdir(join(root, "worktree", ".qa", "issues", "42", "pr-pending", "runs"));
-    assert.equal(runs.length, 1);
-    assert.equal(state.requireEvidenceRun(42, null, runs[0]!).status, "blocked");
+    assert.match(evidenceRunId, /^\d{8}T\d{6}Z$/);
+    assert.equal(state.requireEvidenceRun(42, null, evidenceRunId).status, "blocked");
   } finally {
     state.close();
     await rm(root, { recursive: true, force: true });
@@ -724,6 +730,7 @@ test("an interrupted CI repair remains resumable and does not consume the head t
 test("trusted visual wording enables the browser sandbox even outside the verify alias", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-visual-wording-"));
   const state = new WorkerState(join(root, "state.sqlite"));
+  await mkdir(join(root, "worktree"));
   state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
   state.setPullRequest(42, 77, "https://github.com/example/widgets/pull/77");
   let visualVerification = false;
@@ -849,6 +856,7 @@ test("a head with no registered checks is reported once without invoking Pi", as
 test("browser CI failures enable the visual Unix-socket sandbox", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-ci-browser-"));
   const state = new WorkerState(join(root, "state.sqlite"));
+  await mkdir(join(root, "worktree"));
   state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
   state.setPullRequest(42, 77, "https://github.com/example/widgets/pull/77");
   let visualVerification = false;
