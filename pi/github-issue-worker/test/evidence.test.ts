@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   collectEvidenceAttachments,
+  collectFinalEvidenceAttachments,
   convertWebmToGif,
   createEvidenceRun,
   listEvidenceRuns,
@@ -64,6 +65,25 @@ test("only signature-validated visual artifacts are publishable", async () => {
     assert.equal(attachments[0]!.content.includes(Buffer.from("SECRET_TRAILER")), false);
     await writeFile(join(directory, "unsafe].png"), validPng);
     await assert.rejects(() => collectEvidenceAttachments(directory), /unsafe filename/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("preflight probes cannot satisfy or enter final evidence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-worker-final-attachments-"));
+  try {
+    const validPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    await writeFile(join(directory, "preflight.png"), "incomplete capability probe");
+    assert.deepEqual(await collectFinalEvidenceAttachments(directory), []);
+    await writeFile(join(directory, "desktop.png"), validPng);
+    assert.deepEqual(
+      (await collectFinalEvidenceAttachments(directory)).map((attachment) => attachment.name),
+      ["desktop.png"],
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

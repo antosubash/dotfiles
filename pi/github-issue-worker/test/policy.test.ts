@@ -7,11 +7,45 @@ import test from "node:test";
 import { loadConfig } from "../src/config.js";
 import {
   assertVisualSandboxIsolation,
+  awaitAgentPromptCompletion,
   commandBlockReason,
+  createAgentSettlementWatchdog,
   removeStaleSandboxTemps,
   sandboxConfig,
   sandboxEnvironment,
 } from "../src/pi-agent.js";
+
+test("settled agent events release a prompt that fails to settle", async () => {
+  const never = new Promise<void>(() => undefined);
+  assert.equal(
+    await awaitAgentPromptCompletion(never, Promise.resolve(), 1_000, 5),
+    "agent_settled",
+  );
+  assert.equal(
+    await awaitAgentPromptCompletion(Promise.resolve(), never, 1_000, 5),
+    "prompt",
+  );
+  await assert.rejects(
+    () => awaitAgentPromptCompletion(never, never, 5, 5),
+    /agent run exceeded 1 minutes/,
+  );
+  const stalled = createAgentSettlementWatchdog(5);
+  stalled.arm();
+  await assert.rejects(
+    () => awaitAgentPromptCompletion(never, never, 1_000, 5, stalled.failure),
+    /made no progress after its terminal agent_end/,
+  );
+  stalled.close();
+
+  const settled = createAgentSettlementWatchdog(5);
+  settled.arm();
+  settled.settled();
+  assert.equal(
+    await awaitAgentPromptCompletion(never, Promise.resolve(), 1, 5, settled.failure),
+    "agent_settled",
+  );
+  settled.close();
+});
 
 test("agent bash uses OS-level home denial and worktree-only writes", () => {
   const config = loadConfig({

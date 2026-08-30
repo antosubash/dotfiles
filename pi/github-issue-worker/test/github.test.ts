@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadConfig } from "../src/config.js";
 import {
+  ciFailureDisposition,
   GitHubClient,
   classifyPullRequestChecks,
   extractFailureExcerpt,
@@ -77,6 +78,89 @@ test("pull request checks distinguish no checks, pending jobs, and actionable fa
     conclusion: "FAILURE",
     detailsUrl: "https://example.test",
     excerpt: null,
+  });
+});
+
+test("CI disposition separates infrastructure, timeout, and code failures", () => {
+  assert.equal(
+    ciFailureDisposition([{ name: "build", conclusion: "STARTUP_FAILURE", detailsUrl: null, excerpt: null }]),
+    "infrastructure",
+  );
+  assert.equal(
+    ciFailureDisposition([{ name: "test", conclusion: "FAILURE", detailsUrl: null, excerpt: "Error: Test timed out in 5000ms" }]),
+    "timeout",
+  );
+  assert.equal(
+    ciFailureDisposition([{ name: "test", conclusion: "TIMED_OUT", detailsUrl: null, excerpt: null }]),
+    "timeout",
+  );
+  assert.equal(
+    ciFailureDisposition([{ name: "test", conclusion: "FAILURE", detailsUrl: null, excerpt: "AssertionError: expected 1" }]),
+    "code",
+  );
+});
+
+test("open PR overlap detection excludes the worker branch", async () => {
+  const client = new GitHubClient(
+    loadConfig({
+      PI_WORKER_REPOSITORY: "example/widgets",
+      PI_WORKER_BASE_BRANCH: "main",
+      PI_WORKER_ALLOW_DOCKER: "0",
+    }),
+    async (args) => {
+      assert.deepEqual(args.slice(0, 3), ["api", "--paginate", "--slurp"]);
+      return JSON.stringify([[
+        { number: 7, html_url: "https://example.test/pull/7", head: { ref: "feature/existing" }, title: "Fix #42", body: "" },
+        { number: 8, html_url: "https://example.test/pull/8", head: { ref: "pi/issue-42" }, title: "Worker", body: "Closes #42" },
+        { number: 9, html_url: "https://example.test/pull/9", head: { ref: "other" }, title: "Fix #420", body: "" },
+      ]]);
+    },
+  );
+  assert.deepEqual(await client.findOpenPullRequestsForIssue(42, "pi/issue-42"), [
+    { number: 7, url: "https://example.test/pull/7" },
+  ]);
+});
+
+test("pull requests inherit source issue labels without transient worker state", async () => {
+  const calls: Array<{ args: readonly string[]; input?: string }> = [];
+  const client = new GitHubClient(
+    loadConfig({
+      PI_WORKER_REPOSITORY: "example/widgets",
+      PI_WORKER_BASE_BRANCH: "main",
+      PI_WORKER_LABEL_PREFIX: "agent",
+      PI_WORKER_ALLOW_DOCKER: "0",
+    }),
+    async (args, input) => {
+      calls.push({ args, ...(input === undefined ? {} : { input }) });
+      return "";
+    },
+  );
+  await client.labelPullRequestFromIssue(7, {
+    number: 42,
+    title: "Fix widget",
+    body: "Acceptance criteria",
+    url: "https://example.test/issues/42",
+    updatedAt: "2026-01-01T00:00:00Z",
+    labels: [
+      { name: "agent-ready" },
+      { name: "bug" },
+      { name: "agent-working" },
+      { name: "agent-visual" },
+      { name: "AGENT-PR-OPEN" },
+      { name: "agent-blocked" },
+    ],
+    author: { login: "maintainer" },
+  });
+  assert.deepEqual(calls[0]?.args, [
+    "api",
+    "--method",
+    "POST",
+    "/repos/example/widgets/issues/7/labels",
+    "--input",
+    "-",
+  ]);
+  assert.deepEqual(JSON.parse(calls[0]?.input || "{}"), {
+    labels: ["agent-pr-open", "bug", "agent-visual"],
   });
 });
 

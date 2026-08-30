@@ -81,6 +81,23 @@ export interface PullRequestChecks {
   failures: PullRequestCheckFailure[];
 }
 
+export type EvidenceRunStatus =
+  | "pending"
+  | "valid"
+  | "published"
+  | "blocked"
+  | "invalid-terminal";
+
+export interface EvidenceRunRecord {
+  issueNumber: number;
+  prNumber: number | null;
+  runId: string;
+  status: EvidenceRunStatus;
+  detail: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AgentRunResult {
   sessionFile: string;
   finalText: string;

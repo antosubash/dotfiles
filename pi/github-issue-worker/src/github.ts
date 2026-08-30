@@ -75,6 +75,36 @@ export function classifyPullRequestChecks(raw: RawPullRequestChecks): PullReques
   };
 }
 
+export type CiFailureDisposition = "infrastructure" | "timeout" | "code";
+
+export function ciFailureDisposition(
+  failures: readonly PullRequestCheckFailure[],
+): CiFailureDisposition {
+  if (
+    failures.length > 0 &&
+    failures.every((failure) =>
+      /^(?:CANCELLED|STALE|STARTUP_FAILURE|ACTION_REQUIRED|SKIPPED)$/i.test(
+        failure.conclusion,
+      ) ||
+      /no self-hosted runner|not acquired by runner|startup_failure|HTTP 5\d\d|runner.*offline/i.test(
+        failure.excerpt || "",
+      ),
+    )
+  ) {
+    return "infrastructure";
+  }
+  if (
+    failures.length > 0 &&
+    failures.every((failure) =>
+      failure.conclusion === "TIMED_OUT" ||
+      /test timed out|timed out in \d+ms|timeout exceeded/i.test(failure.excerpt || ""),
+    )
+  ) {
+    return "timeout";
+  }
+  return "code";
+}
+
 export function extractFailureExcerpt(raw: string, maximum = 12_000): string {
   const sanitized = raw
     .replace(/\u001b\[[0-9;]*m/g, "")
@@ -327,10 +357,10 @@ export class GitHubClient {
     return markdown();
   }
 
-  private async apiPages(endpoint: string): Promise<RawFeedback[]> {
+  private async apiPages<T = RawFeedback>(endpoint: string): Promise<T[]> {
     const output = await this.gh(["api", "--paginate", "--slurp", endpoint]);
     if (!output) return [];
-    const pages = JSON.parse(output) as RawFeedback[][];
+    const pages = JSON.parse(output) as T[][];
     return pages.flat();
   }
 
@@ -495,6 +525,57 @@ export class GitHubClient {
     return pulls[0] ?? null;
   }
 
+  async findOpenPullRequestsForIssue(
+    issueNumber: number,
+    excludedBranch: string,
+  ): Promise<PullRequestInfo[]> {
+    const pulls = await this.apiPages<{
+      number: number;
+      html_url: string;
+      head: { ref: string };
+      title: string;
+      body: string | null;
+    }>(`/repos/${this.config.repository}/pulls?state=open&per_page=100`);
+    const reference = new RegExp(`(^|[^0-9])#${issueNumber}(?![0-9])`);
+    return pulls
+      .filter(
+        (pull) =>
+          pull.head.ref !== excludedBranch &&
+          reference.test(`${pull.title}\n${pull.body || ""}`),
+      )
+      .map(({ number, html_url: url }) => ({ number, url }));
+  }
+
+  async labelPullRequestFromIssue(
+    prNumber: number,
+    issue: GitHubIssue,
+  ): Promise<void> {
+    const transient = new Set([
+      this.config.readyLabel.toLowerCase(),
+      this.config.workingLabel.toLowerCase(),
+      this.config.blockedLabel.toLowerCase(),
+    ]);
+    const labels = new Map<string, string>([
+      [this.config.pullRequestLabel.toLowerCase(), this.config.pullRequestLabel],
+    ]);
+    for (const { name } of issue.labels) {
+      const normalized = name.trim().toLowerCase();
+      if (!normalized || transient.has(normalized) || labels.has(normalized)) continue;
+      labels.set(normalized, name);
+    }
+    await this.gh(
+      [
+        "api",
+        "--method",
+        "POST",
+        `/repos/${this.config.repository}/issues/${prNumber}/labels`,
+        "--input",
+        "-",
+      ],
+      JSON.stringify({ labels: [...labels.values()] }),
+    );
+  }
+
   async createDraftPullRequest(
     branch: string,
     title: string,
@@ -564,6 +645,20 @@ export class GitHubClient {
     };
   }
 
+  async rerunFailedWorkflowRuns(
+    failures: readonly PullRequestCheckFailure[],
+  ): Promise<number> {
+    const runIds = new Set(
+      failures
+        .map((failure) => failure.detailsUrl?.match(/\/actions\/runs\/(\d+)/)?.[1])
+        .filter((runId): runId is string => Boolean(runId)),
+    );
+    for (const runId of runIds) {
+      await this.gh(["run", "rerun", runId, "--repo", this.config.repository, "--failed"]);
+    }
+    return runIds.size;
+  }
+
   async getPullRequestChecks(
     prNumber: number,
     includeFailureLogs = false,
@@ -598,6 +693,16 @@ export class GitHubClient {
       failures.push({ ...failure, excerpt });
     }
     return { ...checks, failures };
+  }
+
+  async listIssueCommands(issueNumber: number): Promise<PullRequestFeedback[]> {
+    const items = await this.apiPages(
+      `/repos/${this.config.repository}/issues/${issueNumber}/comments`,
+    );
+    return items
+      .map((item) => this.mapFeedback(item, "conversation"))
+      .filter((item): item is PullRequestFeedback => item !== null)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
   async listFeedback(prNumber: number): Promise<PullRequestFeedback[]> {

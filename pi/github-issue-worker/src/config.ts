@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
+import { safeRepositoryPath } from "./qa-manifest.js";
 
 export const THINKING_LEVELS = [
   "off",
@@ -29,6 +30,7 @@ export interface WorkerConfig {
   pollSeconds: number;
   maxIssuesPerPoll: number;
   maxCiFixAttempts: number;
+  agentTimeoutMinutes: number;
   thinkingLevel: ThinkingLevel;
   model: string;
   trustedAssociations: ReadonlySet<string>;
@@ -42,6 +44,7 @@ export interface WorkerConfig {
   dockerSocket: string | null;
   publishEvidence: boolean;
   evidenceBranch: string;
+  qaManifestPath: string;
 }
 
 function expandPath(value: string, home = homedir()): string {
@@ -70,6 +73,17 @@ function positiveInteger(name: string, value: string, fallback: number): number 
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`);
   }
+  return parsed;
+}
+
+function boundedPositiveInteger(
+  name: string,
+  value: string,
+  fallback: number,
+  maximum: number,
+): number {
+  const parsed = positiveInteger(name, value, fallback);
+  if (parsed > maximum) throw new Error(`${name} must be at most ${maximum}`);
   return parsed;
 }
 
@@ -126,7 +140,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     .update(`${repository}\n${repositoryUrl}`)
     .digest("hex")
     .slice(0, 12);
-  const protectedPaths = (env.PI_WORKER_PROTECTED_PATHS || ".git,.github/workflows,.pi")
+  const protectedPaths = (env.PI_WORKER_PROTECTED_PATHS || ".git,.github/workflows,.pi,.pi-worker")
     .split(",")
     .map((value) => value.trim().replace(/^\.\//, "").replace(/\/$/, ""))
     .filter(Boolean);
@@ -202,6 +216,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       env.PI_WORKER_MAX_CI_FIX_ATTEMPTS || "",
       3,
     ),
+    agentTimeoutMinutes: boundedPositiveInteger(
+      "PI_WORKER_AGENT_TIMEOUT_MINUTES",
+      env.PI_WORKER_AGENT_TIMEOUT_MINUTES || "",
+      60,
+      1_440,
+    ),
     thinkingLevel: thinking as ThinkingLevel,
     model,
     trustedAssociations: new Set(associations),
@@ -222,5 +242,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       env.PI_WORKER_PUBLISH_EVIDENCE ?? "1",
     ),
     evidenceBranch,
+    qaManifestPath: safeRepositoryPath(
+      env.PI_WORKER_QA_MANIFEST?.trim() || ".pi-worker/qa.json",
+      "PI_WORKER_QA_MANIFEST",
+    ),
   };
 }

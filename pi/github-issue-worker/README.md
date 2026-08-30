@@ -102,6 +102,7 @@ PI_WORKER_SANDBOX_ALLOWED_DOMAINS=
 PI_WORKER_MODEL=openai-codex/gpt-5.6-terra
 PI_WORKER_THINKING_LEVEL=high
 PI_WORKER_MAX_CI_FIX_ATTEMPTS=3
+PI_WORKER_AGENT_TIMEOUT_MINUTES=60
 # Docker is automatic when the socket exists; set 0 to disable it.
 # PI_WORKER_ALLOW_DOCKER=0
 # PI_WORKER_DOCKER_SOCKET=/var/run/docker.sock
@@ -130,6 +131,13 @@ On first start, the worker creates these configurable-prefix labels:
 - `pi-pr-open` — draft PR created
 - `pi-blocked` — human help required
 - `pi-visual` — request local browser evidence
+
+When the worker opens or rediscovers a pull request for an issue, it also labels the PR itself.
+The PR receives `pi-pr-open` plus the issue's non-transient labels (for example `bug`, area,
+priority, and `pi-visual`). Queue/lifecycle labels `pi-ready`, `pi-working`, and `pi-blocked`
+remain on the source issue only. Label synchronization is idempotent and retried before the
+controller records the PR as open. On upgrade, tracked open worker PRs receive the same one-time
+label backfill.
 
 ## Run one profile as a user service
 
@@ -207,7 +215,23 @@ Trusted repository owners, members, and collaborators can write:
 
 Formal PR reviews and inline review comments from trusted associations are processed automatically.
 Ordinary PR conversation text is ignored unless it starts with `/pi`. Worker-authored comments carry a
-hidden marker and are ignored, preventing feedback loops.
+hidden marker and are ignored, preventing feedback loops. A trusted `/pi retry` comment posted on a
+blocked issue is also processed automatically: the controller reclaims the existing worktree/session and
+updates labels without requiring a separate `pi-ready` edit. Commands older than the latest blocked state
+are ignored.
+
+## Repository QA manifest
+
+Repositories may provide a strict, read-only `.pi-worker/qa.json` manifest (override with
+`PI_WORKER_QA_MANIFEST`). Version 1 can name the Aspire AppHost/resources, truthful preview routes, and
+validation commands represented as argument arrays rather than shell strings. The worker uses this trusted
+metadata to classify the least expensive truthful workflow, perform a PNG capability preflight before UI
+implementation, resolve Aspire runtime URLs, and avoid rediscovering commands on every issue.
+
+The controller rejects oversized, malformed, unknown-key, traversal, absolute-path, and symlinked
+manifests. `.pi-worker` is protected from agent writes by default. Component previews may use representative
+props only when they import the exact production component, configuration, and styles; preview-only markup,
+CSS, or expected geometry is false evidence.
 
 ## Visual evidence
 
@@ -252,6 +276,11 @@ This is **not normal sandboxing**. Docker daemon access can provide host-level c
 Runtime filesystem/network boundaries; command filtering is not a security boundary. Run the worker only
 on a dedicated disposable machine/account with no unrelated credentials or workloads.
 
+Agent runs have two anti-stall safeguards: a final `agent_settled` event releases a Pi SDK prompt that
+fails to settle after a short grace period, and `PI_WORKER_AGENT_TIMEOUT_MINUTES` places a hard ceiling on
+runs that never reach a terminal event. The normal controller path then records the final result, clears
+partial source changes for `BLOCKED` output, and updates GitHub instead of wedging the repository profile.
+
 ## State and recovery
 
 Each profile stores in a collision-resistant repository-specific default directory (explicit
@@ -268,9 +297,14 @@ PI_WORKER_DATA_DIR/
 
 A restart resumes claimed/implementing issues, unprocessed feedback for `addressing_review` jobs, and
 interrupted `addressing_ci` repairs in the persistent issue session. CI attempts and handled head SHAs
-survive restarts, preventing duplicate repair loops. If a commit was already produced, it is pushed and
-used to create the missing PR instead of rerunning implementation. Existing open PRs are rediscovered by
-branch name.
+survive restarts, preventing duplicate repair loops. Evidence runs have persistent `pending`, `valid`,
+`published`, `blocked`, and `invalid-terminal` states; failed historical captures are terminal and cannot
+poison a later successful PR or be retried on every poll. Runner/startup failures and isolated test timeouts
+are rerun once without spending an agent repair attempt; repeated or real assertion failures follow the
+normal bounded diagnosis path. If a commit was already produced, it is pushed and
+used to create the missing PR instead of rerunning implementation. Existing open PRs are rediscovered by branch name. Before implementation, the controller also rejects an
+open PR on another branch that already references the same issue, preventing overlapping worker and grouped
+feature PRs.
 
 ## Security model and limitations
 

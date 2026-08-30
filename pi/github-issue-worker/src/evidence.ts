@@ -1,6 +1,6 @@
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { execFile } from "./exec.js";
 
 export interface EvidenceAttachment {
@@ -10,6 +10,9 @@ export interface EvidenceAttachment {
 }
 
 export interface EvidenceRun {
+  issueNumber: number;
+  prNumber: number | null;
+  runId: string;
   issueRoot: string;
   runDir: string;
   relativeRunDir: string;
@@ -26,12 +29,20 @@ export async function createEvidenceRun(
   now = new Date(),
 ): Promise<EvidenceRun> {
   const issueRoot = join(worktree, ".qa", "issues", String(issueNumber), `pr-${prNumber ?? "pending"}`);
-  const runDir = join(issueRoot, "runs", timestamp(now));
+  const runId = timestamp(now);
+  const runDir = join(issueRoot, "runs", runId);
   await mkdir(runDir, { recursive: true });
   const latest = join(issueRoot, "latest");
   await unlink(latest).catch(() => undefined);
   await symlink(relative(dirname(latest), runDir), latest, "dir");
-  return { issueRoot, runDir, relativeRunDir: relative(worktree, runDir) };
+  return {
+    issueNumber,
+    prNumber,
+    runId,
+    issueRoot,
+    runDir,
+    relativeRunDir: relative(worktree, runDir),
+  };
 }
 
 async function assertCanonicalDirectory(path: string): Promise<void> {
@@ -56,7 +67,14 @@ export async function listEvidenceRuns(
     const runDir = join(runsRoot, entry.name);
     try {
       await assertCanonicalDirectory(runDir);
-      runs.push({ issueRoot, runDir, relativeRunDir: relative(worktree, runDir) });
+      runs.push({
+        issueNumber,
+        prNumber,
+        runId: entry.name,
+        issueRoot,
+        runDir,
+        relativeRunDir: relative(worktree, runDir),
+      });
     } catch {
       // Fail closed on replaced run directories; other controller-created runs remain recoverable.
     }
@@ -75,7 +93,14 @@ export async function findLatestEvidenceRun(
     const runDir = await realpath(latest);
     const info = await lstat(runDir);
     if (!info.isDirectory() || !runDir.startsWith(`${join(issueRoot, "runs")}/`)) return null;
-    return { issueRoot, runDir, relativeRunDir: relative(worktree, runDir) };
+    return {
+      issueNumber,
+      prNumber,
+      runId: basename(runDir),
+      issueRoot,
+      runDir,
+      relativeRunDir: relative(worktree, runDir),
+    };
   } catch {
     return null;
   }
@@ -170,9 +195,14 @@ async function sanitizedMedia(
   }
 }
 
-export async function collectEvidenceAttachments(runDir: string): Promise<EvidenceAttachment[]> {
+export async function collectEvidenceAttachments(
+  runDir: string,
+  include: (name: string) => boolean = () => true,
+): Promise<EvidenceAttachment[]> {
   await assertCanonicalDirectory(runDir);
-  const names = (await readdir(runDir)).filter((name) => /\.(?:png|gif|webm)$/i.test(name)).sort();
+  const names = (await readdir(runDir))
+    .filter((name) => /\.(?:png|gif|webm)$/i.test(name) && include(name))
+    .sort();
   const attachments: EvidenceAttachment[] = [];
   let totalBytes = 0;
   for (const name of names) {
@@ -204,6 +234,15 @@ export async function collectEvidenceAttachments(runDir: string): Promise<Eviden
     attachments.push({ name, content: sanitized, mediaType });
   }
   return attachments;
+}
+
+export async function collectFinalEvidenceAttachments(
+  runDir: string,
+): Promise<EvidenceAttachment[]> {
+  return await collectEvidenceAttachments(
+    runDir,
+    (name) => !/^preflight(?:[._-]|$)/i.test(name),
+  );
 }
 
 export async function convertWebmToGif(input: string, output: string): Promise<void> {
