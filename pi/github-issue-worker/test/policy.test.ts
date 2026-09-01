@@ -173,6 +173,18 @@ test("headless policy keeps GitHub and git writes in the controller", () => {
   assert.equal(commandBlockReason("git diff --stat", []), null);
   assert.match(commandBlockReason("docker build .", []) || "", /explicit trusted/);
   assert.equal(commandBlockReason("docker build .", [], { dockerAccess: true }), null);
+  assert.equal(
+    commandBlockReason(
+      "docker compose up -d; SOCKET=$(pi-worker-docker-bridge start app_default web 8080)",
+      [],
+      { dockerAccess: true },
+    ),
+    null,
+  );
+  assert.equal(
+    commandBlockReason("pi-worker-docker-bridge stop", [], { dockerAccess: true }),
+    null,
+  );
   assert.match(
     commandBlockReason("docker run --privileged image", [], { dockerAccess: true }) || "",
     /forbidden/,

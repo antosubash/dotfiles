@@ -105,16 +105,20 @@ export function commandBlockReason(
   const canonicalDockerCommand = inspectedCommand
     .replace(/['"]/g, "")
     .replace(/\\(?=[A-Za-z])/g, "");
-  if (/\bdocker(?:-compose)?\b/i.test(canonicalDockerCommand)) {
+  const dockerInvocation = /(?:^|[&|(\s])docker(?:-compose)?(?=$|[\s&|)])/i;
+  const dockerSegments = canonicalDockerCommand
+    .split(/(?:\r?\n|;|&&|\|\|)/)
+    .filter((segment) => dockerInvocation.test(segment));
+  for (const dockerCommand of dockerSegments) {
     if (!options.dockerAccess) {
       return "Docker requires an explicit trusted /pi request and PI_WORKER_ALLOW_DOCKER=1";
     }
-    if (/\$\(|`|\$(?:\{|[A-Za-z_])/i.test(canonicalDockerCommand)) {
+    if (/\$\(|`|\$(?:\{|[A-Za-z_])/i.test(dockerCommand)) {
       return "Docker commands must use literal arguments; shell expansion is forbidden";
     }
     if (
       /(?:--privileged|--pid(?:=|\s+)host|--(?:network|net)(?:=|\s+)host|--(?:ipc|uts|cgroupns|userns)(?:=|\s+)host|--device(?:=|\s+)|--cap-add(?:=|\s+)|--volumes-from(?:=|\s+)|--mount(?:=|\s+)|--volume(?:=|\s+)|(?:^|\s)-v(?:\S*|\s+)|\/var\/run\/docker\.sock|\/run\/docker\.sock)/i.test(
-        canonicalDockerCommand,
+        dockerCommand,
       )
     ) {
       return "Docker host mounts, host namespaces, devices, privileged mode, and socket forwarding are forbidden";

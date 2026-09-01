@@ -112,7 +112,10 @@ async function main(): Promise<void> {
   process.stdout.write(`${resolve(runtime, SOCKET_NAME)}\n`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href
+) {
   await main().catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
