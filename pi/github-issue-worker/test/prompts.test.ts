@@ -75,6 +75,13 @@ test("visual verification prefers truthful source-backed previews over unrelated
   assert.match(prompt, /visual preflight/);
   assert.match(prompt, /prove that a small `preflight\.png` can be captured/);
   assert.match(prompt, /excludes preflight-named media from final evidence/);
+  assert.match(prompt, /inspect every intended loopback port/);
+  assert.match(prompt, /do not stop, remove, or reconfigure that workload/);
+  assert.match(prompt, /Select an unused high loopback port/);
+  assert.match(prompt, /temporary QA-only override/);
+  assert.match(prompt, /keep any port override under the assigned ignored evidence directory/);
+  assert.match(prompt, /verify that it belongs to the service you launched/);
+  assert.match(prompt, /use that URL consistently for readiness checks and Playwright/);
   assert.match(prompt, /narrowest checked-in source-backed preview route/);
   assert.match(prompt, /real production components/);
   assert.match(prompt, /A standalone frontend is preferable to a full stack/);
