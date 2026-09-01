@@ -121,6 +121,58 @@ test("open PR overlap detection excludes the worker branch", async () => {
   ]);
 });
 
+test("ready pull requests expose their trusted same-repository head metadata", async () => {
+  const client = new GitHubClient(
+    loadConfig({
+      PI_WORKER_REPOSITORY: "example/widgets",
+      PI_WORKER_BASE_BRANCH: "main",
+      PI_WORKER_ALLOW_DOCKER: "0",
+    }),
+    async (args) => {
+      assert.deepEqual(args.slice(0, 8), [
+        "pr",
+        "list",
+        "--repo",
+        "example/widgets",
+        "--state",
+        "open",
+        "--label",
+        "pi-ready",
+      ]);
+      return JSON.stringify([
+        {
+          number: 88,
+          title: "Adopt me",
+          body: null,
+          url: "https://example.test/pull/88",
+          updatedAt: "2026-09-01T00:00:00Z",
+          labels: [{ name: "pi-ready" }],
+          author: { login: "maintainer" },
+          headRefName: "feature/adopt-me",
+          headRefOid: "abc123",
+          baseRefName: "main",
+          isCrossRepository: false,
+        },
+      ]);
+    },
+  );
+  assert.deepEqual(await client.listReadyPullRequests(), [
+    {
+      number: 88,
+      title: "Adopt me",
+      body: "",
+      url: "https://example.test/pull/88",
+      updatedAt: "2026-09-01T00:00:00Z",
+      labels: [{ name: "pi-ready" }],
+      author: { login: "maintainer" },
+      headRefName: "feature/adopt-me",
+      headRefOid: "abc123",
+      baseRefName: "main",
+      isCrossRepository: false,
+    },
+  ]);
+});
+
 test("pull requests inherit source issue labels without transient worker state", async () => {
   const calls: Array<{ args: readonly string[]; input?: string }> = [];
   const client = new GitHubClient(
@@ -233,6 +285,26 @@ test("evidence publication is idempotent and advances the branch without force",
       assert.deepEqual(JSON.parse(updates[0]!.input!), { sha: "next-head", force: false });
     }
   }
+});
+
+test("blocking an invalid ready PR removes the adoption label", async () => {
+  const calls: string[][] = [];
+  const client = new GitHubClient(
+    loadConfig({
+      PI_WORKER_REPOSITORY: "example/widgets",
+      PI_WORKER_BASE_BRANCH: "main",
+      PI_WORKER_ALLOW_DOCKER: "0",
+    }),
+    async (args) => {
+      calls.push([...args]);
+      return "";
+    },
+  );
+  await client.markBlocked(88, "Invalid adoption target");
+  const edit = calls[0]!;
+  assert.deepEqual(edit.slice(0, 4), ["issue", "edit", "88", "--repo"]);
+  assert.ok(edit.includes("pi-ready"));
+  assert.ok(edit.includes("pi-blocked"));
 });
 
 test("CI excerpts redact common credentials and focus on failure context", () => {

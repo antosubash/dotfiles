@@ -3,10 +3,12 @@ import type { EvidenceAttachment } from "./evidence.js";
 import { execFile } from "./exec.js";
 import type {
   GitHubIssue,
+  GitHubPullRequest,
   PullRequestCheckFailure,
   PullRequestChecks,
   PullRequestFeedback,
   PullRequestInfo,
+  PullRequestLifecycle,
   PullRequestMergeState,
 } from "./types.js";
 
@@ -411,6 +413,39 @@ export class GitHubClient {
     return issues.map((issue) => ({ ...issue, body: issue.body || "" }));
   }
 
+  async listReadyPullRequests(): Promise<GitHubPullRequest[]> {
+    const output = await this.gh([
+      "pr",
+      "list",
+      "--repo",
+      this.config.repository,
+      "--state",
+      "open",
+      "--label",
+      this.config.readyLabel,
+      "--limit",
+      String(this.config.maxIssuesPerPoll),
+      "--json",
+      "number,title,body,url,updatedAt,labels,author,headRefName,headRefOid,baseRefName,isCrossRepository",
+    ]);
+    const pulls = JSON.parse(output || "[]") as Array<GitHubPullRequest & { body: string | null }>;
+    return pulls.map((pull) => ({ ...pull, body: pull.body || "" }));
+  }
+
+  async getPullRequest(prNumber: number): Promise<GitHubPullRequest> {
+    const output = await this.gh([
+      "pr",
+      "view",
+      String(prNumber),
+      "--repo",
+      this.config.repository,
+      "--json",
+      "number,title,body,url,updatedAt,labels,author,headRefName,headRefOid,baseRefName,isCrossRepository",
+    ]);
+    const pull = JSON.parse(output) as GitHubPullRequest & { body: string | null };
+    return { ...pull, body: pull.body || "" };
+  }
+
   async getIssue(issueNumber: number): Promise<GitHubIssue> {
     const output = await this.gh([
       "issue",
@@ -445,6 +480,44 @@ export class GitHubClient {
     );
   }
 
+  async claimPullRequest(pullRequest: GitHubPullRequest): Promise<void> {
+    await this.gh([
+      "pr",
+      "edit",
+      String(pullRequest.number),
+      "--repo",
+      this.config.repository,
+      "--remove-label",
+      this.config.readyLabel,
+      "--remove-label",
+      this.config.blockedLabel,
+      "--add-label",
+      this.config.workingLabel,
+    ]);
+    await this.commentPullRequest(
+      pullRequest.number,
+      `🤖 Claimed existing pull request. I am creating an isolated worktree from \`origin/${pullRequest.headRefName}\` and starting automatic conflict, feedback, and CI handling.`,
+    );
+  }
+
+  async activatePullRequest(prNumber: number): Promise<void> {
+    await this.gh([
+      "pr",
+      "edit",
+      String(prNumber),
+      "--repo",
+      this.config.repository,
+      "--remove-label",
+      this.config.readyLabel,
+      "--remove-label",
+      this.config.workingLabel,
+      "--remove-label",
+      this.config.blockedLabel,
+      "--add-label",
+      this.config.pullRequestLabel,
+    ]);
+  }
+
   async markBlocked(issueNumber: number, message: string): Promise<void> {
     await this.gh([
       "issue",
@@ -452,6 +525,8 @@ export class GitHubClient {
       String(issueNumber),
       "--repo",
       this.config.repository,
+      "--remove-label",
+      this.config.readyLabel,
       "--remove-label",
       this.config.workingLabel,
       "--add-label",
@@ -504,6 +579,17 @@ export class GitHubClient {
       ],
       `${WORKER_MARKER}\n${body}\n`,
     );
+  }
+
+  async hasPullRequestCommentMarker(prNumber: number, marker: string): Promise<boolean> {
+    const output = await this.gh([
+      "api",
+      "--paginate",
+      `/repos/${this.config.repository}/issues/${prNumber}/comments?per_page=100`,
+      "--jq",
+      ".[].body // empty",
+    ]);
+    return output.includes(marker);
   }
 
   async findOpenPullRequest(branch: string): Promise<PullRequestInfo | null> {
@@ -617,6 +703,28 @@ export class GitHubClient {
       ".state",
     ]);
     return state === "OPEN";
+  }
+
+  async getPullRequestLifecycle(prNumber: number): Promise<PullRequestLifecycle> {
+    const output = await this.gh([
+      "pr",
+      "view",
+      String(prNumber),
+      "--repo",
+      this.config.repository,
+      "--json",
+      "state,mergedAt,headRefOid",
+    ]);
+    const lifecycle = JSON.parse(output) as {
+      state: PullRequestLifecycle["state"];
+      mergedAt: string | null;
+      headRefOid: string;
+    };
+    return {
+      state: lifecycle.state,
+      mergedAt: lifecycle.mergedAt,
+      headSha: lifecycle.headRefOid,
+    };
   }
 
   async getPullRequestMergeState(prNumber: number): Promise<PullRequestMergeState> {

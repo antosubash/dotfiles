@@ -5,8 +5,10 @@ import type {
   EvidenceRunRecord,
   EvidenceRunStatus,
   GitHubIssue,
+  GitHubPullRequest,
   IssueJob,
   IssueStatus,
+  JobKind,
 } from "./types.js";
 
 interface EvidenceRunRow {
@@ -21,6 +23,7 @@ interface EvidenceRunRow {
 
 interface JobRow {
   issue_number: number;
+  job_kind: JobKind;
   title: string;
   status: IssueStatus;
   branch: string;
@@ -51,6 +54,7 @@ function mapEvidenceRun(row: EvidenceRunRow): EvidenceRunRecord {
 function mapJob(row: JobRow): IssueJob {
   return {
     issueNumber: row.issue_number,
+    kind: row.job_kind,
     title: row.title,
     status: row.status,
     branch: row.branch,
@@ -77,6 +81,7 @@ export class WorkerState {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS issue_jobs (
         issue_number INTEGER PRIMARY KEY,
+        job_kind TEXT NOT NULL DEFAULT 'issue' CHECK(job_kind IN ('issue', 'pull_request')),
         title TEXT NOT NULL,
         status TEXT NOT NULL,
         branch TEXT NOT NULL,
@@ -116,12 +121,31 @@ export class WorkerState {
         (column) => column.name,
       ),
     );
+    if (!jobColumns.has("job_kind")) {
+      this.database.exec("ALTER TABLE issue_jobs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'issue'");
+    }
     if (!jobColumns.has("ci_attempts")) {
       this.database.exec("ALTER TABLE issue_jobs ADD COLUMN ci_attempts INTEGER NOT NULL DEFAULT 0");
     }
     if (!jobColumns.has("ci_head_sha")) {
       this.database.exec("ALTER TABLE issue_jobs ADD COLUMN ci_head_sha TEXT");
     }
+    const duplicatePullRequests = this.database
+      .prepare(
+        `SELECT pr_number, COUNT(*) AS count FROM issue_jobs
+         WHERE pr_number IS NOT NULL GROUP BY pr_number HAVING COUNT(*) > 1`,
+      )
+      .all() as Array<{ pr_number: number; count: number }>;
+    if (duplicatePullRequests.length > 0) {
+      throw new Error(
+        `State migration blocked by duplicate pull request jobs: ${duplicatePullRequests
+          .map((row) => `#${row.pr_number} (${row.count})`)
+          .join(", ")}. Stop the worker and reconcile those rows before upgrading.`,
+      );
+    }
+    this.database.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS issue_jobs_pr_number ON issue_jobs(pr_number) WHERE pr_number IS NOT NULL",
+    );
   }
 
   claim(issue: GitHubIssue, branch: string, worktreePath: string, visualRequested: boolean): IssueJob {
@@ -129,8 +153,8 @@ export class WorkerState {
     this.database
       .prepare(
         `INSERT INTO issue_jobs (
-          issue_number, title, status, branch, worktree_path, visual_requested, created_at, updated_at
-        ) VALUES (?, ?, 'claimed', ?, ?, ?, ?, ?)
+          issue_number, job_kind, title, status, branch, worktree_path, visual_requested, created_at, updated_at
+        ) VALUES (?, 'issue', ?, 'claimed', ?, ?, ?, ?, ?)
         ON CONFLICT(issue_number) DO UPDATE SET
           title = excluded.title,
           status = 'claimed',
@@ -144,6 +168,50 @@ export class WorkerState {
     return this.requireJob(issue.number);
   }
 
+  adoptPullRequest(
+    pullRequest: GitHubPullRequest,
+    worktreePath: string,
+    visualRequested: boolean,
+  ): IssueJob {
+    const now = new Date().toISOString();
+    this.database
+      .prepare(
+        `INSERT INTO issue_jobs (
+          issue_number, job_kind, title, status, branch, worktree_path, pr_number, pr_url,
+          visual_requested, created_at, updated_at
+        ) VALUES (?, 'pull_request', ?, 'pr_open', ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(issue_number) DO UPDATE SET
+          title = excluded.title,
+          status = 'pr_open',
+          branch = excluded.branch,
+          worktree_path = excluded.worktree_path,
+          pr_number = excluded.pr_number,
+          pr_url = excluded.pr_url,
+          visual_requested = MAX(issue_jobs.visual_requested, excluded.visual_requested),
+          ci_attempts = 0,
+          ci_head_sha = NULL,
+          last_error = NULL,
+          updated_at = excluded.updated_at
+        WHERE issue_jobs.job_kind = 'pull_request' AND issue_jobs.pr_number = excluded.pr_number`,
+      )
+      .run(
+        pullRequest.number,
+        pullRequest.title,
+        pullRequest.headRefName,
+        worktreePath,
+        pullRequest.number,
+        pullRequest.url,
+        visualRequested ? 1 : 0,
+        now,
+        now,
+      );
+    const job = this.requireJob(pullRequest.number);
+    if (job.kind !== "pull_request" || job.prNumber !== pullRequest.number) {
+      throw new Error(`Pull request #${pullRequest.number} collides with an existing issue job`);
+    }
+    return job;
+  }
+
   getJob(issueNumber: number): IssueJob | null {
     const row = this.database
       .prepare("SELECT * FROM issue_jobs WHERE issue_number = ?")
@@ -155,6 +223,20 @@ export class WorkerState {
     const job = this.getJob(issueNumber);
     if (!job) throw new Error(`No state found for issue #${issueNumber}`);
     return job;
+  }
+
+  getJobByPullRequest(prNumber: number): IssueJob | null {
+    const row = this.database
+      .prepare("SELECT * FROM issue_jobs WHERE pr_number = ?")
+      .get(prNumber) as JobRow | undefined;
+    return row ? mapJob(row) : null;
+  }
+
+  listTrackedPullRequests(): IssueJob[] {
+    const rows = this.database
+      .prepare("SELECT * FROM issue_jobs WHERE pr_number IS NOT NULL ORDER BY issue_number")
+      .all() as unknown as JobRow[];
+    return rows.map(mapJob);
   }
 
   listBlocked(): IssueJob[] {
@@ -331,6 +413,17 @@ export class WorkerState {
       .prepare(
         `SELECT * FROM evidence_runs
          WHERE issue_number = ? AND pr_number = ? AND status IN ('pending', 'valid')
+         ORDER BY run_id`,
+      )
+      .all(issueNumber, prNumber) as unknown as EvidenceRunRow[];
+    return rows.map(mapEvidenceRun);
+  }
+
+  listEvidenceAwaitingReport(issueNumber: number, prNumber: number): EvidenceRunRecord[] {
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM evidence_runs
+         WHERE issue_number = ? AND pr_number = ? AND status IN ('pending', 'valid', 'published')
          ORDER BY run_id`,
       )
       .all(issueNumber, prNumber) as unknown as EvidenceRunRow[];

@@ -82,6 +82,79 @@ test("repository manager creates an isolated base worktree and always ignores .q
   }
 });
 
+test("repository manager adopts and safely removes a pull request worktree", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-pr-repository-"));
+  const source = join(root, "source");
+  const remote = join(root, "remote.git");
+  try {
+    await mkdir(source);
+    await execFile("git", ["init", "--initial-branch=main"], { cwd: source });
+    await execFile("git", ["config", "user.name", "Test Worker"], { cwd: source });
+    await execFile("git", ["config", "user.email", "worker@example.invalid"], { cwd: source });
+    await writeFile(join(source, "README.md"), "base\n");
+    await execFile("git", ["add", "README.md"], { cwd: source });
+    await execFile("git", ["commit", "-m", "base"], { cwd: source });
+    await execFile("git", ["clone", "--bare", source, remote]);
+    await execFile("git", ["remote", "add", "origin", remote], { cwd: source });
+    await execFile("git", ["switch", "-c", "feature/adopt-me"], { cwd: source });
+    await writeFile(join(source, "feature.txt"), "feature\n");
+    await execFile("git", ["add", "feature.txt"], { cwd: source });
+    await execFile("git", ["commit", "-m", "feature"], { cwd: source });
+    await execFile("git", ["push", "origin", "feature/adopt-me"], { cwd: source });
+    const featureHead = (await execFile("git", ["rev-parse", "HEAD"], { cwd: source })).stdout.trim();
+
+    const manager = new RepositoryManager(
+      loadConfig({
+        HOME: root,
+        PI_WORKER_REPOSITORY: "example/widgets",
+        PI_WORKER_REPOSITORY_URL: remote,
+        PI_WORKER_BASE_BRANCH: "main",
+        PI_WORKER_DATA_DIR: join(root, "data"),
+      }),
+    );
+    await manager.ensureControlRepository();
+    const worktree = await manager.ensurePullRequestWorktree(
+      88,
+      "feature/adopt-me",
+      featureHead,
+    );
+    assert.equal(worktree.path, manager.pathForPullRequest(88));
+    assert.equal(await manager.headRevision(worktree.path), featureHead);
+
+    await writeFile(join(source, "second.txt"), "second\n");
+    await execFile("git", ["add", "second.txt"], { cwd: source });
+    await execFile("git", ["commit", "-m", "second feature head"], { cwd: source });
+    await execFile("git", ["push", "origin", "feature/adopt-me"], { cwd: source });
+    const secondHead = (await execFile("git", ["rev-parse", "HEAD"], { cwd: source })).stdout.trim();
+    await manager.ensurePullRequestWorktree(88, "feature/adopt-me", secondHead, worktree.path);
+    assert.equal(await manager.headRevision(worktree.path), secondHead);
+
+    await execFile("git", ["reset", "--hard", featureHead], { cwd: source });
+    await execFile("git", ["push", "--force", "origin", "feature/adopt-me"], { cwd: source });
+    await manager.ensurePullRequestWorktree(88, "feature/adopt-me", featureHead, worktree.path);
+    assert.equal(await manager.headRevision(worktree.path), featureHead);
+
+    await writeFile(join(worktree.path, "README.md"), "dirty\n");
+    await assert.rejects(
+      manager.removeManagedWorktree("pull_request", 88, worktree.path, worktree.branch, featureHead),
+      /changes/,
+    );
+    await execFile("git", ["reset", "--hard", "HEAD"], { cwd: worktree.path });
+    await mkdir(join(worktree.path, ".qa"));
+    await writeFile(join(worktree.path, ".qa", "evidence.png"), "ignored\n");
+    await manager.removeManagedWorktree(
+      "pull_request",
+      88,
+      worktree.path,
+      worktree.branch,
+      featureHead,
+    );
+    await assert.rejects(access(worktree.path));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("repository manager merges a fresh base and commits an agent-resolved conflict without rebasing", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-base-merge-"));
   const source = join(root, "source");

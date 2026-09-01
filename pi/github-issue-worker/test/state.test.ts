@@ -6,7 +6,7 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { ProfileLock } from "../src/lock.js";
 import { WorkerState } from "../src/state.js";
-import type { GitHubIssue } from "../src/types.js";
+import type { GitHubIssue, GitHubPullRequest } from "../src/types.js";
 
 const issue: GitHubIssue = {
   number: 42,
@@ -16,6 +16,17 @@ const issue: GitHubIssue = {
   updatedAt: "2026-01-01T00:00:00Z",
   labels: [{ name: "pi-ready" }],
   author: { login: "maintainer" },
+};
+
+const pullRequest: GitHubPullRequest = {
+  ...issue,
+  number: 88,
+  title: "Adopt this pull request",
+  url: "https://github.com/example/repo/pull/88",
+  headRefName: "feature/adopt-me",
+  headRefOid: "abc123",
+  baseRefName: "main",
+  isCrossRepository: false,
 };
 
 test("a profile lock rejects a concurrent worker", async () => {
@@ -37,6 +48,7 @@ test("state migrates pre-CI databases in place", async () => {
   try {
     new WorkerState(path).close();
     const legacy = new DatabaseSync(path);
+    legacy.exec("ALTER TABLE issue_jobs DROP COLUMN job_kind");
     legacy.exec("ALTER TABLE issue_jobs DROP COLUMN ci_attempts");
     legacy.exec("ALTER TABLE issue_jobs DROP COLUMN ci_head_sha");
     legacy.close();
@@ -47,9 +59,63 @@ test("state migrates pre-CI databases in place", async () => {
       (column) => column.name,
     );
     inspection.close();
+    assert.ok(columns.includes("job_kind"));
     assert.ok(columns.includes("ci_attempts"));
     assert.ok(columns.includes("ci_head_sha"));
     migrated.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("state migration reports duplicate legacy pull request jobs before indexing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-worker-duplicate-pr-state-"));
+  const path = join(directory, "state.sqlite");
+  try {
+    const legacy = new DatabaseSync(path);
+    legacy.exec(`
+      CREATE TABLE issue_jobs (
+        issue_number INTEGER PRIMARY KEY,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        worktree_path TEXT NOT NULL,
+        session_file TEXT,
+        pr_number INTEGER,
+        pr_url TEXT,
+        visual_requested INTEGER NOT NULL DEFAULT 0,
+        ci_attempts INTEGER NOT NULL DEFAULT 0,
+        ci_head_sha TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO issue_jobs VALUES
+        (1, 'one', 'pr_open', 'one', '/tmp/one', NULL, 99, 'url', 0, 0, NULL, NULL, 'now', 'now'),
+        (2, 'two', 'pr_open', 'two', '/tmp/two', NULL, 99, 'url', 0, 0, NULL, NULL, 'now', 'now');
+    `);
+    legacy.close();
+    assert.throws(() => new WorkerState(path), /duplicate pull request jobs: #99 \(2\)/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("state adopts labeled pull requests without colliding with issue jobs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-worker-pr-state-"));
+  const path = join(directory, "state.sqlite");
+  try {
+    const state = new WorkerState(path);
+    const adopted = state.adoptPullRequest(pullRequest, "/tmp/pr-88", true);
+    assert.equal(adopted.kind, "pull_request");
+    assert.equal(adopted.status, "pr_open");
+    assert.equal(adopted.prNumber, 88);
+    assert.equal(adopted.branch, "feature/adopt-me");
+    assert.equal(state.getJobByPullRequest(88)?.issueNumber, 88);
+    assert.deepEqual(state.listTrackedPullRequests().map((job) => job.prNumber), [88]);
+    state.claim(issue, "pi/issue-42", "/tmp/issue-42", false);
+    assert.equal(state.requireJob(42).kind, "issue");
+    state.close();
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -105,6 +171,7 @@ test("state persists jobs, pull requests, and event idempotency", async () => {
 
     const reopened = new WorkerState(path);
     const job = reopened.requireJob(42);
+    assert.equal(job.kind, "issue");
     assert.equal(job.prNumber, 99);
     assert.equal(job.status, "pr_open");
     assert.equal(job.sessionFile, "/tmp/session.jsonl");

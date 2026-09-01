@@ -1,3 +1,5 @@
+export type JobKind = "issue" | "pull_request";
+
 export type IssueStatus =
   | "claimed"
   | "implementing"
@@ -27,6 +29,7 @@ export interface GitHubIssue {
 
 export interface IssueJob {
   issueNumber: number;
+  kind: JobKind;
   title: string;
   status: IssueStatus;
   branch: string;
@@ -58,6 +61,19 @@ export interface PullRequestFeedback {
 export interface PullRequestInfo {
   number: number;
   url: string;
+}
+
+export interface GitHubPullRequest extends GitHubIssue {
+  headRefName: string;
+  headRefOid: string;
+  baseRefName: string;
+  isCrossRepository: boolean;
+}
+
+export interface PullRequestLifecycle {
+  state: "OPEN" | "CLOSED" | "MERGED";
+  mergedAt: string | null;
+  headSha: string;
 }
 
 export interface PullRequestMergeState {

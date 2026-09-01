@@ -1,6 +1,7 @@
 import { access, appendFile, mkdir, readFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import type { WorkerConfig } from "./config.js";
+import type { JobKind } from "./types.js";
 import { execFile } from "./exec.js";
 import { slugify } from "./slug.js";
 
@@ -122,6 +123,10 @@ export class RepositoryManager {
     return join(this.worktreesRoot, `issue-${issueNumber}`);
   }
 
+  pathForPullRequest(prNumber: number): string {
+    return join(this.worktreesRoot, `pr-${prNumber}`);
+  }
+
   async ensureIssueWorktree(
     issueNumber: number,
     branchOrTitle: string,
@@ -178,6 +183,146 @@ export class RepositoryManager {
     }
     await this.validateWorktree(worktreePath, branch);
     return { branch, path: worktreePath };
+  }
+
+  async ensurePullRequestWorktree(
+    prNumber: number,
+    branch: string,
+    expectedHead: string,
+    claimedPath?: string,
+  ): Promise<{ branch: string; path: string }> {
+    await this.fetchBase();
+    await mkdir(this.worktreesRoot, { recursive: true });
+    const path = claimedPath || this.pathForPullRequest(prNumber);
+    const expectedPath = resolve(path);
+    if (expectedPath !== resolve(this.pathForPullRequest(prNumber))) {
+      throw new Error(`Refusing worktree path outside pull request allocation: ${path}`);
+    }
+    await this.run("git", ["check-ref-format", "--branch", branch], { cwd: this.controlPath });
+    const previousRemote = await this.run(
+      "git",
+      ["rev-parse", "--verify", `refs/remotes/origin/${branch}`],
+      { cwd: this.controlPath, allowFailure: true },
+    );
+    const previousRemoteHead = previousRemote.exitCode === 0 ? previousRemote.stdout.trim() : null;
+    const registered = await this.isRegistered(expectedPath);
+    let localHead: string | null = null;
+    if (registered) {
+      await this.validateWorktree(expectedPath, branch);
+      localHead = await this.headRevision(expectedPath);
+    }
+    await this.run(
+      "git",
+      ["fetch", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
+      { cwd: this.controlPath, timeoutMs: 5 * 60_000 },
+    );
+    const remoteHead = (
+      await this.run("git", ["rev-parse", `refs/remotes/origin/${branch}`], {
+        cwd: this.controlPath,
+      })
+    ).stdout.trim();
+    if (remoteHead !== expectedHead) {
+      throw new Error(
+        `Pull request #${prNumber} head changed during adoption (${expectedHead} != ${remoteHead})`,
+      );
+    }
+    if (registered) {
+      if (localHead !== remoteHead) {
+        const changed = await this.changedFiles(expectedPath);
+        const mergeInProgress = await this.hasMergeInProgress(expectedPath);
+        if (localHead !== previousRemoteHead || changed.length > 0 || mergeInProgress) {
+          throw new Error(
+            `Refusing stale pull request worktree update (${localHead} != ${remoteHead}); local work may be present`,
+          );
+        }
+        await this.run("git", ["reset", "--hard", remoteHead], { cwd: expectedPath });
+      }
+      await this.validateWorktree(expectedPath, branch);
+      return { branch, path: expectedPath };
+    }
+    const pathExists = await access(expectedPath)
+      .then(() => true)
+      .catch(() => false);
+    if (pathExists) {
+      throw new Error(`Refusing unregistered pre-existing worktree path: ${expectedPath}`);
+    }
+    const localBranch = await this.run(
+      "git",
+      ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+      { cwd: this.controlPath, allowFailure: true },
+    );
+    if (localBranch.exitCode === 0) {
+      const branchHead = (
+        await this.run("git", ["rev-parse", `refs/heads/${branch}`], { cwd: this.controlPath })
+      ).stdout.trim();
+      if (branchHead !== remoteHead) {
+        if (branchHead !== previousRemoteHead) {
+          throw new Error(
+            `Refusing pull request #${prNumber}: local branch ${branch} contains untracked controller history`,
+          );
+        }
+        await this.run("git", ["branch", "--force", branch, remoteHead], {
+          cwd: this.controlPath,
+        });
+      }
+      await this.run("git", ["worktree", "add", expectedPath, branch], {
+        cwd: this.controlPath,
+        timeoutMs: 5 * 60_000,
+      });
+    } else {
+      await this.run(
+        "git",
+        ["worktree", "add", "-b", branch, expectedPath, `refs/remotes/origin/${branch}`],
+        { cwd: this.controlPath, timeoutMs: 5 * 60_000 },
+      );
+    }
+    await this.validateWorktree(expectedPath, branch);
+    return { branch, path: expectedPath };
+  }
+
+  async removeManagedWorktree(
+    kind: JobKind,
+    number: number,
+    worktree: string,
+    branch: string,
+    expectedHead: string,
+  ): Promise<void> {
+    const expectedPath = resolve(
+      kind === "pull_request" ? this.pathForPullRequest(number) : this.pathForIssue(number),
+    );
+    if (resolve(worktree) !== expectedPath) {
+      throw new Error(`Refusing cleanup outside managed ${kind} allocation: ${worktree}`);
+    }
+    if (!(await this.isRegistered(expectedPath))) {
+      const exists = await access(expectedPath)
+        .then(() => true)
+        .catch(() => false);
+      if (exists) throw new Error(`Refusing unregistered cleanup path: ${expectedPath}`);
+      return;
+    }
+    await this.validateWorktree(expectedPath, branch);
+    if (await this.hasMergeInProgress(expectedPath)) {
+      throw new Error(`Refusing cleanup with a merge in progress: ${expectedPath}`);
+    }
+    const changed = await this.changedFiles(expectedPath);
+    if (changed.length > 0) {
+      throw new Error(`Refusing cleanup with tracked or untracked changes: ${changed.join(", ")}`);
+    }
+    const head = await this.headRevision(expectedPath);
+    if (head !== expectedHead) {
+      throw new Error(
+        `Refusing cleanup because worktree HEAD ${head} does not match merged PR head ${expectedHead}`,
+      );
+    }
+    await this.run("git", ["worktree", "remove", expectedPath], {
+      cwd: this.controlPath,
+      timeoutMs: 5 * 60_000,
+    });
+    await this.run("git", ["worktree", "prune"], { cwd: this.controlPath });
+    const remains = await access(expectedPath)
+      .then(() => true)
+      .catch(() => false);
+    if (remains) throw new Error(`Worktree cleanup did not remove ${expectedPath}`);
   }
 
   private async validateWorktree(path: string, branch: string): Promise<void> {

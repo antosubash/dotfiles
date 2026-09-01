@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Reusable headless Pi worker that turns approved GitHub issues into draft pull requests.",
+  "description": "Reusable headless Pi worker for approved GitHub issues and existing pull requests.",
   "engines": {
     "node": ">=24.0.0"
   },
