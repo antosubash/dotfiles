@@ -81,6 +81,12 @@ test("visual verification prefers truthful source-backed previews over unrelated
   assert.match(prompt, /temporary QA-only override/);
   assert.match(prompt, /keep any port override under the assigned ignored evidence directory/);
   assert.match(prompt, /verify that it belongs to the service you launched/);
+  assert.match(prompt, /Docker services run outside the visual sandbox's network namespace/);
+  assert.match(prompt, /pi-worker-docker-bridge start <compose-network> <service-name> <container-port>/);
+  assert.match(prompt, /socat TCP-LISTEN:<selected-port>/);
+  assert.match(prompt, /controller-owned bridge validates and mounts only the current private runtime directory/);
+  assert.match(prompt, /direct Docker host mounts, host networking, privileged containers, and socket forwarding remain forbidden/);
+  assert.match(prompt, /pi-worker-docker-bridge stop/);
   assert.match(prompt, /use that URL consistently for readiness checks and Playwright/);
   assert.match(prompt, /narrowest checked-in source-backed preview route/);
   assert.match(prompt, /real production components/);

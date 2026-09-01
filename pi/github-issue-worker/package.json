@@ -9,7 +9,8 @@
   },
   "bin": {
     "pi-issue-worker": "dist/src/index.js",
-    "pi-issue-worker-supervisor": "dist/src/supervisor.js"
+    "pi-issue-worker-supervisor": "dist/src/supervisor.js",
+    "pi-worker-docker-bridge": "dist/src/docker-bridge.js"
   },
   "files": [
     "dist/src",

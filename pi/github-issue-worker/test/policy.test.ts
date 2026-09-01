@@ -183,6 +183,16 @@ test("headless policy keeps GitHub and git writes in the controller", () => {
     "docker run --volume /:/host image",
     "docker run --volume=/:/host image",
     "docker run \\\n--volume /:/host image",
+    "P=--privileged; docker run \"$P\" alpine",
+    "M=--mount; S=type=bind,src=/,dst=/host; docker run \"$M\" \"$S\" alpine",
+    "docker run $(printf '\\055v /:/host') alpine",
+    "d''ocker run -v /:/host alpine",
+    'd"o"cker run --volume /:/host alpine',
+    "docker run --volumes-from existing alpine",
+    "docker run --net=host alpine",
+    "docker run --ipc=host alpine",
+    "docker run --uts=host alpine",
+    "docker run --cgroupns=host alpine",
   ]) {
     assert.match(commandBlockReason(command, [], { dockerAccess: true }) || "", /forbidden/);
   }
