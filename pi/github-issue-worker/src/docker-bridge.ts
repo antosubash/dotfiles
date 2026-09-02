@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { lstatSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, rmSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFile } from "./exec.js";
@@ -80,15 +80,26 @@ async function removeOwnedBridge(containerName: string, runtime: string): Promis
   await execFile("docker", ["rm", "-f", containerName], { timeoutMs: 60_000 });
 }
 
+async function waitForSocket(socketPath: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (existsSync(socketPath)) return;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  }
+  fail("bridge container did not create its Unix socket");
+}
+
 async function main(): Promise<void> {
   const runtime = resolvePrivateRuntime();
   const options = bridgeArguments(process.argv.slice(2));
   const containerName = bridgeContainerName(runtime);
+  const socketPath = resolve(runtime, SOCKET_NAME);
   if (options.action === "stop") {
     await removeOwnedBridge(containerName, runtime);
+    rmSync(socketPath, { force: true });
     return;
   }
   await removeOwnedBridge(containerName, runtime);
+  rmSync(socketPath, { force: true });
   await execFile(
     "docker",
     [
@@ -109,7 +120,20 @@ async function main(): Promise<void> {
     ],
     { timeoutMs: 120_000 },
   );
-  process.stdout.write(`${resolve(runtime, SOCKET_NAME)}\n`);
+  await waitForSocket(socketPath);
+  const running = await execFile(
+    "docker",
+    ["inspect", "--format", "{{ .State.Running }}", containerName],
+    { allowFailure: true, timeoutMs: 60_000 },
+  );
+  if (running.exitCode !== 0 || running.stdout.trim() !== "true") {
+    const logs = await execFile("docker", ["logs", "--tail", "20", containerName], {
+      allowFailure: true,
+      timeoutMs: 60_000,
+    });
+    fail(`bridge container exited: ${(logs.stderr || logs.stdout).trim().slice(0, 2_000)}`);
+  }
+  process.stdout.write(`${socketPath}\n`);
 }
 
 if (
