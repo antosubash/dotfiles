@@ -80,6 +80,10 @@ test("visual verification prefers truthful source-backed previews over unrelated
   assert.match(prompt, /Select an unused high loopback port/);
   assert.match(prompt, /temporary QA-only override/);
   assert.match(prompt, /keep any port override under the assigned ignored evidence directory/);
+  assert.match(prompt, /Compose port lists normally merge additively/);
+  assert.match(prompt, /`!override`\/`!reset` mechanism/);
+  assert.match(prompt, /inspect `docker compose \.\.\. config`/);
+  assert.match(prompt, /merely adding a second mapping does not resolve the conflict/);
   assert.match(prompt, /verify that it belongs to the service you launched/);
   assert.match(prompt, /Docker services run outside the visual sandbox's network namespace/);
   assert.match(prompt, /pi-worker-docker-bridge start <compose-network> <service-name> <container-port>/);
