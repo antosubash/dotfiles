@@ -94,6 +94,12 @@ test("visual verification prefers truthful source-backed previews over unrelated
   assert.match(prompt, /Never fabricate an ad-hoc mock page/);
   assert.match(prompt, /component or stylesheet change whose behavior does not depend on CMS values/);
   assert.match(prompt, /imports the exact production component, production configuration, and production styles/);
+  assert.match(prompt, /temporary browser-only QA fixture in the running production shell/);
+  assert.match(prompt, /loads the exact changed production markup\/component, scripts, configuration, and styles/);
+  assert.match(prompt, /never commit it or mutate remote runtime data/);
+  assert.match(prompt, /Final evidence must visibly contain the changed production surface/);
+  assert.match(prompt, /application-shell screenshot, unrelated route, hidden component/);
+  assert.match(prompt, /end with BLOCKED even when the rest of the application launches/);
   assert.match(prompt, /Do not require a backend merely to retrieve interchangeable copy or numbers/);
   assert.match(prompt, /must not duplicate production markup, add preview-only styling, or hard-code the expected geometry/);
   assert.match(prompt, /full repository stack when the changed behavior genuinely requires backend integration/);
