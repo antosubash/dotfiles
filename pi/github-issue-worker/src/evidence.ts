@@ -1,6 +1,6 @@
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, unlink } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, readdir, realpath, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { execFile } from "./exec.js";
 
 export interface EvidenceAttachment {
@@ -28,13 +28,13 @@ export async function createEvidenceRun(
   prNumber: number | null,
   now = new Date(),
 ): Promise<EvidenceRun> {
-  const issueRoot = join(worktree, ".qa", "issues", String(issueNumber), `pr-${prNumber ?? "pending"}`);
   const runId = timestamp(now);
+  const issueRoot = join(worktree, ".qa", "issues", String(issueNumber), `pr-${prNumber ?? "pending"}`);
   const runDir = join(issueRoot, "runs", runId);
-  await mkdir(runDir, { recursive: true });
-  const latest = join(issueRoot, "latest");
-  await unlink(latest).catch(() => undefined);
-  await symlink(relative(dirname(latest), runDir), latest, "dir");
+  // This controller method intentionally performs no writes beneath agent-controlled
+  // evidence storage. The sandboxed visual run creates its assigned directory; later
+  // collection requires a canonical non-symlinked directory before reading anything.
+  await assertSafeEvidenceParent(worktree, dirname(runDir));
   return {
     issueNumber,
     prNumber,
@@ -50,6 +50,26 @@ async function assertCanonicalDirectory(path: string): Promise<void> {
   const info = await lstat(path);
   if (canonical !== resolve(path) || !info.isDirectory() || info.isSymbolicLink()) {
     throw new Error(`QA evidence directory contains a symlink: ${path}`);
+  }
+}
+
+async function assertSafeEvidenceParent(root: string, targetParent: string): Promise<void> {
+  await assertCanonicalDirectory(root);
+  const canonicalRoot = resolve(root);
+  const target = resolve(targetParent);
+  const pathFromRoot = relative(canonicalRoot, target);
+  if (pathFromRoot === ".." || pathFromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
+    throw new Error("QA evidence directory escapes the worktree");
+  }
+  let current = canonicalRoot;
+  for (const segment of pathFromRoot.split(/[\\/]/).filter(Boolean)) {
+    current = join(current, segment);
+    const info = await lstat(current).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!info) return;
+    await assertCanonicalDirectory(current);
   }
 }
 
@@ -87,23 +107,11 @@ export async function findLatestEvidenceRun(
   issueNumber: number,
   prNumber: number | null,
 ): Promise<EvidenceRun | null> {
-  const issueRoot = join(worktree, ".qa", "issues", String(issueNumber), `pr-${prNumber ?? "pending"}`);
-  const latest = join(issueRoot, "latest");
-  try {
-    const runDir = await realpath(latest);
-    const info = await lstat(runDir);
-    if (!info.isDirectory() || !runDir.startsWith(`${join(issueRoot, "runs")}/`)) return null;
-    return {
-      issueNumber,
-      prNumber,
-      runId: basename(runDir),
-      issueRoot,
-      runDir,
-      relativeRunDir: relative(worktree, runDir),
-    };
-  } catch {
-    return null;
-  }
+  // Enumerate canonical run directories instead of trusting the mutable legacy
+  // `latest` symlink, which may remain stale after controller-side allocation
+  // stopped writing beneath agent-controlled evidence storage.
+  const runs = await listEvidenceRuns(worktree, issueNumber, prNumber);
+  return runs.at(-1) ?? null;
 }
 
 async function sandboxedFfmpeg(

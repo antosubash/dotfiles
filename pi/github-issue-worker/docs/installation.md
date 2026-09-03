@@ -215,11 +215,14 @@ A successful check prints one `Ready:` line per repository. The command may init
 
 Do not run `--check` while the same profiles are already active under systemd; the profile locks correctly reject the second process.
 
-Review the ready queue before the first live start. Any existing open issue carrying `pi-ready` can be claimed immediately:
+Review both ready queues before the first live start. Any existing open issue or pull request carrying `pi-ready` can be claimed immediately:
 
 ```bash
 gh issue list --repo acme/widgets --state open --label pi-ready
+gh pr list --repo acme/widgets --state open --label pi-ready
 ```
+
+A ready PR is adopted only when its head branch belongs to the configured repository and its base matches `PI_WORKER_BASE_BRANCH`. The worker creates `worktrees/pr-<number>` from the exact remote PR head; it never creates a second PR for adopted work.
 
 Run exactly one live poll when you want to test GitHub mutation and queue handling:
 
@@ -308,7 +311,7 @@ On headless Linux hosts, enable user lingering if policy permits:
 loginctl enable-linger "$USER"
 ```
 
-## 8. Approve the first issue
+## 8. Approve the first issue or existing pull request
 
 The first live start creates:
 
@@ -318,11 +321,14 @@ The first live start creates:
 - `pi-blocked`;
 - `pi-visual`.
 
-Apply `pi-ready` only after reviewing the issue as an implementation request:
+Apply `pi-ready` only after reviewing the issue as an implementation request, or an existing PR as safe for controller-managed updates:
 
 ```bash
 gh issue edit 123 --repo acme/widgets --add-label pi-ready
+gh pr edit 456 --repo acme/widgets --add-label pi-ready
 ```
+
+For an adopted PR, add a trusted `/pi fix ...` comment when a specific change is required. Label-only adoption still enables conflict handling and CI monitoring. Fork PRs and PRs targeting another base are blocked.
 
 Expected lifecycle:
 
@@ -331,7 +337,7 @@ pi-ready → pi-working → pi-pr-open
                          ↘ pi-blocked
 ```
 
-The worker comments when it claims the issue and when it opens a draft PR. It then waits for the PR
+The worker comments when it claims the issue and when it opens a draft PR. For an existing ready PR it comments when adoption starts, creates an isolated PR worktree, and does not open a duplicate. It then waits for the PR
 check rollup. Completed failures trigger up to `PI_WORKER_MAX_CI_FIX_ATTEMPTS` repairs in the original
 persistent Pi session; each pushed head is monitored independently. Passing checks are reported once,
 and exhausted, external, or unsafe-to-fix failures receive `pi-blocked` and require a human. Human review

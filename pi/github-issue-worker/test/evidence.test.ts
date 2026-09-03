@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,20 +8,54 @@ import {
   collectFinalEvidenceAttachments,
   convertWebmToGif,
   createEvidenceRun,
+  findLatestEvidenceRun,
   listEvidenceRuns,
 } from "../src/evidence.js";
 import { commandExists, execFile } from "../src/exec.js";
 
-test("evidence runs stay under ignored .qa and update latest symlink", async () => {
+test("evidence allocation stays under ignored .qa without controller writes", async () => {
   const worktree = await mkdtemp(join(tmpdir(), "pi-worker-evidence-"));
   try {
     const run = await createEvidenceRun(worktree, 42, 99, new Date("2026-08-21T10:30:00Z"));
     assert.match(run.relativeRunDir, /^\.qa\/issues\/42\/pr-99\/runs\//);
-    const latest = join(run.issueRoot, "latest");
-    assert.equal((await lstat(latest)).isSymbolicLink(), true);
-    assert.equal(await readlink(latest), "runs/20260821T103000Z");
+    await assert.rejects(() => lstat(run.runDir), { code: "ENOENT" });
+    await mkdir(run.runDir, { recursive: true });
+    assert.equal((await findLatestEvidenceRun(worktree, 42, 99))?.runId, run.runId);
   } finally {
     await rm(worktree, { recursive: true, force: true });
+  }
+});
+
+test("latest evidence recovery ignores a stale legacy latest symlink", async () => {
+  const worktree = await mkdtemp(join(tmpdir(), "pi-worker-stale-latest-"));
+  try {
+    const issueRoot = join(worktree, ".qa/issues/42/pr-99");
+    const older = join(issueRoot, "runs/20260821T103000Z");
+    const newer = join(issueRoot, "runs/20260821T103100Z");
+    await mkdir(older, { recursive: true });
+    await mkdir(newer);
+    await symlink("runs/20260821T103000Z", join(issueRoot, "latest"), "dir");
+
+    assert.equal((await findLatestEvidenceRun(worktree, 42, 99))?.runDir, newer);
+  } finally {
+    await rm(worktree, { recursive: true, force: true });
+  }
+});
+
+test("evidence creation rejects agent-controlled symlinked parents before outside writes", async () => {
+  const worktree = await mkdtemp(join(tmpdir(), "pi-worker-create-link-"));
+  const outside = await mkdtemp(join(tmpdir(), "pi-worker-create-outside-"));
+  try {
+    await mkdir(join(worktree, ".qa"));
+    await symlink(outside, join(worktree, ".qa", "issues"));
+    await assert.rejects(
+      () => createEvidenceRun(worktree, 42, null, new Date("2026-08-21T10:30:00Z")),
+      /contains a symlink/,
+    );
+    assert.deepEqual(await readdir(outside), []);
+  } finally {
+    await rm(worktree, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 

@@ -1,6 +1,7 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { classifyIssue } from "./classification.js";
+import { PullRequestWorktreeCleanupService } from "./cleanup.js";
 import type { WorkerConfig } from "./config.js";
 import {
   collectFinalEvidenceAttachments,
@@ -33,6 +34,7 @@ import { BranchDivergenceError, RepositoryManager } from "./repository.js";
 import { WorkerState } from "./state.js";
 import type {
   GitHubIssue,
+  GitHubPullRequest,
   IssueJob,
   PullRequestChecks,
   PullRequestFeedback,
@@ -98,6 +100,10 @@ async function visualEvidenceNote(
   return `\n\nVisual evidence captured locally under ignored \`${relativeRunDir}\`:\n${artifacts.map((name) => `- \`${name}\``).join("\n")}`;
 }
 
+function evidenceCommentMarker(eventKey: string): string {
+  return `<!-- pi-worker-${eventKey} -->`;
+}
+
 function markdownSummary(text: string, maximum = 5_000): string {
   if (!text) return "Pi returned no textual summary.";
   return text.length > maximum ? `${text.slice(0, maximum)}\n\n…truncated` : text;
@@ -111,6 +117,7 @@ export class IssueWorker {
   private readonly github: GitHubClient;
   private readonly repository: RepositoryManager;
   private readonly agent: PiAgentRunner;
+  private readonly cleanup: PullRequestWorktreeCleanupService;
 
   constructor(
     private readonly config: WorkerConfig,
@@ -124,6 +131,7 @@ export class IssueWorker {
     this.github = dependencies.github ?? new GitHubClient(config);
     this.repository = dependencies.repository ?? new RepositoryManager(config);
     this.agent = dependencies.agent ?? new PiAgentRunner(config);
+    this.cleanup = new PullRequestWorktreeCleanupService(this.state, this.github, this.repository);
   }
 
   async check(): Promise<void> {
@@ -160,8 +168,10 @@ export class IssueWorker {
       }
       await this.startIssue(issue).catch((error) => this.handleInitialFailure(issue.number, error));
     }
+    await this.processReadyPullRequests();
     await this.processPendingPullRequestLabels();
     await this.processPendingEvidencePublications();
+    await this.cleanup.run();
     if (await this.processPullRequestConflicts()) return;
     await this.processPullRequestFeedback();
     await this.processPullRequestCi();
@@ -181,8 +191,15 @@ export class IssueWorker {
       const command = commands.at(-1);
       if (!command) continue;
       this.state.markProcessed(job.issueNumber, command.eventKey);
-      const issue = await this.github.getIssue(job.issueNumber);
-      await this.startIssue(issue).catch((error) => this.handleInitialFailure(issue.number, error));
+      if (job.kind === "pull_request" && typeof this.github.getPullRequest === "function") {
+        const pullRequest = await this.github.getPullRequest(job.prNumber ?? job.issueNumber);
+        await this.startPullRequest(pullRequest).catch((error) =>
+          this.blockInitialIssue(job.issueNumber, error),
+        );
+      } else {
+        const issue = await this.github.getIssue(job.issueNumber);
+        await this.startIssue(issue).catch((error) => this.handleInitialFailure(issue.number, error));
+      }
     }
   }
 
@@ -323,9 +340,12 @@ export class IssueWorker {
       evidence.prNumber,
       evidence.runId,
       "published",
-      note ? null : "Evidence publication is disabled",
+      note || "Evidence publication is disabled",
     );
-    if (!note) return null;
+    if (!note) {
+      this.state.markProcessed(evidence.issueNumber, eventKey);
+      return null;
+    }
     return { note, eventKey };
   }
 
@@ -337,15 +357,15 @@ export class IssueWorker {
     try {
       const published = await this.publishEvidence(job.prNumber!, worktree, evidence);
       if (!published) return "";
-      return published.note;
+      return `\n${evidenceCommentMarker(published.eventKey)}${published.note}`;
     } catch (error) {
       return `\n\nQA evidence upload failed: ${errorText(error)}`;
     }
   }
 
   private async processPendingEvidencePublications(): Promise<void> {
-    for (const job of this.state.listReviewJobs()) {
-      if (!job.prNumber || !(await this.github.isPullRequestOpen(job.prNumber))) continue;
+    for (const job of this.state.listTrackedPullRequests()) {
+      if (!job.prNumber) continue;
       const discovered = [
         ...(await listEvidenceRuns(job.worktreePath, job.issueNumber, job.prNumber)),
         ...(await listEvidenceRuns(job.worktreePath, job.issueNumber, null)),
@@ -357,7 +377,35 @@ export class IssueWorker {
       }
       this.state.associatePendingEvidence(job.issueNumber, job.prNumber);
       const byRunId = new Map(discovered.map((run) => [run.runId, run]));
-      for (const record of this.state.listPublishableEvidence(job.issueNumber, job.prNumber)) {
+      for (const record of this.state.listEvidenceAwaitingReport(job.issueNumber, job.prNumber)) {
+        const eventKey = `evidence:${job.prNumber}:${record.runId}`;
+        if (this.state.hasProcessed(eventKey)) continue;
+        if (record.status === "published") {
+          try {
+            const marker = evidenceCommentMarker(eventKey);
+            if (
+              typeof this.github.hasPullRequestCommentMarker === "function" &&
+              (await this.github.hasPullRequestCommentMarker(job.prNumber, marker))
+            ) {
+              this.state.markProcessed(job.issueNumber, eventKey);
+              continue;
+            }
+            await this.github.commentPullRequest(
+              job.prNumber,
+              `${marker}\nRecovered pending QA evidence publication.${record.detail || ""}`,
+            );
+            this.state.markProcessed(job.issueNumber, eventKey);
+          } catch (error) {
+            this.state.recordEvidenceRun(
+              job.issueNumber,
+              job.prNumber,
+              record.runId,
+              "published",
+              record.detail || `Evidence comment retry pending: ${errorText(error)}`,
+            );
+          }
+          continue;
+        }
         const discoveredRun = byRunId.get(record.runId);
         if (!discoveredRun) {
           this.state.setEvidenceRunStatus(
@@ -370,22 +418,12 @@ export class IssueWorker {
           continue;
         }
         const evidence = { ...discoveredRun, prNumber: job.prNumber };
-        const eventKey = `evidence:${job.prNumber}:${record.runId}`;
-        if (this.state.hasProcessed(eventKey)) {
-          this.state.setEvidenceRunStatus(
-            job.issueNumber,
-            job.prNumber,
-            record.runId,
-            "published",
-          );
-          continue;
-        }
         try {
           const published = await this.publishEvidence(job.prNumber, job.worktreePath, evidence);
           if (!published) continue;
           await this.github.commentPullRequest(
             job.prNumber,
-            `Recovered pending QA evidence publication.${published.note}`,
+            `${evidenceCommentMarker(published.eventKey)}\nRecovered pending QA evidence publication.${published.note}`,
           );
           this.state.markProcessed(job.issueNumber, published.eventKey);
         } catch (error) {
@@ -428,13 +466,24 @@ export class IssueWorker {
   }
 
   private async processPendingPullRequestLabels(): Promise<void> {
-    if (typeof this.github.labelPullRequestFromIssue !== "function") return;
+    if (
+      typeof this.github.labelPullRequestFromIssue !== "function" &&
+      typeof this.github.activatePullRequest !== "function"
+    ) {
+      return;
+    }
     for (const job of this.state.listReviewJobs()) {
       if (!job.prNumber) continue;
       const eventKey = `pr-labels:${job.prNumber}`;
       if (this.state.hasProcessed(eventKey)) continue;
       if (!(await this.github.isPullRequestOpen(job.prNumber))) continue;
       try {
+        if (job.kind === "pull_request" && typeof this.github.activatePullRequest === "function") {
+          await this.ensureJobWorktree(job);
+          await this.github.activatePullRequest(job.prNumber);
+          this.state.markProcessed(job.issueNumber, eventKey);
+          continue;
+        }
         const issue = await this.github.getIssue(job.issueNumber);
         await this.labelPullRequestFromIssue(job.prNumber, issue);
       } catch (error) {
@@ -445,6 +494,102 @@ export class IssueWorker {
         );
       }
     }
+  }
+
+  private async processReadyPullRequests(): Promise<void> {
+    if (typeof this.github.listReadyPullRequests !== "function") return;
+    const readyPullRequests = await this.github.listReadyPullRequests();
+    for (const pullRequest of readyPullRequests) {
+      const tracked = this.state.getJobByPullRequest(pullRequest.number);
+      if (tracked) {
+        try {
+          this.validatePullRequestForAdoption(pullRequest);
+          if (tracked.branch !== pullRequest.headRefName) {
+            throw new Error(
+              `Tracked branch ${tracked.branch} does not match ${pullRequest.headRefName}`,
+            );
+          }
+          await this.ensureJobWorktree(tracked);
+          if (["blocked", "stopped", "completed"].includes(tracked.status)) {
+            this.state.setStatus(tracked.issueNumber, "pr_open");
+          }
+          if (typeof this.github.activatePullRequest === "function") {
+            await this.github.activatePullRequest(pullRequest.number);
+            this.state.markProcessed(tracked.issueNumber, `pr-labels:${pullRequest.number}`);
+          }
+        } catch (error) {
+          const message = `Pull request adoption blocked: ${errorText(error)}`;
+          this.state.setStatus(tracked.issueNumber, "blocked", message);
+          await this.github.markBlocked(pullRequest.number, message).catch(() => undefined);
+        }
+        continue;
+      }
+      await this.startPullRequest(pullRequest).catch((error) =>
+        this.blockInitialIssue(pullRequest.number, error),
+      );
+    }
+  }
+
+  private validatePullRequestForAdoption(pullRequest: GitHubPullRequest): void {
+    if (pullRequest.isCrossRepository) {
+      throw new Error("Pull requests from forks cannot be adopted because the worker may only push to origin");
+    }
+    if (pullRequest.baseRefName !== this.config.baseBranch) {
+      throw new Error(
+        `Pull request targets ${pullRequest.baseRefName}; configured base is ${this.config.baseBranch}`,
+      );
+    }
+    if (pullRequest.headRefName === this.config.baseBranch) {
+      throw new Error("Refusing to adopt a pull request whose head is the configured base branch");
+    }
+  }
+
+  private async startPullRequest(pullRequest: GitHubPullRequest): Promise<void> {
+    this.validatePullRequestForAdoption(pullRequest);
+    const worktreePath = this.repository.pathForPullRequest(pullRequest.number);
+    const job = this.state.adoptPullRequest(
+      pullRequest,
+      worktreePath,
+      evidenceRequested(pullRequest, this.config.visualLabel) ||
+        looksLikeUiTask(`${pullRequest.title}\n${pullRequest.body}`),
+    );
+    await this.github.claimPullRequest(pullRequest);
+    const worktree = await this.ensureJobWorktree(job);
+    const head = await this.repository.headRevision(worktree.path);
+    if (head !== pullRequest.headRefOid) {
+      throw new Error(
+        `Adopted worktree head ${head} does not match pull request head ${pullRequest.headRefOid}`,
+      );
+    }
+    if (typeof this.github.activatePullRequest === "function") {
+      await this.github.activatePullRequest(pullRequest.number);
+      this.state.markProcessed(job.issueNumber, `pr-labels:${pullRequest.number}`);
+    }
+  }
+
+  private async ensureJobWorktree(job: IssueJob): Promise<{ branch: string; path: string }> {
+    if (job.kind === "pull_request") {
+      if (
+        typeof this.repository.ensurePullRequestWorktree !== "function" ||
+        typeof this.github.getPullRequest !== "function"
+      ) {
+        throw new Error("Worker does not support pull request worktrees");
+      }
+      const pullRequest = await this.github.getPullRequest(job.prNumber ?? job.issueNumber);
+      this.validatePullRequestForAdoption(pullRequest);
+      if (pullRequest.headRefName !== job.branch) {
+        throw new Error(
+          `Tracked branch ${job.branch} does not match pull request head ${pullRequest.headRefName}`,
+        );
+      }
+      return this.repository.ensurePullRequestWorktree(
+        job.prNumber ?? job.issueNumber,
+        job.branch,
+        pullRequest.headRefOid,
+        job.worktreePath,
+      );
+    }
+    return this.repository.ensureIssueWorktree(job.issueNumber, job.branch, job.worktreePath);
   }
 
   private async startIssue(issue: GitHubIssue): Promise<void> {
@@ -617,7 +762,7 @@ export class IssueWorker {
       if (publishedEvidence) {
         await this.github.commentPullRequest(
           pull.number,
-          `QA evidence attached automatically.${publishedEvidence.note}`,
+          `${evidenceCommentMarker(publishedEvidence.eventKey)}\nQA evidence attached automatically.${publishedEvidence.note}`,
         );
         this.state.markProcessed(issue.number, publishedEvidence.eventKey);
       }
@@ -680,11 +825,7 @@ export class IssueWorker {
     pullRequestBaseBranch: string,
     eventKey: string,
   ): Promise<void> {
-    const worktree = await this.repository.ensureIssueWorktree(
-      job.issueNumber,
-      job.branch,
-      job.worktreePath,
-    );
+    const worktree = await this.ensureJobWorktree(job);
     try {
       if (pullRequestBaseBranch !== this.config.baseBranch) {
         throw new Error(
@@ -725,7 +866,7 @@ export class IssueWorker {
         if (published) {
           await this.github.commentPullRequest(
             job.prNumber!,
-            `Recovered-conflict QA evidence attached automatically.${published.note}`,
+            `${evidenceCommentMarker(published.eventKey)}\nRecovered-conflict QA evidence attached automatically.${published.note}`,
           );
           this.state.markProcessed(job.issueNumber, published.eventKey);
         }
@@ -778,7 +919,7 @@ export class IssueWorker {
         if (published) {
           await this.github.commentPullRequest(
             job.prNumber!,
-            `Base-update QA evidence attached automatically.${published.note}`,
+            `${evidenceCommentMarker(published.eventKey)}\nBase-update QA evidence attached automatically.${published.note}`,
           );
           this.state.markProcessed(job.issueNumber, published.eventKey);
         }
@@ -833,7 +974,7 @@ export class IssueWorker {
         if (publishedEvidence) {
           await this.github.commentPullRequest(
             job.prNumber!,
-            `Conflict-resolution QA evidence attached automatically.${publishedEvidence.note}`,
+            `${evidenceCommentMarker(publishedEvidence.eventKey)}\nConflict-resolution QA evidence attached automatically.${publishedEvidence.note}`,
           );
           this.state.markProcessed(job.issueNumber, publishedEvidence.eventKey);
         }
@@ -988,11 +1129,7 @@ export class IssueWorker {
     checks: PullRequestChecks,
     eventKey: string,
   ): Promise<void> {
-    const worktree = await this.repository.ensureIssueWorktree(
-      job.issueNumber,
-      job.branch,
-      job.worktreePath,
-    );
+    const worktree = await this.ensureJobWorktree(job);
     const recoveringCommittedHead =
       job.status === "committing_ci" && job.ciHeadSha === checks.headSha;
     const attempt = this.state.recordCiAttempt(job.issueNumber, checks.headSha);
@@ -1159,7 +1296,7 @@ export class IssueWorker {
       if (publishedEvidence) {
         await this.github.commentPullRequest(
           job.prNumber!,
-          `CI repair QA evidence attached automatically.${publishedEvidence.note}`,
+          `${evidenceCommentMarker(publishedEvidence.eventKey)}\nCI repair QA evidence attached automatically.${publishedEvidence.note}`,
         );
         this.state.markProcessed(job.issueNumber, publishedEvidence.eventKey);
       }
@@ -1247,11 +1384,7 @@ export class IssueWorker {
     }
 
     const issue = await this.github.getIssue(job.issueNumber);
-    const worktree = await this.repository.ensureIssueWorktree(
-      job.issueNumber,
-      job.branch,
-      job.worktreePath,
-    );
+    const worktree = await this.ensureJobWorktree(job);
     if (
       job.status === "addressing_review" &&
       (await this.repository.hasUnpushedCommits(worktree.path, worktree.branch))
@@ -1334,7 +1467,7 @@ export class IssueWorker {
         if (publishedEvidence) {
           await this.github.commentPullRequest(
             job.prNumber!,
-            `QA evidence attached automatically.${publishedEvidence.note}`,
+            `${evidenceCommentMarker(publishedEvidence.eventKey)}\nQA evidence attached automatically.${publishedEvidence.note}`,
           );
           this.state.markProcessed(job.issueNumber, publishedEvidence.eventKey);
         }

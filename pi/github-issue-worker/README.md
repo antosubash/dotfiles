@@ -1,7 +1,7 @@
 # Headless Pi GitHub issue worker
 
-A reusable GitHub issue worker that turns explicitly approved issues into isolated Pi coding sessions
-and draft pull requests. Each worker child remains bound to one repository; the optional supervisor runs
+A reusable GitHub issue and pull-request worker that turns explicitly approved issues into isolated Pi coding sessions
+and draft pull requests, and adopts existing pull requests that carry the ready label. Each worker child remains bound to one repository; the optional supervisor runs
 multiple profile-isolated children from one installation.
 
 The worker deliberately does **not** auto-merge. GitHub labels, comments, pushes, commits, and PR
@@ -29,8 +29,9 @@ creation belong to the controller. Pi edits and verifies code inside an issue-sp
    `pi-blocked` for human investigation.
 7. Trusted formal reviews and inline review comments are sent back to the same Pi session. PR
    conversation comments require an explicit `/pi` command.
-8. Every review, conflicting head/base pair, and CI-head event is persisted in SQLite, making handling
-   idempotent across restarts.
+8. A maintainer may instead apply `pi-ready` directly to an existing same-repository PR targeting the configured base. The worker checks out that exact remote head in `worktrees/pr-<number>`, adopts its trusted `/pi` feedback, conflicts, and CI without opening another PR. Fork PRs and alternate bases fail closed.
+9. Every review, conflicting head/base pair, and CI-head event is persisted in SQLite, making handling
+   idempotent across restarts. After GitHub reports a tracked PR as merged, the cleanup service removes its clean, exact-head managed worktree; closed-unmerged PRs and dirty/diverged worktrees are preserved.
 
 Each repository child handles its work sequentially. This is intentional: repositories with integration
 databases, browser sessions, or expensive builds should not be fanned out accidentally. A per-profile
@@ -134,8 +135,8 @@ On first start, the worker creates these configurable-prefix labels:
 
 When the worker opens or rediscovers a pull request for an issue, it also labels the PR itself.
 The PR receives `pi-pr-open` plus the issue's non-transient labels (for example `bug`, area,
-priority, and `pi-visual`). Queue/lifecycle labels `pi-ready`, `pi-working`, and `pi-blocked`
-remain on the source issue only. Label synchronization is idempotent and retried before the
+priority, and `pi-visual`). For issue-created PRs, queue/lifecycle labels `pi-ready`, `pi-working`, and `pi-blocked`
+remain on the source issue only. An existing PR explicitly submitted with `pi-ready` uses those labels on the PR itself while it is adopted, then receives `pi-pr-open`. Label synchronization is idempotent and retried before the
 controller records the PR as open. On upgrade, tracked open worker PRs receive the same one-time
 label backfill.
 
@@ -214,7 +215,7 @@ Trusted repository owners, members, and collaborators can write:
 ```
 
 Formal PR reviews and inline review comments from trusted associations are processed automatically.
-Ordinary PR conversation text is ignored unless it starts with `/pi`. Worker-authored comments carry a
+Ordinary PR conversation text is ignored unless it starts with `/pi`. To bootstrap a PR that the worker did not create, apply `pi-ready` to that same-repository PR; the label is the explicit adoption authorization, while `/pi` supplies the requested action. Worker-authored comments carry a
 hidden marker and are ignored, preventing feedback loops. A trusted `/pi retry` comment posted on a
 blocked issue is also processed automatically: the controller reclaims the existing worktree/session and
 updates labels without requiring a separate `pi-ready` edit. Commands older than the latest blocked state
@@ -289,14 +290,14 @@ Each profile stores in a collision-resistant repository-specific default directo
 ```text
 PI_WORKER_DATA_DIR/
 ├── repository/       # trusted control clone; Pi never runs here
-├── worktrees/        # one linked worktree per issue
+├── worktrees/        # issue-<n> and adopted pr-<n> linked worktrees
 ├── sessions/         # persistent Pi JSONL sessions
 ├── logs/             # compact lifecycle logs
 └── state.sqlite      # jobs and processed GitHub event IDs
 ```
 
-A restart resumes claimed/implementing issues, unprocessed feedback for `addressing_review` jobs, and
-interrupted `addressing_ci` repairs in the persistent issue session. CI attempts and handled head SHAs
+A restart resumes claimed/implementing issues, adopted pull requests, unprocessed feedback for `addressing_review` jobs, and
+interrupted `addressing_ci` repairs in the persistent session. A poll-time cleanup service removes managed worktrees only after the associated PR is merged and only when the worktree is registered, clean, and still at the merged PR head; cleanup failures remain retryable in SQLite. CI attempts and handled head SHAs
 survive restarts, preventing duplicate repair loops. Evidence runs have persistent `pending`, `valid`,
 `published`, `blocked`, and `invalid-terminal` states; failed historical captures are terminal and cannot
 poison a later successful PR or be retried on every poll. Runner/startup failures and isolated test timeouts

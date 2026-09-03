@@ -393,6 +393,18 @@ Formal reviews and inline review comments are accepted automatically only from c
 
 Check `PI_WORKER_TRUSTED_ASSOCIATIONS` when a legitimate maintainer is ignored. Worker-authored comments contain a hidden marker and are always ignored to prevent loops.
 
+For a PR the worker did not create, a `/pi` comment alone is intentionally insufficient: apply `pi-ready` to the PR to authorize adoption. Confirm it appears in:
+
+```bash
+gh pr list --repo acme/widgets --state open --label pi-ready
+```
+
+Adoption fails closed for fork heads, a base other than `PI_WORKER_BASE_BRANCH`, a branch/path identity mismatch, or an existing colliding state record. Successful adoption removes `pi-ready`, creates `PI_WORKER_DATA_DIR/worktrees/pr-<number>`, and adds `pi-pr-open`.
+
+## Merged PR worktree was not removed
+
+Cleanup runs inside every repository poll. It removes a managed worktree only after GitHub reports the PR as merged and only when the registered worktree is clean and its HEAD exactly matches the merged PR head. Inspect the job's `last_error` and the child journal; do not force-remove a dirty or diverged path. Closed-unmerged PRs are retained intentionally.
+
 ## Inspecting state safely
 
 Per-profile layout:

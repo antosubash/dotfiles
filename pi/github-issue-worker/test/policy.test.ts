@@ -173,6 +173,18 @@ test("headless policy keeps GitHub and git writes in the controller", () => {
   assert.equal(commandBlockReason("git diff --stat", []), null);
   assert.match(commandBlockReason("docker build .", []) || "", /explicit trusted/);
   assert.equal(commandBlockReason("docker build .", [], { dockerAccess: true }), null);
+  assert.equal(
+    commandBlockReason(
+      "docker compose up -d; SOCKET=$(pi-worker-docker-bridge start app_default web 8080)",
+      [],
+      { dockerAccess: true },
+    ),
+    null,
+  );
+  assert.equal(
+    commandBlockReason("pi-worker-docker-bridge stop", [], { dockerAccess: true }),
+    null,
+  );
   assert.match(
     commandBlockReason("docker run --privileged image", [], { dockerAccess: true }) || "",
     /forbidden/,
@@ -183,6 +195,16 @@ test("headless policy keeps GitHub and git writes in the controller", () => {
     "docker run --volume /:/host image",
     "docker run --volume=/:/host image",
     "docker run \\\n--volume /:/host image",
+    "P=--privileged; docker run \"$P\" alpine",
+    "M=--mount; S=type=bind,src=/,dst=/host; docker run \"$M\" \"$S\" alpine",
+    "docker run $(printf '\\055v /:/host') alpine",
+    "d''ocker run -v /:/host alpine",
+    'd"o"cker run --volume /:/host alpine',
+    "docker run --volumes-from existing alpine",
+    "docker run --net=host alpine",
+    "docker run --ipc=host alpine",
+    "docker run --uts=host alpine",
+    "docker run --cgroupns=host alpine",
   ]) {
     assert.match(commandBlockReason(command, [], { dockerAccess: true }) || "", /forbidden/);
   }

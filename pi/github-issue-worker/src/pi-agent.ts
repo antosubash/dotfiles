@@ -102,11 +102,27 @@ export function commandBlockReason(
   for (const [pattern, reason] of rules) {
     if (reason && pattern.test(inspectedCommand)) return reason;
   }
-  if (
-    options.dockerAccess &&
-    /\bdocker(?:-compose)?\b[^\n]*(?:--privileged|--pid(?:=|\s+)host|--network(?:=|\s+)host|--device(?:=|\s+)|--mount(?:=|\s+)|--volume(?:=|\s+)|(?:^|\s)-v(?:\S*|\s+)|\/var\/run\/docker\.sock|\/run\/docker\.sock)/i.test(inspectedCommand)
-  ) {
-    return "Docker host mounts, host namespaces, devices, privileged mode, and socket forwarding are forbidden";
+  const canonicalDockerCommand = inspectedCommand
+    .replace(/['"]/g, "")
+    .replace(/\\(?=[A-Za-z])/g, "");
+  const dockerInvocation = /(?:^|[&|(\s])docker(?:-compose)?(?=$|[\s&|)])/i;
+  const dockerSegments = canonicalDockerCommand
+    .split(/(?:\r?\n|;|&&|\|\|)/)
+    .filter((segment) => dockerInvocation.test(segment));
+  for (const dockerCommand of dockerSegments) {
+    if (!options.dockerAccess) {
+      return "Docker requires an explicit trusted /pi request and PI_WORKER_ALLOW_DOCKER=1";
+    }
+    if (/\$\(|`|\$(?:\{|[A-Za-z_])/i.test(dockerCommand)) {
+      return "Docker commands must use literal arguments; shell expansion is forbidden";
+    }
+    if (
+      /(?:--privileged|--pid(?:=|\s+)host|--(?:network|net)(?:=|\s+)host|--(?:ipc|uts|cgroupns|userns)(?:=|\s+)host|--device(?:=|\s+)|--cap-add(?:=|\s+)|--volumes-from(?:=|\s+)|--mount(?:=|\s+)|--volume(?:=|\s+)|(?:^|\s)-v(?:\S*|\s+)|\/var\/run\/docker\.sock|\/run\/docker\.sock)/i.test(
+        dockerCommand,
+      )
+    ) {
+      return "Docker host mounts, host namespaces, devices, privileged mode, and socket forwarding are forbidden";
+    }
   }
   for (const path of protectedPaths) {
     if (path && inspectedCommand.includes(path)) return `protected path referenced: ${path}`;
