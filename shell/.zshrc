@@ -172,3 +172,6 @@ compinit
 
 # Added by get-aspire-cli.sh
 export PATH="$HOME/.aspire/bin:$PATH"
+
+# opencode
+export PATH=/home/anto/.opencode/bin:$PATH
