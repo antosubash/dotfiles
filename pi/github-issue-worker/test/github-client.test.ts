@@ -2,23 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadConfig } from "../src/config.js";
 import { GitHubClient } from "../src/github.js";
-import type { PullRequestFeedback } from "../src/types.js";
-
-function feedback(overrides: Partial<PullRequestFeedback> = {}): PullRequestFeedback {
-  return {
-    eventKey: "conversation:1",
-    source: "conversation",
-    id: 1,
-    body: "/pi fix the validation",
-    author: "maintainer",
-    authorAssociation: "MEMBER",
-    createdAt: "2026-01-01T00:00:00Z",
-    url: null,
-    ...overrides,
-  };
-}
-
-const trusted = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 test("open PR overlap detection excludes the worker branch", async () => {
   const client = new GitHubClient(

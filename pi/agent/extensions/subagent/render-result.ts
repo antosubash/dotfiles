@@ -18,8 +18,6 @@ export function renderSubagentResult(
 		return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
 	}
 
-	const mdTheme = getMarkdownTheme();
-
 	if (details.mode === "single" && details.results.length === 1) {
 		const r = details.results[0];
 		const isError = isFailedResult(r);
@@ -28,6 +26,7 @@ export function renderSubagentResult(
 		const finalOutput = getFinalOutput(r.messages);
 
 		if (expanded) {
+			const mdTheme = getMarkdownTheme();
 			const container = new Container();
 			let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 			if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
