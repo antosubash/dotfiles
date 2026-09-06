@@ -182,4 +182,4 @@ authentication, queue, and recovery diagnostics.
 
 ## Updating the vendored subagent
 
-The implementation came from Pi's `examples/extensions/subagent/`. After upgrading Pi, compare the installed example with `pi/agent/extensions/subagent/`, carry forward the Claude model alias mapping in `agents.ts`, then run a delegated scout smoke test.
+The implementation came from Pi's `examples/extensions/subagent/`. After upgrading Pi, compare the installed example with `pi/agent/extensions/subagent/`, carry forward the Claude model alias mapping in `agents.ts`, then run a delegated scout smoke test. The vendored copy is split into `index.ts` (tool registration), `run.ts`/`process.ts` (child lifecycle), `execute.ts`/`chain.ts`/`parallel.ts` (modes), `render-*.ts` (TUI), `schema.ts`, `limits.ts`, `format.ts`, and `results.ts`; diff each against the corresponding region of upstream `index.ts`.
