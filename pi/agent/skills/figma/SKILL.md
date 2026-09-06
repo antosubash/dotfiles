@@ -6,7 +6,7 @@ compatibility: Python 3.10+ and a Figma personal access token with file_content:
 
 # Figma REST workflow
 
-Use the bundled [CLI](scripts/figma.py), resolving its path relative to this skill's directory. It uses only Python's standard library. Read [setup and CLI reference](references/README.md) before first use or when authentication fails.
+Use the bundled [CLI](scripts/figma.py), resolving its path relative to this skill's directory. It uses only Python's standard library and imports its sibling modules `figma_client.py` and `figma_bundle.py` from the same directory — keep the three files together. Read [setup and CLI reference](references/README.md) before first use or when authentication fails.
 
 ## Safety and credentials
 

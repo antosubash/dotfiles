@@ -26,3 +26,8 @@ shell/aliases.local.zsh
 
 # Ignore Claude Code worktrees
 .worktrees/
+# Ignore native Claude Code worktrees
+.claude/worktrees/
+
+# Python bytecode (figma.py now imports sibling modules)
+__pycache__/

@@ -18,7 +18,15 @@ jobs:
         with:
           python-version: '3.10'
       - name: Test Figma REST CLI without credentials or network
-        run: python3 -B -m unittest discover -s scripts/tests -p 'test_figma_cli.py' -v
+        run: python3 -B -m unittest discover -s scripts/tests -p 'test_figma_*.py' -v
+
+  line-cap:
+    name: Pi 300-line cap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce the 300-line cap on Pi source and test files
+        run: bash scripts/tests/test-line-cap.sh
 
   shellcheck:
     name: shellcheck
