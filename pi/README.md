@@ -37,6 +37,7 @@ Exceeding any limit still terminates the whole child process tree and returns an
 explicit failed result naming the exhausted budget. Parallel result display remains
 capped at 50 KiB per task. Run `scripts/tests/test-pi-subagent-capture.sh` and
 `scripts/tests/test-pi-runtime.sh` for parser and offline subprocess regression tests.
+`scripts/tests/test-line-cap.sh` fails if any Pi source or test file exceeds 300 lines.
 
 The extension maps Claude model tiers when loading shared agents:
 
@@ -182,4 +183,4 @@ authentication, queue, and recovery diagnostics.
 
 ## Updating the vendored subagent
 
-The implementation came from Pi's `examples/extensions/subagent/`. After upgrading Pi, compare the installed example with `pi/agent/extensions/subagent/`, carry forward the Claude model alias mapping in `agents.ts`, then run a delegated scout smoke test.
+The implementation came from Pi's `examples/extensions/subagent/`. After upgrading Pi, compare the installed example with `pi/agent/extensions/subagent/`, carry forward the Claude model alias mapping in `agents.ts`, then run a delegated scout smoke test. The vendored copy is split into `index.ts` (tool registration), `run.ts`/`process.ts` (child lifecycle), `execute.ts`/`chain.ts`/`parallel.ts` (modes), `render-*.ts` (TUI), `schema.ts`, `limits.ts`, `format.ts`, and `results.ts`; diff each against the corresponding region of upstream `index.ts`.

@@ -8,20 +8,21 @@ import type { GitHubClient } from "../src/github.js";
 import type { PiAgentRunner } from "../src/pi-agent.js";
 import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
-import type { GitHubIssue, IssueJob, PullRequestChecks, PullRequestFeedback } from "../src/types.js";
+import type { GitHubIssue, PullRequestFeedback } from "../src/types.js";
 import { IssueWorker } from "../src/worker.js";
 import type { IssuePlan } from "../src/issue-plan.js";
 
 const baseIssue: GitHubIssue = { number: 42, title: "Add behavior", body: "Acceptance criteria", url: "https://github.com/example/repo/issues/42", updatedAt: "now", labels: [{ name: "pi-ready" }], author: { login: "owner" } };
 const plan: IssuePlan = { schemaVersion: 1, issueNumber: 42, issueHash: "a".repeat(64), sourceFingerprint: "b".repeat(64), implementationSteps: ["Implement behavior"], checks: [{ id: "P1", kind: "behavioral", requirement: "Acceptance", steps: ["test"], expected: "Result" }] };
 
-async function harness(options: { figma?: boolean; qaFail?: boolean; designFail?: boolean; planning?: boolean; savedPlan?: boolean; planLabel?: string } = {}) {
+async function harness(options: { figma?: boolean; qaFail?: boolean; designFail?: boolean; planning?: boolean; savedPlan?: boolean; planLabel?: string; feedback?: boolean; ciFailed?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "pi-gates-flow-"));
   const state = new WorkerState(join(root, "state.sqlite"));
   const issue = { ...baseIssue, body: options.figma ? "figma.com/design/Key/Test?node-id=1-2" : baseIssue.body,
     labels: options.planLabel ? [...baseIssue.labels, { name: options.planLabel }] : baseIssue.labels };
   const config = loadConfig({ HOME: root, PI_WORKER_REPOSITORY: "example/repo", PI_WORKER_BASE_BRANCH: "main", PI_WORKER_DATA_DIR: join(root, "data") });
   const calls: string[] = []; let dirty = false;
+  const feedback: PullRequestFeedback = { eventKey: "conversation:1", source: "conversation", id: 1, body: "/pi fix behavior", author: "owner", authorAssociation: "OWNER", createdAt: "now", url: null };
   const github = {
     listReadyIssues: async () => [issue], listPlanningIssues: async () => options.planning ? [issue] : [],
     finishPlanning: async (_number: number, body: string) => { calls.push("plan-report"); assert.match(body, /No implementation/); },
@@ -29,8 +30,8 @@ async function harness(options: { figma?: boolean; qaFail?: boolean; designFail?
     createDraftPullRequest: async () => { calls.push("pr"); return { number: 77, url: "https://github.com/example/repo/pull/77" }; },
     labelPullRequestFromIssue: async () => {}, markPullRequestOpen: async () => {},
     commentIssue: async () => {}, commentPullRequest: async () => {}, markBlocked: async () => { calls.push("blocked"); },
-    getIssue: async () => issue, isPullRequestOpen: async () => true, listFeedback: async () => [],
-    getPullRequestChecks: async () => ({ headSha: "head", state: "pending", failures: [] }),
+    getIssue: async () => issue, isPullRequestOpen: async () => true, listFeedback: async () => options.feedback ? [feedback] : [],
+    getPullRequestChecks: async () => ({ headSha: "head", state: options.ciFailed ? "failed" : "pending", failures: [] }),
   };
   const repository = {
     branchForIssue: () => "pi/issue-42", pathForIssue: () => join(root, "worktree"),
@@ -82,24 +83,16 @@ for (const planLabel of ["pi-plan", "PI-PLAN"]) test(`planning label ${planLabel
   finally { await h.cleanup(); }
 });
 
-// Exercise persistent repair/recovery boundaries directly, avoiding unrelated poll transitions.
-type RepairMethods = {
-  handleCiFailure(job: IssueJob, checks: PullRequestChecks, eventKey: string): Promise<void>;
-  handleFeedback(job: IssueJob, feedback: PullRequestFeedback[]): Promise<void>;
-};
 for (const kind of ["ci", "feedback"] as const) test(`${kind} interrupted push recovery re-runs independent QA and blocks failed acceptance`, async () => {
-  const h = await harness({ qaFail: true });
+  const h = await harness({ qaFail: true, feedback: kind === "feedback", ciFailed: kind === "ci" });
   try {
     h.state.claim(h.issue, "pi/issue-42", join(h.root, "worktree"), false);
     h.state.setPullRequest(42, 77, "https://github.com/example/repo/pull/77");
-    const methods = h.worker as unknown as RepairMethods;
     if (kind === "ci") {
-      h.state.setCiHead(42, "head"); h.state.setStatus(42, "committing_ci");
-      await methods.handleCiFailure(h.state.requireJob(42), { headSha: "head", state: "failed", failures: [] }, "ci-failure:77:head");
-    } else {
-      h.state.setStatus(42, "addressing_review");
-      await methods.handleFeedback(h.state.requireJob(42), [{ eventKey: "conversation:1", source: "conversation", id: 1, body: "/pi fix behavior", author: "owner", authorAssociation: "OWNER", createdAt: "now", url: null }]);
-    }
+      h.state.setCiHead(42, "head");
+      h.state.setStatus(42, "committing_ci");
+    } else h.state.setStatus(42, "addressing_review");
+    await h.worker.tick();
     assert.ok(h.calls.includes("qa")); assert.ok(h.calls.includes("blocked"));
     assert.ok(!h.calls.includes("implement")); assert.ok(!h.calls.includes("push"));
   } finally { await h.cleanup(); }
