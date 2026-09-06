@@ -191,6 +191,18 @@ Write-capable Pi workflows create or reuse linked Git worktrees by default and p
 
 Useful aliases: `pic` continues the latest Pi session and `pir` opens the session picker.
 
+#### Figma designs in Pi
+
+The `/skill:figma` workflow uses a bundled, read-only REST CLI to inspect Figma links,
+fetch frame design JSON plus a PNG reference, and download image fills or export SVG icons.
+It requires Python 3.10+ and a personal access token with `file_content:read`; no MCP or
+Figma desktop app is needed. Copy `pi/.env.sample` to the gitignored `pi/.env`, make it private
+(`chmod 600 pi/.env`), and fill in `FIGMA_TOKEN` in your own editor. The CLI loads it automatically.
+Exported `FIGMA_TOKEN` or a private `FIGMA_TOKEN_FILE` can be used instead and take precedence.
+
+See the [Figma setup and CLI guide](pi/agent/skills/figma/references/README.md) for secure token
+setup and commands. Figma plan-based rate limits still apply; reuse saved bundles.
+
 For unattended, label-gated issue implementation across one or more GitHub repositories, install the
 headless worker separately. Each repository gets its own environment profile, child process, SQLite
 state, control clone, worktrees, persistent Pi sessions, and optional local `.qa/` browser evidence. An

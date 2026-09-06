@@ -21,5 +21,8 @@ Thumbs.db
 # Ignore local aliases (machine-specific)
 shell/aliases.local.zsh
 
+# Pi local credentials (keep pi/.env.sample tracked)
+/pi/.env
+
 # Ignore Claude Code worktrees
 .worktrees/
