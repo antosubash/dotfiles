@@ -37,6 +37,7 @@ Exceeding any limit still terminates the whole child process tree and returns an
 explicit failed result naming the exhausted budget. Parallel result display remains
 capped at 50 KiB per task. Run `scripts/tests/test-pi-subagent-capture.sh` and
 `scripts/tests/test-pi-runtime.sh` for parser and offline subprocess regression tests.
+`scripts/tests/test-line-cap.sh` fails if any Pi source or test file exceeds 300 lines.
 
 The extension maps Claude model tiers when loading shared agents:
 
