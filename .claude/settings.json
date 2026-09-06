@@ -22,7 +22,6 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "opus",
   "statusLine": {
     "type": "command",
     "command": "python3 ~/.claude/statusline.py",
