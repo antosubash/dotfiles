@@ -88,6 +88,12 @@ Run independent lint/format, typecheck, and unit-test commands in parallel when 
 
 Record every command and result in state. Any failure stops before push/PR.
 
+## Stage 4b — independent issue QA and design gates
+
+Read and run `issue-qa` for every task/GitHub issue. A fresh `issue-verifier` must follow the exact saved `/pi-plan` checklist if requested, otherwise the usual acceptance/regression QA flow. No plan is required by default; no Figma link still requires proper QA. Require a structured PASS with actual command outcomes and browser evidence when UI on the exact final source. Persist report paths and fingerprint; failed/blocked/incomplete QA prevents push/PR.
+
+For a task/GitHub issue with Figma links, read and run the `figma-verify` skill. Dispatch the separate `design-verifier`, never the implementation worker. Require its structured PASS and fresh screenshots for every linked frame on the final current source, including any rebase, test edits, or CI fixes above. Reuse a prior PASS only when its complete source fingerprint and design versions still match; never trust HEAD or `--qa-passed` alone. `--skip-browser` does not waive this gate. Record the exact design result/report paths, fingerprint, and verdict in VF state/report. Missing credentials, ambiguous frames, browser blockers, mismatches, or incomplete evidence stop before push/PR. Do not fix source in the verifier.
+
 ## Stage 5 — report, push, and PR
 
 Build `$VF_DIR/report.html` as a self-contained local report with stage results, screenshots, e2e outcome, and QA report link/counts when applicable. Use a script for image base64; do not stream encoded images through model tools.

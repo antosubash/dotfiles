@@ -372,6 +372,7 @@ export class GitHubClient {
 
   async ensureLabels(): Promise<void> {
     const labels = [
+      ["pi-plan", "bfd4f2", "Create a plan and verification checklist only; do not implement"],
       [this.config.readyLabel, "1d76db", "Approved for the headless Pi worker"],
       [this.config.workingLabel, "fbca04", "The headless Pi worker is implementing this issue"],
       [this.config.pullRequestLabel, "0e8a16", "The headless Pi worker opened a draft pull request"],
@@ -392,6 +393,22 @@ export class GitHubClient {
         "--force",
       ]);
     }
+  }
+
+  async listPlanningIssues(): Promise<GitHubIssue[]> {
+    const output = await this.gh([
+      "issue", "list", "--repo", this.config.repository, "--state", "open", "--label", "pi-plan",
+      "--limit", String(this.config.maxIssuesPerPoll), "--json", "number,title,body,url,updatedAt,labels,author",
+    ]);
+    const issues = JSON.parse(output || "[]") as Array<GitHubIssue & { body: string | null }>;
+    return issues.map((issue) => ({ ...issue, body: issue.body || "" }));
+  }
+
+  async finishPlanning(issueNumber: number, message: string): Promise<void> {
+    await this.commentIssue(issueNumber, message);
+    // Planning wins over simultaneous approval. A later explicit approval starts implementation.
+    await this.gh(["issue", "edit", String(issueNumber), "--repo", this.config.repository,
+      "--remove-label", "pi-plan", "--remove-label", this.config.readyLabel]);
   }
 
   async listReadyIssues(): Promise<GitHubIssue[]> {

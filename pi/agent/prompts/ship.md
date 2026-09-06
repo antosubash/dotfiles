@@ -108,11 +108,17 @@ Do not spawn a child Pi to run the whole QA workflow: destructive approvals and 
 
 Read `$GIT_COMMON_DIR/pi-qa/$SHIP_QA_RUN_ID/result.json` and copy the exact absolute QA directory, run ID, result path, and report path into `$SHIP_DIR/state.json`. Trust that file over prose. Record the exact QA run ID, iterations, bugs found/fixed, remaining issues, and report path. Append remaining QA items to `unresolved` with source=`qa`.
 
+### Stage C — independent issue QA and Figma design gate
+
+Read and run `issue-qa` for every task: dispatch `issue-verifier` separately from `worker`, following the exact saved `/pi-plan` checklist when requested, otherwise ordinary acceptance/regression QA. No Figma link means normal QA, not a skip. Require actual checks and unchanged-source evidence; missing/failed checks block convergence. Persist QA result/report paths and source fingerprint. This is distinct from Stage B's browser QA and cannot be waived by browser-skip flags for an issue needing behavioral verification.
+
+For tasks/GitHub issues containing Figma links, read and run the `figma-verify` skill with a separate fresh `design-verifier` agent after QA. This gate is mandatory even with `--no-qa`, `--skip-browser`, or a non-web classification; inability to render the linked design is BLOCKED. Persist the exact report/result paths, source fingerprint, frame URLs/versions, and verdict in ship state. Only PASS on unchanged current source allows convergence. Return design mismatches to `worker` within the existing outer bound, then repeat review and independent verification; BLOCKED or exhausted bounds stop without push/PR. Never let the implementation worker certify its own output.
+
 ### Convergence decision
 
 At the end of each round, make the following decision in this order and write it to state before proceeding:
 
-1. If QA has remaining issues, continue only when `outer < max_outer_iterations` and another round can plausibly change the result; otherwise set `status=not-clean`, stop, and do not run `/vf`.
+1. If independent issue QA or the applicable mandatory Figma design gate is not PASS for current source, do not converge; follow Stage C's bounded fix/reverification or blocked stop. If QA has remaining issues, continue only when `outer < max_outer_iterations` and another round can plausibly change the result; otherwise set `status=not-clean`, stop, and do not run `/vf`.
 2. If Stage A is unresolved and QA made no changes, set `status=not-clean`, stop, and do not run `/vf`; repeating an identical round cannot help.
 3. If Stage A is clean/skipped and QA is clean/skipped with `bugs_found_total == 0`, set `status=converged`. A clean QA result with zero bugs is terminal because the clean review still covers the current source.
 4. If QA is clean and `bugs_found_total > 0 && bugs_fixed_total > 0`, QA changed code after the clean review. Clear stale prior-round unresolved QA entries and require one more Stage A review, even though this QA run is clean. If review was disabled with `--no-review`, the required final review cannot be performed: set `status=not-clean` and stop without a PR. Otherwise, if `outer < max_outer_iterations`, increment `outer` and return to Stage A. If the outer bound is exhausted, set `status=not-clean` with reason `QA fixes require a final review but max outer iterations was reached`; stop without pushing or opening a PR.

@@ -19,6 +19,9 @@ import {
   parseWorkerCommand,
 } from "./github.js";
 import { PiAgentRunner } from "./pi-agent.js";
+import { FigmaVerificationService } from "./figma-verification.js";
+import { IssuePlanService } from "./issue-plan.js";
+import { QaVerificationService } from "./qa-verification.js";
 import { loadQaManifest } from "./qa-manifest.js";
 import {
   buildCiFailurePrompt,
@@ -118,6 +121,9 @@ export class IssueWorker {
   private readonly repository: RepositoryManager;
   private readonly agent: PiAgentRunner;
   private readonly cleanup: PullRequestWorktreeCleanupService;
+  private readonly designVerifier: Pick<FigmaVerificationService, "verify">;
+  private readonly qaVerifier: Pick<QaVerificationService, "verify">;
+  private readonly plans: Pick<IssuePlanService, "load" | "create">;
 
   constructor(
     private readonly config: WorkerConfig,
@@ -126,11 +132,17 @@ export class IssueWorker {
       github?: GitHubClient;
       repository?: RepositoryManager;
       agent?: PiAgentRunner;
+      designVerifier?: Pick<FigmaVerificationService, "verify">;
+      qaVerifier?: Pick<QaVerificationService, "verify">;
+      plans?: Pick<IssuePlanService, "load" | "create">;
     } = {},
   ) {
     this.github = dependencies.github ?? new GitHubClient(config);
     this.repository = dependencies.repository ?? new RepositoryManager(config);
     this.agent = dependencies.agent ?? new PiAgentRunner(config);
+    this.designVerifier = dependencies.designVerifier ?? new FigmaVerificationService(config, this.agent);
+    this.qaVerifier = dependencies.qaVerifier ?? new QaVerificationService(config, this.agent);
+    this.plans = dependencies.plans ?? new IssuePlanService(config, this.agent);
     this.cleanup = new PullRequestWorktreeCleanupService(this.state, this.github, this.repository);
   }
 
@@ -146,10 +158,12 @@ export class IssueWorker {
   }
 
   async tick(): Promise<void> {
+    const planningIssues = await this.processPlanningIssues();
     await this.resumeInterruptedIssues();
     await this.processBlockedIssueCommands();
     const readyIssues = await this.github.listReadyIssues();
     for (const issue of readyIssues) {
+      if (planningIssues.has(issue.number) || issue.labels.some((label) => label.name.toLowerCase() === "pi-plan")) continue;
       const current = this.state.getJob(issue.number);
       if (
         current &&
@@ -175,6 +189,29 @@ export class IssueWorker {
     if (await this.processPullRequestConflicts()) return;
     await this.processPullRequestFeedback();
     await this.processPullRequestCi();
+  }
+
+  private async processPlanningIssues(): Promise<Set<number>> {
+    const handled = new Set<number>();
+    if (typeof this.github.listPlanningIssues !== "function") return handled;
+    for (const issue of await this.github.listPlanningIssues()) {
+      handled.add(issue.number);
+      try {
+        const job = this.state.getJob(issue.number);
+        if (job && !["blocked", "stopped", "completed"].includes(job.status)) {
+          this.state.setStatus(job.issueNumber, "stopped", "pi-plan requested on an active job; paused without changing source.");
+          throw new Error("pi-plan is plan-only. The active job is now paused; inspect its worktree, then request pi-plan again.");
+        }
+        const worktree = await this.repository.ensureIssueWorktree(
+          issue.number, this.repository.branchForIssue(issue.number, issue.title), this.repository.pathForIssue(issue.number),
+        );
+        const plan = await this.plans.create(issue, worktree.path);
+        await this.github.finishPlanning(issue.number, `## pi-plan — ready for review\n\nNo implementation, commit, push, or PR was performed. Add \`${this.config.readyLabel}\` after reviewing this plan.\n\n${JSON.stringify(plan, null, 2)}`);
+      } catch (error) {
+        await this.github.finishPlanning(issue.number, `⛔ pi-plan blocked. No implementation was started. Fix the blocker and add \`pi-plan\` again.\n\n${errorText(error)}`);
+      }
+    }
+    return handled;
   }
 
   private async processBlockedIssueCommands(): Promise<void> {
@@ -286,6 +323,15 @@ export class IssueWorker {
     }
     await this.finalizeEvidence(evidence);
     return evidence;
+  }
+
+  private async verifyImplementation(job: IssueJob, worktree: string, issue?: GitHubIssue): Promise<string> {
+    const original = issue ?? await this.github.getIssue(job.issueNumber);
+    const plan = await this.plans.load(original);
+    const qaReport = await this.qaVerifier.verify(original, worktree, plan);
+    const report = await this.designVerifier.verify(original, worktree, plan);
+    return `\n\nIndependent QA passed. Local report: \`${qaReport}\`.` +
+      (report ? `\nIndependent Figma design verification passed. Local private report: \`${report}\`.` : "");
   }
 
   private async finalizeEvidence(evidence: EvidenceRun | null): Promise<void> {
@@ -606,6 +652,7 @@ export class IssueWorker {
   }
 
   private async implementIssue(issue: GitHubIssue, job: IssueJob): Promise<void> {
+    if (issue.labels.some((label) => label.name.toLowerCase() === "pi-plan")) return;
     const existingPull = await this.github.findOpenPullRequest(job.branch);
     if (existingPull) {
       await this.labelPullRequestFromIssue(existingPull.number, issue);
@@ -654,6 +701,7 @@ export class IssueWorker {
             evidenceDir: evidence?.relativeRunDir ?? null,
             qaManifest: await loadQaManifest(worktree.path, this.config.qaManifestPath),
             category: classifyIssue(issue),
+            plan: await this.plans.load(issue),
           }),
           logFile,
           visualVerification: evidence !== null,
@@ -712,6 +760,7 @@ export class IssueWorker {
         throw new Error(`Visual evidence finalization failed: ${errorText(error)}`);
       }
     }
+    finalText += await this.verifyImplementation(job, worktree.path, issue);
     const changedFiles = await this.repository.changedFiles(worktree.path);
     let controllerMutationExpected = false;
     try {
@@ -847,6 +896,11 @@ export class IssueWorker {
             throw new BranchDivergenceError(`Visual QA failed before push recovery: ${errorText(error)}`);
           }
         }
+        try {
+          await this.verifyImplementation(job, worktree.path);
+        } catch (error) {
+          throw new BranchDivergenceError(errorText(error));
+        }
         await this.repository.recoverBaseMergePush(
           worktree.path,
           worktree.branch,
@@ -889,6 +943,7 @@ export class IssueWorker {
           ) {
             evidence = await this.runUiVerification(job, worktree.path, job.prNumber!);
           }
+          await this.verifyImplementation(job, worktree.path);
           await this.assertPullRequestMergeContext(
             job.prNumber!,
             pullRequestHead,
@@ -904,6 +959,7 @@ export class IssueWorker {
           !merge.alreadyCurrent &&
           (await this.repository.hasUnpushedCommits(worktree.path, worktree.branch))
         ) {
+          await this.verifyImplementation(job, worktree.path);
           await this.repository.pushIfAhead(worktree.path, worktree.branch);
         }
         await this.github.markPullRequestOpen(job.issueNumber);
@@ -949,6 +1005,7 @@ export class IssueWorker {
         containsUiFiles(await this.repository.filesChangedBetween(worktree.path, pullRequestHead))
           ? await this.runUiVerification(job, worktree.path, job.prNumber!)
           : null;
+      result.finalText += await this.verifyImplementation(job, worktree.path);
       await this.assertPullRequestMergeContext(
         job.prNumber!,
         pullRequestHead,
@@ -1138,6 +1195,7 @@ export class IssueWorker {
       try {
         const issue = await this.github.getIssue(job.issueNumber);
         const unpushed = await this.repository.hasUnpushedCommits(worktree.path, worktree.branch);
+        await this.verifyImplementation(job, worktree.path, issue);
         if (unpushed) {
           await this.repository.pushIfAhead(worktree.path, worktree.branch);
         } else if ((await this.repository.changedFiles(worktree.path)).length > 0) {
@@ -1255,6 +1313,13 @@ export class IssueWorker {
       }
     }
 
+    try {
+      result.finalText += await this.verifyImplementation(job, worktree.path, issue);
+    } catch (error) {
+      await this.repository.clearAgentChanges(worktree.path, worktree.branch).catch(() => undefined);
+      await this.reportCiBlock(job, eventKey, errorText(error));
+      return;
+    }
     this.state.setStatus(job.issueNumber, "committing_ci");
     let changed: string[];
     try {
@@ -1389,6 +1454,16 @@ export class IssueWorker {
       job.status === "addressing_review" &&
       (await this.repository.hasUnpushedCommits(worktree.path, worktree.branch))
     ) {
+      try {
+        await this.verifyImplementation(job, worktree.path, issue);
+      } catch (error) {
+        const message = errorText(error);
+        this.state.setStatus(job.issueNumber, "pr_open", message);
+        await this.github.markBlocked(job.issueNumber, message);
+        await this.github.commentPullRequest(job.prNumber!, `⛔ Feedback recovery blocked. ${message}`);
+        for (const item of feedback) this.state.markProcessed(job.issueNumber, item.eventKey);
+        return;
+      }
       await this.repository.pushIfAhead(worktree.path, worktree.branch);
       for (const item of feedback) this.state.markProcessed(job.issueNumber, item.eventKey);
       this.state.setStatus(job.issueNumber, "pr_open");
@@ -1441,6 +1516,7 @@ export class IssueWorker {
         evidence = await this.runUiVerification(job, worktree.path, job.prNumber!);
       }
       if (evidence) await this.finalizeEvidence(evidence);
+      result.finalText += await this.verifyImplementation(job, worktree.path, issue);
       const gifCreated = evidence !== null;
       controllerPhase = true;
       const evidenceNote = await visualEvidenceNote(

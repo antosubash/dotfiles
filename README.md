@@ -179,6 +179,7 @@ Choose your platform:
 
 Included workflows:
 
+- `/pi-plan` — opt-in plan/checklist only; no implementation, tests, commits, or PR
 - `/worktree` — create or select an isolated task worktree
 - `/implement` — worktree-first scout → plan → worker subagent chain
 - `/loop` — worktree-first bounded implement → review → fix convergence loop
@@ -188,6 +189,12 @@ Included workflows:
 - `/repos-sync` — safe workspace synchronization
 
 Write-capable Pi workflows create or reuse linked Git worktrees by default and preserve them for resume/audit. Every new worktree starts from the freshly fetched origin default branch, never the caller's current `HEAD` or local default branch. A dirty primary checkout is never moved or auto-stashed; `--no-worktree` is required to opt out explicitly. Claude specialist agents under `.claude/agents/` are shared with Pi. Claude model tiers are mapped to the configured Codex models. Recognizable destructive shell commands trigger a best-effort interactive approval guard and are blocked in non-interactive runs; this is not a sandbox.
+
+Every implemented issue gets independent `issue-verifier` QA before completion/shipping. A saved `/pi-plan`
+checklist is followed when explicitly requested; otherwise the usual acceptance/regression QA runs without
+requiring a plan. Figma-linked issues additionally use a fresh `design-verifier`, separate from the implementation
+worker and ordinary QA. Failed, blocked, stale, or missing verification prevents successful completion/push/PR.
+The `issue-qa` and `figma-verify` skills coordinate bounded fix/reverification; verifiers do not fix source.
 
 Useful aliases: `pic` continues the latest Pi session and `pir` opens the session picker.
 

@@ -10,7 +10,7 @@ Default `max_iterations` to 3. Before inspection or edits, read the `worktree-fi
 1. From `WORK_CWD`, inspect repository instructions and status. Preserve unrelated work.
 2. Dispatch `worker` with `cwd=WORK_CWD` to implement the task and run targeted checks. State whether worktree isolation is active or the user explicitly opted out.
 3. Dispatch `reviewer` with `cwd=WORK_CWD` to review the complete task diff plus uncommitted changes.
-4. If its final line is `VERDICT: CLEAN`, run the relevant validation yourself from `WORK_CWD` and stop successfully.
+4. If its final line is `VERDICT: CLEAN`, run the relevant validation yourself from `WORK_CWD`. Read and execute `issue-qa` with a separate fresh `issue-verifier`: use the exact saved `/pi-plan` checklist if explicitly requested, otherwise usual acceptance/regression QA without requiring a plan. For Figma links, also run `figma-verify` with a separate fresh `design-verifier`. PASS must cover the exact current source, all required checks, and every linked frame; send FAIL mismatches to `worker` then return to step 3 within this loop's existing bound. BLOCKED stops the loop. Never substitute the worker's own screenshots or claims for independent verification.
 5. If findings remain, dispatch `worker` with `cwd=WORK_CWD` and the exact review output, then return to step 3.
 6. Stop after `max_iterations`; report unresolved findings rather than claiming success.
 

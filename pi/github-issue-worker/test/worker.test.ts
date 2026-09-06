@@ -9,7 +9,14 @@ import type { PiAgentRunner } from "../src/pi-agent.js";
 import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
 import type { GitHubIssue, GitHubPullRequest, PullRequestFeedback } from "../src/types.js";
-import { IssueWorker } from "../src/worker.js";
+import { IssueWorker as RuntimeIssueWorker } from "../src/worker.js";
+
+// Existing controller tests isolate QA; independent QA has its own service/integration tests below.
+class IssueWorker extends RuntimeIssueWorker {
+  constructor(...args: ConstructorParameters<typeof RuntimeIssueWorker>) {
+    super(args[0], args[1], { qaVerifier: { verify: async () => "/private/qa/result.json" }, ...args[2] });
+  }
+}
 
 const issue: GitHubIssue = {
   number: 42,
@@ -1393,6 +1400,7 @@ test("a conflicting tracked PR is merged from base and resolved through its pers
   let finished = 0;
   const comments: string[] = [];
   const github = {
+    getIssue: async () => issue,
     listReadyIssues: async () => [],
     isPullRequestOpen: async () => true,
     getPullRequestMergeState: async () => ({
@@ -1456,6 +1464,7 @@ test("a committed conflict resolution retries after an ambiguous push failure", 
   let unpushed = true;
   let runs = 0;
   const github = {
+    getIssue: async () => issue,
     listReadyIssues: async () => [],
     isPullRequestOpen: async () => true,
     getPullRequestMergeState: async () => ({

@@ -14,6 +14,7 @@ import {
   accessSync,
   constants,
   existsSync,
+  lstatSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -35,7 +36,7 @@ import {
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import type { WorkerConfig } from "./config.js";
 import { isProtectedChange } from "./repository.js";
-import type { AgentRunResult } from "./types.js";
+import type { AgentRunResult, VerificationEvidence } from "./types.js";
 
 function packageRootFromModule(moduleUrl: string): string {
   let current = dirname(fileURLToPath(moduleUrl));
@@ -66,13 +67,15 @@ function normalizeToolPath(cwd: string, input: unknown): string | null {
   const cleaned = input.replace(/^@/, "");
   const absolute = isAbsolute(cleaned) ? resolve(cleaned) : resolve(cwd, cleaned);
   let checked = absolute;
-  try {
-    checked = realpathSync(absolute);
-  } catch {
+  let ancestor = absolute;
+  for (;;) {
     try {
-      checked = resolve(realpathSync(dirname(absolute)), absolute.slice(dirname(absolute).length + 1));
-    } catch {
-      // A new path is safe only when its existing parent is safe.
+      checked = resolve(realpathSync(ancestor), relative(ancestor, absolute));
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || dirname(ancestor) === ancestor) return null;
+      // Resolve the nearest existing ancestor, even for nested new output directories.
+      ancestor = dirname(ancestor);
     }
   }
   const local = relative(cwd, checked).replaceAll("\\", "/");
@@ -249,9 +252,11 @@ interface AgentRunOptions {
   logFile: string;
   visualVerification?: boolean;
   dockerAccess?: boolean;
+  verification?: { readPaths: string[]; evidenceDir: string };
+  planning?: boolean;
 }
 
-const GITHUB_SECRET_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"] as const;
+const GITHUB_SECRET_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "FIGMA_TOKEN", "FIGMA_TOKEN_FILE"] as const;
 const STALE_SANDBOX_TEMP_AGE_MS = 24 * 60 * 60 * 1_000;
 
 function sandboxTempRoot(visualVerification: boolean): string {
@@ -304,6 +309,7 @@ export async function removeStaleSandboxTemps(
 function gitMetadataPaths(worktree: string): string[] {
   const gitFile = resolve(worktree, ".git");
   if (!existsSync(gitFile)) return [];
+  if (lstatSync(gitFile).isDirectory()) return [gitFile];
   const contents = readFileSync(gitFile, "utf8").trim();
   const match = contents.match(/^gitdir:\s*(.+)$/im);
   if (!match) return [];
@@ -314,10 +320,11 @@ function gitMetadataPaths(worktree: string): string[] {
 export function sandboxConfig(
   worktree: string,
   config: WorkerConfig,
-  options: { privateTemp?: string; visualVerification?: boolean; dockerSocket?: string | null } = {},
+  options: { privateTemp?: string; visualVerification?: boolean; dockerSocket?: string | null; verification?: AgentRunOptions["verification"] } = {},
 ): SandboxRuntimeConfig {
   const home = resolve(process.env.HOME || homedir());
   const privateTemp = resolve(options.privateTemp || "/tmp");
+  if (options.verification && privateTemp === "/tmp") throw new Error("Verifier requires a private temporary directory, not shared /tmp.");
   const pathReadPaths = (process.env.PATH || "")
     .split(":")
     .filter((path) => path.startsWith(`${home}/`))
@@ -342,6 +349,7 @@ export function sandboxConfig(
       ...gitMetadataPaths(worktree),
       ...pathReadPaths,
       ...playwrightFfmpegPaths,
+      ...(options.verification ? [...options.verification.readPaths, options.verification.evidenceDir] : []),
       ...(options.dockerSocket ? [options.dockerSocket] : []),
     ]),
   ];
@@ -391,11 +399,12 @@ export function sandboxConfig(
       ],
       allowRead: readPaths,
       allowWrite: [
-        worktree,
-        ...(linuxSocketAccess ? [privateTemp] : ["/tmp"]),
+        ...(options.verification ? [options.verification.evidenceDir] : [worktree]),
+        ...(linuxSocketAccess || options.verification ? [privateTemp] : ["/tmp"]),
         ...(options.dockerSocket ? [options.dockerSocket] : []),
       ],
       denyWrite: [
+        ...(options.verification ? [worktree, ...gitMetadataPaths(worktree)] : []),
         resolve(home, ".ssh"),
         resolve(home, ".aws"),
         resolve(home, ".gnupg"),
@@ -661,6 +670,7 @@ export class PiAgentRunner {
     const processGroupFile = activeCommandProcessGroupPath(this.config.dataDir);
     const visualVerification = options.visualVerification === true;
     const dockerAccess = options.dockerAccess === true;
+    if (options.verification && dockerAccess) throw new Error("Independent verifiers cannot access the Docker daemon.");
     if (dockerAccess && (!this.config.allowDocker || !this.config.dockerSocket)) {
       throw new Error("Docker access was requested but is not enabled for this worker profile");
     }
@@ -674,7 +684,7 @@ export class PiAgentRunner {
     const previousPlaywrightDaemonDir = process.env.PLAYWRIGHT_DAEMON_SESSION_DIR;
     process.env.CLAUDE_CODE_TMPDIR = sandboxTemp;
     process.env.PLAYWRIGHT_DAEMON_SESSION_DIR = join(sandboxTemp, "playwright-daemon");
-    if ((visualVerification || dockerAccess) && process.platform === "linux") {
+    if (options.verification || ((visualVerification || dockerAccess) && process.platform === "linux")) {
       process.env.TMPDIR = sandboxTemp;
     }
     const shutdownController = new AbortController();
@@ -688,6 +698,7 @@ export class PiAgentRunner {
           privateTemp: sandboxTemp,
           visualVerification: options.visualVerification === true,
           dockerSocket: dockerAccess ? this.config.dockerSocket : null,
+          verification: options.verification,
         }),
       );
       if (process.platform === "linux" && (visualVerification || dockerAccess)) {
@@ -705,7 +716,9 @@ export class PiAgentRunner {
         cwd: options.worktree,
         agentDir: this.config.agentDir,
         settingsManager,
-        appendSystemPrompt: [AGENT_POLICY],
+        appendSystemPrompt: [AGENT_POLICY, ...(options.verification ? [
+          `Independent design-verification mode: do not modify source. The controller grants read-only access to ${JSON.stringify(options.verification.readPaths)} and evidence-only writes to ${JSON.stringify(options.verification.evidenceDir)} as exceptions to the worktree-only policy. Return an independent verdict, never implementation changes.`,
+        ] : [])],
         // Executable user/project extensions run in the controller process, outside the bash sandbox.
         // Disable discovery and register only the worker-owned inline policy extension below.
         noExtensions: true,
@@ -726,14 +739,24 @@ export class PiAgentRunner {
                   });
                   if (reason) return { block: true, reason, terminate: false };
                 }
-                if (["read", "write", "edit"].includes(event.toolName)) {
-                  const local = normalizeToolPath(options.worktree, input.path);
-                  if (!local) {
+                if (["read", "write", "edit", "grep", "find", "ls"].includes(event.toolName)) {
+                  const mutating = ["write", "edit"].includes(event.toolName);
+                  const path = input.path ?? (["grep", "find", "ls"].includes(event.toolName) ? "." : undefined);
+                  const verification = options.verification;
+                  if (verification) {
+                    const absolute = typeof path === "string" ? resolve(options.worktree, path.replace(/^@/, "")) : "";
+                    const inEvidence = absolute && normalizeToolPath(verification.evidenceDir, absolute) !== null;
+                    const inReference = absolute && verification.readPaths.some((root) => normalizeToolPath(root, absolute) !== null);
+                    if (inEvidence || (!mutating && inReference)) return undefined;
+                    if (mutating) return { block: true, reason: "Verifier may write only its evidence directory", terminate: false };
+                  }
+                  const local = normalizeToolPath(options.worktree, path);
+                  if (local === null) {
                     return { block: true, reason: "Path is outside the issue worktree", terminate: false };
                   }
                   const sensitive =
                     /appsettings\.secrets\.json$/i.test(local) || /(^|\/)\.env(?:\.|$)/i.test(local);
-                  if (sensitive || (event.toolName !== "read" && isProtectedChange(local, this.config.protectedPaths))) {
+                  if (sensitive || (mutating && isProtectedChange(local, this.config.protectedPaths))) {
                     return { block: true, reason: `Protected path: ${local}`, terminate: false };
                   }
                 }
@@ -762,7 +785,7 @@ export class PiAgentRunner {
         modelRuntime,
         model,
         thinkingLevel: this.config.thinkingLevel,
-        tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
+        tools: options.planning ? ["read", "grep", "find", "ls"] : ["read", "bash", "edit", "write", "grep", "find", "ls"],
         resourceLoader: loader,
         sessionManager,
         settingsManager,
@@ -773,8 +796,24 @@ export class PiAgentRunner {
       const agentSettled = new Promise<void>((resolveTerminal) => {
         resolveAgentSettled = resolveTerminal;
       });
+      const verificationEvidence: VerificationEvidence = { commands: [], readPaths: [] };
+      const toolInputs = new Map<string, { toolName: string; args: { command?: string; path?: string } }>();
       const unsubscribe = session.subscribe((event) => {
         settlementWatchdog.progress();
+        if (options.verification && event.type === "tool_execution_start") {
+          toolInputs.set(event.toolCallId, { toolName: event.toolName, args: event.args as { command?: string; path?: string } });
+        }
+        if (options.verification && event.type === "tool_execution_end") {
+          const input = toolInputs.get(event.toolCallId);
+          toolInputs.delete(event.toolCallId);
+          if (!event.isError && input?.toolName === "bash" && typeof input.args.command === "string") {
+            const output = (event.result as { content?: Array<{ type: string; text?: string }> }).content
+              ?.filter((item) => item.type === "text").map((item) => item.text ?? "").join("\n") ?? "";
+            verificationEvidence.commands.push({ command: input.args.command, output: output.slice(-32_000) });
+          } else if (!event.isError && input?.toolName === "read" && typeof input.args.path === "string") {
+            verificationEvidence.readPaths.push(resolve(options.worktree, input.args.path.replace(/^@/, "")));
+          }
+        }
         if (event.type === "tool_execution_start") {
           void appendFile(options.logFile, `${new Date().toISOString()} tool ${event.toolName}\n`);
         } else if (event.type === "agent_end") {
@@ -843,7 +882,9 @@ export class PiAgentRunner {
           throw new Error(final.error || `Pi stopped with ${final.stopReason}`);
         }
         if (!session.sessionFile) throw new Error("Pi did not create a persistent session file");
-        return { sessionFile: session.sessionFile, finalText: final.text.trim() };
+        return { sessionFile: session.sessionFile, finalText: final.text.trim(),
+          ...(options.verification ? { verificationEvidence } : {}),
+        };
       } finally {
         unsubscribe();
         session.dispose();
