@@ -158,7 +158,7 @@ Formats: `svg` (default), `png`, `jpg`, `pdf`. One render API call plus one asse
 From the dotfiles repository root:
 
 ```bash
-python3 -B -m unittest discover -s scripts/tests -p 'test_figma_cli.py' -v
+python3 -B -m unittest discover -s scripts/tests -p 'test_figma_*.py' -v
 ```
 
 No real Figma token or network access is required. A live end-to-end check requires your own token and accessible frame link; it consumes API quota.
