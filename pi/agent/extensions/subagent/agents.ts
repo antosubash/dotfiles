@@ -14,7 +14,7 @@ const CLAUDE_MODEL_ALIASES = {
 	haiku: "openai-codex/gpt-5.6-luna",
 	sonnet: "openai-codex/gpt-5.6-terra",
 	opus: "openai-codex/gpt-5.6-sol",
-	fable: "openai-codex/gpt-5.6-sol",
+	fable: "openai-codex/gpt-6-astra",
 } as const;
 
 function resolveAgentModel(value: unknown): string | undefined {
