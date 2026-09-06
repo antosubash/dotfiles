@@ -29,17 +29,15 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import { SubagentCapture } from "./capture.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 export const MAX_CHAIN_STEPS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
-// This is a finite event-stream budget, not just a display limit. Raw stdout
-// and stderr bytes are charged once as they arrive; parsed messages retained
-// from stdout are views of those already-counted bytes, not a second charge.
-// A task that exceeds it is terminated.
-const MAX_CAPTURE_BYTES = 256 * 1024;
+// Capture has separate finite transport, line, transcript, and stderr budgets.
+// Progress/delta traffic must not exhaust the retained-result allowance.
 const TERMINATION_GRACE_MS = 5000;
 // A descendant can keep inherited stdout/stderr open after the process-tree
 // kill has completed. Never wait indefinitely for `close` in that case.
@@ -344,7 +342,7 @@ export function buildChildPiArgs(agent: AgentConfig, dispatchDefaults: DispatchD
 	return args;
 }
 
-async function runSingleAgent(
+export async function runSingleAgent(
 	defaultCwd: string,
 	dispatchDefaults: DispatchDefaults,
 	agents: AgentConfig[],
@@ -422,12 +420,10 @@ async function runSingleAgent(
 				windowsHide: true,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
-			let buffer = "";
 			let settled = false;
 			let terminationRequested = false;
 			let killTimer: ReturnType<typeof setTimeout> | undefined;
 			let settlementTimer: ReturnType<typeof setTimeout> | undefined;
-			let capturedBytes = 0;
 			let abortHandler: (() => void) | undefined;
 			let terminationForcedFailure = false;
 			const treeKillers = new Set<import("node:child_process").ChildProcess>();
@@ -493,35 +489,9 @@ async function runSingleAgent(
 					finish(1);
 				}, TERMINATION_SETTLEMENT_DEADLINE_MS);
 			};
-			const appendCapture = (value: string | Buffer, kind: string): boolean => {
-				const bytes = typeof value === "string" ? Buffer.byteLength(value, "utf8") : value.byteLength;
-				if (capturedBytes + bytes > MAX_CAPTURE_BYTES) {
-					captureLimitExceeded = true;
-					currentResult.stopReason = "error";
-					currentResult.errorMessage =
-						`Subagent capture limit exceeded while reading ${kind} ` +
-						`(${MAX_CAPTURE_BYTES} bytes maximum).`;
-					requestTermination(false);
-					return false;
-				}
-				capturedBytes += bytes;
-				return true;
-			};
-
-			const processLine = (line: string) => {
-				if (!line.trim() || captureLimitExceeded) return;
-				let event: any;
-				try {
-					event = JSON.parse(line);
-				} catch {
-					return;
-				}
-
-				if (event.type === "message_end" && event.message) {
-					const msg = event.message as Message;
-					// The parsed message is already represented by the counted stdout
-					// event line. Retain it without charging its serialized form a
-					// second time against the finite stream budget.
+			const capture = new SubagentCapture(
+				(message) => {
+					const msg = message as Message;
 					currentResult.messages.push(msg);
 
 					if (msg.role === "assistant") {
@@ -540,33 +510,26 @@ async function runSingleAgent(
 						if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
 					}
 					emitUpdate();
-				}
+				},
+				(text) => { currentResult.stderr += text; },
+				(reason) => {
+					captureLimitExceeded = true;
+					currentResult.stopReason = "error";
+					currentResult.errorMessage = reason;
+					requestTermination(false);
+				},
+			);
 
-				if (event.type === "tool_result_end" && event.message) {
-					currentResult.messages.push(event.message as Message);
-					emitUpdate();
-				}
-			};
-
-			proc.stdout.on("data", (data) => {
-				if (captureLimitExceeded) return;
-				// Count the raw event stream before retaining it in the framing buffer.
-				if (!appendCapture(data, "stdout")) return;
-				const text = data.toString();
-				buffer += text;
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
-				for (const line of lines) processLine(line);
+			proc.stdout.on("data", (data: Buffer) => {
+				if (!settled) capture.stdout(data);
 			});
 
-			proc.stderr.on("data", (data) => {
-				if (captureLimitExceeded || !appendCapture(data, "stderr")) return;
-				const text = data.toString();
-				currentResult.stderr += text;
+			proc.stderr.on("data", (data: Buffer) => {
+				if (!settled) capture.stderr(data);
 			});
 
 			proc.once("close", (code) => {
-				if (buffer.trim() && !captureLimitExceeded) processLine(buffer);
+				if (!settled) capture.end();
 				// A null code means the child did not exit normally (for example, it
 				// was terminated by a signal), so it must never be reported as success.
 				finish(code ?? 1);

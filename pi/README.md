@@ -27,7 +27,16 @@ A dirty primary checkout is never stashed, copied, auto-committed, or moved. Wor
 
 Pi's vendored subagent extension discovers `~/.pi/agent/agents/*.md` and supports single, parallel, and chained execution. Specialist definitions are relative links to `.claude/agents/`, so Claude and Pi share one source of truth.
 
-The subagent extension enforces a 256 KiB per-invocation capture budget across event output, stderr, and retained messages. Exceeding it terminates the whole child process tree and returns an explicit failed result.
+Subagent capture separates JSON transport from retained results: **64 MiB stdout**,
+**16 MiB per JSON line**, **8 MiB retained transcript**, and **256 KiB stderr** per
+invocation. Only completed messages are retained; progress deltas and duplicate
+turn/agent snapshots do not consume the transcript budget. This replaces the old
+256 KiB whole-stream cap that frequently killed ordinary multi-file reviews.
+Split UTF-8 characters and the last record without a newline are handled correctly.
+Exceeding any limit still terminates the whole child process tree and returns an
+explicit failed result naming the exhausted budget. Parallel result display remains
+capped at 50 KiB per task. Run `scripts/tests/test-pi-subagent-capture.sh` and
+`scripts/tests/test-pi-runtime.sh` for parser and offline subprocess regression tests.
 
 The extension maps Claude model tiers when loading shared agents:
 
@@ -35,9 +44,82 @@ The extension maps Claude model tiers when loading shared agents:
 |---|---|
 | Haiku | `openai-codex/gpt-5.6-luna` |
 | Sonnet | `openai-codex/gpt-5.6-terra` |
-| Opus/Fable | `openai-codex/gpt-5.6-sol` |
+| Opus | `openai-codex/gpt-5.6-sol` |
+| Fable | `openai-codex/gpt-6-astra` |
 
 Pi-specific `scout`, `planner`, `worker`, `reviewer`, `reviewer-fast`, and `browser-qa` agents live beside the shared specialists. `/ship` uses the full Terra reviewer once, then the Luna reviewer only for known findings and fix/QA deltas. P2/P3 advisories are reported without extending the blocking loop.
+
+### Spark for fast reconnaissance
+
+The default interactive model remains GPT-6 Astra. The read-only `scout` agent uses
+`openai-codex/gpt-5.3-codex-spark` for focused repository reconnaissance. Planner,
+worker, reviewer, and browser QA remain on Terra; `reviewer-fast` and Haiku aliases
+remain on Luna. Spark is text-only with a 128K context window: keep screenshot QA
+and broad implementation/review work on the existing models.
+
+Spark is also in `enabledModels` with medium thinking for model cycling. To try it
+interactively, use `/model openai-codex/gpt-5.3-codex-spark`. Scout's explicit model
+pin does not change the parent session's model. No headless issue-worker profile
+is changed by this configuration.
+
+## Subscription usage footer
+
+The `usage-status` extension adds a compact line to Pi's existing footer in interactive
+OpenAI Codex sessions, leaving the model, context, costs, and other extension statuses intact:
+
+```text
+Codex used · 5h ██░░░ 35% ↻2h15m · wk █░░░░ 11% ↻1d20h
+```
+
+Percentages are **used**, not remaining. Bars turn yellow at 70% and red at 90%.
+The extension reads ChatGPT's usage endpoint with Pi's resolved Codex login. It shows
+`Codex used` for the main allowance, or `Spark used` with the separate Spark 5-hour
+and weekly allowances when `gpt-5.3-codex-spark` is selected. Switching models clears
+the old reading and fetches the correct allowance; it never falls back to main
+quota when Spark data is absent. It polls once a minute and updates reset countdowns every
+15 seconds; `/usage-refresh` requests an immediate refresh. It never stores tokens or
+usage responses in session history or logs, and does not poll in worker/subagent,
+print, JSON, or RPC runs.
+
+Some plans return only a weekly window (even as the primary window): `5h n/a` means
+not reported, **not** unlimited or 0% used. Review and unrelated model-specific
+allowances are never substituted for the selected allowance. Missing/failed data is shown as
+`unavailable`, or `stale` if there is a previous reading. Past reset times show
+`reset pending` until refreshed. The endpoint is unofficial and may change.
+
+Run `scripts/tests/test-pi-usage-status.sh` for offline parser and lifecycle checks.
+After setup, use `/reload` in an existing Pi session to load the extension.
+
+## Context and auto-compaction
+
+The `context-policy` extension checks for **80% of the selected model's registered
+context window** at idle session start, idle model switches, after tasks settle,
+and before new prompts. It waits for any in-progress policy compaction before
+accepting a new prompt, and honors `compaction.enabled` in global/trusted project
+settings. `/context-policy` shows the current window and trigger threshold.
+
+Current Codex catalog values:
+
+| Model | Registered window | 80% threshold |
+|---|---:|---:|
+| GPT-6 Astra / GPT-5.6 Sol, Terra, Luna | 272,000 | 217,600 |
+| Codex Spark | 128,000 | 102,400 |
+
+**Safe-boundary limitation:** Pi's public `ctx.compact()` aborts active agent runs;
+it is not an automatic between-tool-turn compaction request. This extension never
+calls it during an active run or queued continuation. A long task can therefore
+pass 80% before settling. Pi's native automatic threshold/overflow compaction
+remains enabled with its normal 16,384-token reserve as a fallback; it can compact
+and resume within a long run. The extension does not monkey-patch Pi internals.
+
+The model's registered window is never reduced to implement the 80% trigger.
+Thresholds automatically follow model switches and supported catalog/`models.json`
+window changes. No speculative large-window override is installed: the 1.05M
+window documented for direct OpenAI API models is not verified for this Codex
+backend. A catalog default is not necessarily the provider's maximum possible
+window; only raise it after confirming backend support (and long-context costs).
+
+Run `scripts/tests/test-pi-context-policy.sh` for offline lifecycle checks.
 
 ## Loop state
 
@@ -51,7 +133,30 @@ Exact IDs and absolute paths are threaded through state, reports, sessions, and 
 
 ## Safety
 
-`destructive-command-approval.ts` asks before recognizable destructive shell commands in interactive sessions. The same commands are blocked in print/JSON subagents because no approval UI exists. This is a best-effort guard, not a sandbox; continue running untrusted projects in an isolated environment.
+`destructive-command-approval.ts` asks before recognizable destructive shell commands
+in interactive sessions. It checks command positions rather than matching dangerous
+words anywhere in a string: searches, printed examples, comments, and literal
+non-shell heredocs no longer trigger approval merely for mentioning `rm -rf` or
+`DROP TABLE`.
+
+Routine operations also avoid approval: Git clean **dry-runs**, read-only
+`sudo systemctl` status/show/list queries, non-mutating `sudo journalctl`, selected
+read-only `sudo docker` queries, and graceful `pkill -x` with a simple literal process
+name. Unclassified privileged commands still require approval.
+
+Recursive deletion (including build/temp cleanup), Git discard/force-push, disk
+writes, database deletion through recognized SQL clients, infrastructure destruction,
+Docker prune/forced container removal, and force/broad process termination remain
+protected. Explicit shell payloads, substitutions, common command wrappers, and
+piped shell execution are checked too. Approvals are not cached: each destructive
+invocation still asks. In print/JSON subagents the same risky commands remain blocked
+because no interactive approval UI exists.
+
+This is a **best-effort guard, not a shell interpreter or sandbox**. Aliases, dynamically
+assembled commands, external scripts, and arbitrary Python/other interpreter code
+are not fully analyzed. Continue running untrusted projects in an isolated environment.
+Run `scripts/tests/test-pi-command-risks.sh` for classifier regression tests; the
+fixtures never execute the destructive commands.
 
 Project-local Pi resources retain Pi's normal trust prompt (`defaultProjectTrust: ask`).
 

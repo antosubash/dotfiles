@@ -1,13 +1,20 @@
 {
-  "lastChangelogVersion": "0.84.2",
+  "lastChangelogVersion": "0.85.1",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
+  "defaultModel": "gpt-6-astra",
   "defaultThinkingLevel": "high",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
   "externalEditor": "nvim",
   "defaultProjectTrust": "ask",
   "collapseChangelog": true,
   "treeFilterMode": "no-tools",
   "enabledModels": [
+    "openai-codex/gpt-6-astra:high",
+    "openai-codex/gpt-5.3-codex-spark:medium",
     "openai-codex/gpt-5.6-sol:high",
     "openai-codex/gpt-5.6-terra:high",
     "openai-codex/gpt-5.6-luna:medium"

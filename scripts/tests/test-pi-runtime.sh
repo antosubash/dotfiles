@@ -16,6 +16,15 @@ PROJECT="$TMP/project"
 PI_HOME="$TMP/pi-home"
 MARKER="$TMP/runtime-marker"
 mkdir -p "$PROJECT/.pi/agents" "$PI_HOME"
+cp "$ROOT/pi/agent/agents/scout.md" "$PROJECT/.pi/agents/scout.md"
+cat > "$PROJECT/.pi/agents/runtime-fable.md" <<'EOF'
+---
+name: runtime-fable
+description: Fable alias fixture
+model: fable
+---
+A fixture for preserving GPT-6 as the Fable substitute.
+EOF
 cat > "$PROJECT/.pi/agents/runtime-alias.md" <<'EOF'
 ---
 name: runtime-alias
@@ -28,17 +37,30 @@ EOF
 
 # This probe executes during Pi extension loading. It checks the same runtime
 # discovery and non-interactive project-agent gate without making a provider
-# request or spawning a child model session.
+# request. Fake JSON children exercise capture and termination without models.
 cat > "$TMP/probe.ts" <<EOF
 import * as fs from "node:fs";
+import assert from "node:assert/strict";
 import { discoverAgents } from "${ROOT}/pi/agent/extensions/subagent/agents.ts";
-import subagentExtension, { buildChildPiArgs, MAX_CHAIN_STEPS } from "${ROOT}/pi/agent/extensions/subagent/index.ts";
-import { destructiveCommandRisks } from "${ROOT}/pi/agent/extensions/destructive-command-approval.ts";
+import subagentExtension, { buildChildPiArgs, MAX_CHAIN_STEPS, runSingleAgent } from "${ROOT}/pi/agent/extensions/subagent/index.ts";
+import approvalExtension, { destructiveCommandRisks } from "${ROOT}/pi/agent/extensions/destructive-command-approval.ts";
 
 export default async function () {
   const found = discoverAgents(process.cwd(), "project").agents.find((agent) => agent.name === "runtime-alias");
   if (!found || found.model !== "openai-codex/gpt-5.6-luna" || found.tools?.join(",") !== "read,grep") {
     throw new Error("agent alias/tool discovery failed");
+  }
+
+  const agents = discoverAgents(process.cwd(), "project").agents;
+  if (agents.find((agent) => agent.name === "scout")?.model !== "openai-codex/gpt-5.3-codex-spark") {
+    throw new Error("scout must use Spark");
+  }
+  if (agents.find((agent) => agent.name === "runtime-fable")?.model !== "openai-codex/gpt-6-astra") {
+    throw new Error("Fable must retain GPT-6 Astra");
+  }
+  const settings = JSON.parse(fs.readFileSync("${ROOT}/pi/agent/settings.json", "utf8"));
+  if (settings.defaultModel !== "gpt-6-astra" || !settings.enabledModels.includes("openai-codex/gpt-5.3-codex-spark:medium")) {
+    throw new Error("Spark enablement or GPT-6 default regressed");
   }
 
   if (destructiveCommandRisks("rm -f /tmp/stale-log").length !== 0) {
@@ -47,6 +69,18 @@ export default async function () {
   if (!destructiveCommandRisks("rm -rf build").includes("recursive file deletion")) {
     throw new Error("recursive deletion approval guard regressed");
   }
+
+  if (destructiveCommandRisks("rg 'rm -rf|sudo' scripts").length !== 0) {
+    throw new Error("read-only search should not prompt");
+  }
+  let approvalHandler: any;
+  approvalExtension({ on(_name: string, handler: any) { approvalHandler = handler; } } as any);
+  const riskEvent = { type: "tool_call", toolName: "bash", input: { command: "git reset --hard" } };
+  const safeEvent = { ...riskEvent, input: { command: "sudo systemctl status example" } };
+  if (await approvalHandler(safeEvent, { hasUI: false })) throw new Error("routine command blocked headlessly");
+  if (!(await approvalHandler(riskEvent, { hasUI: false }))?.block) throw new Error("headless destructive command was not blocked");
+  if (!(await approvalHandler(riskEvent, { hasUI: true, ui: { confirm: async () => false } }))?.block) throw new Error("rejected destructive command was not blocked");
+  if (await approvalHandler(riskEvent, { hasUI: true, ui: { confirm: async () => true } })) throw new Error("approved command blocked");
 
   const baseAgent: any = {
     name: "runtime-agent",
@@ -79,6 +113,34 @@ export default async function () {
   let tool: any;
   subagentExtension({ registerTool(value: any) { tool = value; } } as any);
   if (!tool || tool.name !== "subagent") throw new Error("subagent tool registration failed");
+
+  // Use the real spawn/capture/termination path, but a deterministic fake Pi.
+  const originalScript = process.argv[1];
+  process.argv[1] = "${ROOT}/scripts/tests/fixtures/pi-subagent-child.mjs";
+  try {
+    const runFixture = (task: string, signal?: AbortSignal) => runSingleAgent(
+      process.cwd(), {}, [baseAgent], baseAgent.name, task, undefined, undefined,
+      signal, undefined,
+      (results) => ({ mode: "single", agentScope: "user", projectAgentsDir: null, results }),
+    );
+    const completed = await runFixture("capture-fixture");
+    assert.equal(completed.exitCode, 0, completed.errorMessage);
+    assert.equal(completed.messages.length, 21);
+    assert.equal((completed.messages.at(-1) as any)?.content[0]?.text, "SUBAGENT_CAPTURE_OK 🦊");
+    assert.equal(completed.usage.turns, 1);
+    assert.equal(completed.usage.input, 100);
+    assert.equal(completed.usage.output, 20);
+    const overflow = await runFixture("stderr-overflow");
+    assert.equal(overflow.exitCode, 1);
+    assert.equal(overflow.stopReason, "error");
+    assert.match(overflow.errorMessage ?? "", /stderr limit exceeded/);
+    assert.ok(Buffer.byteLength(overflow.stderr) <= 256 * 1024);
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 100);
+    try {
+      await assert.rejects(runFixture("abort-fixture", controller.signal), /Subagent was aborted/);
+    } finally { clearTimeout(abortTimer); }
+  } finally { process.argv[1] = originalScript; }
 
   const overBound = await tool.execute(
     "chain-bound",
@@ -117,6 +179,8 @@ EOF
     PI_CODING_AGENT_DIR="$PI_HOME" PI_RUNTIME_MARKER="$MARKER" \
     pi --offline --no-extensions \
       --extension "$ROOT/pi/agent/extensions/subagent/index.ts" \
+      --extension "$ROOT/pi/agent/extensions/usage-status/index.ts" \
+      --extension "$ROOT/pi/agent/extensions/context-policy/index.ts" \
       --extension "$TMP/probe.ts" \
       --list-models) >"$TMP/pi.out" 2>"$TMP/pi.err"
 status=$?
