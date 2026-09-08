@@ -114,9 +114,15 @@ export interface EvidenceRunRecord {
   updatedAt: string;
 }
 
+export interface VerificationEvidence {
+  commands: Array<{ command: string; output: string }>;
+  readPaths: string[];
+}
+
 export interface AgentRunResult {
   sessionFile: string;
   finalText: string;
+  verificationEvidence?: VerificationEvidence;
 }
 
 export interface ExecResult {

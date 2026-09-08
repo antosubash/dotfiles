@@ -1,7 +1,10 @@
 import { PullRequestWorktreeCleanupService } from "./cleanup.js";
 import type { WorkerConfig } from "./config.js";
+import { FigmaVerificationService } from "./figma-verification.js";
 import { GitHubClient, isActionableFeedback, parseWorkerCommand } from "./github.js";
+import { IssuePlanService } from "./issue-plan.js";
 import { PiAgentRunner } from "./pi-agent.js";
+import { QaVerificationService } from "./qa-verification.js";
 import { RepositoryManager } from "./repository.js";
 import { WorkerState } from "./state.js";
 import { processPullRequestCi, processCiJob } from "./worker/ci-flow.js";
@@ -15,6 +18,7 @@ import {
   processPendingPullRequestLabels,
   startIssue,
 } from "./worker/issue-flow.js";
+import { processPlanningIssues } from "./worker/planning-flow.js";
 import { processReadyPullRequests, startPullRequest } from "./worker/pull-request-adoption.js";
 import type { WorkerContext } from "./worker/shared.js";
 
@@ -31,12 +35,24 @@ export class IssueWorker {
       github?: GitHubClient;
       repository?: RepositoryManager;
       agent?: PiAgentRunner;
+      designVerifier?: Pick<FigmaVerificationService, "verify">;
+      qaVerifier?: Pick<QaVerificationService, "verify">;
+      plans?: Pick<IssuePlanService, "load" | "create">;
     } = {},
   ) {
     const github = dependencies.github ?? new GitHubClient(config);
     const repository = dependencies.repository ?? new RepositoryManager(config);
     const agent = dependencies.agent ?? new PiAgentRunner(config);
-    this.ctx = { config, state, github, repository, agent };
+    this.ctx = {
+      config,
+      state,
+      github,
+      repository,
+      agent,
+      designVerifier: dependencies.designVerifier ?? new FigmaVerificationService(config, agent),
+      qaVerifier: dependencies.qaVerifier ?? new QaVerificationService(config, agent),
+      plans: dependencies.plans ?? new IssuePlanService(config, agent),
+    };
     this.cleanup = new PullRequestWorktreeCleanupService(state, github, repository);
   }
 
@@ -52,26 +68,16 @@ export class IssueWorker {
   }
 
   async tick(): Promise<void> {
+    const planningIssues = await processPlanningIssues(this.ctx);
     await this.resumeInterruptedIssues();
     await this.processBlockedIssueCommands();
-    const readyIssues = await this.ctx.github.listReadyIssues();
-    for (const issue of readyIssues) {
+    for (const issue of await this.ctx.github.listReadyIssues()) {
+      if (planningIssues.has(issue.number) || issue.labels.some((label) => label.name.toLowerCase() === "pi-plan")) continue;
       const current = this.ctx.state.getJob(issue.number);
-      if (
-        current &&
-        [
-          "claimed",
-          "implementing",
-          "pr_open",
-          "addressing_review",
-          "addressing_ci",
-          "committing_ci",
-          "reporting_ci_block",
-          "reporting_ci_pr_comment",
-        ].includes(current.status)
-      ) {
-        continue;
-      }
+      if (current && [
+        "claimed", "implementing", "pr_open", "addressing_review", "addressing_ci", "committing_ci",
+        "reporting_ci_block", "reporting_ci_pr_comment",
+      ].includes(current.status)) continue;
       await startIssue(this.ctx, issue).catch((error) => handleInitialFailure(this.ctx, issue.number, error));
     }
     await processReadyPullRequests(this.ctx);
@@ -86,22 +92,16 @@ export class IssueWorker {
   private async processBlockedIssueCommands(): Promise<void> {
     if (typeof this.ctx.github.listIssueCommands !== "function") return;
     for (const job of this.ctx.state.listBlocked()) {
-      const commands = (await this.ctx.github.listIssueCommands(job.issueNumber))
-        .filter(
-          (item) =>
-            item.createdAt > job.updatedAt &&
-            !this.ctx.state.hasProcessed(item.eventKey) &&
-            isActionableFeedback(item, this.ctx.config.trustedAssociations),
-        )
-        .filter((item) => parseWorkerCommand(item.body) === "retry");
-      const command = commands.at(-1);
+      const command = (await this.ctx.github.listIssueCommands(job.issueNumber))
+        .filter((item) => item.createdAt > job.updatedAt && !this.ctx.state.hasProcessed(item.eventKey))
+        .filter((item) => isActionableFeedback(item, this.ctx.config.trustedAssociations))
+        .filter((item) => parseWorkerCommand(item.body) === "retry")
+        .at(-1);
       if (!command) continue;
       this.ctx.state.markProcessed(job.issueNumber, command.eventKey);
       if (job.kind === "pull_request" && typeof this.ctx.github.getPullRequest === "function") {
         const pullRequest = await this.ctx.github.getPullRequest(job.prNumber ?? job.issueNumber);
-        await startPullRequest(this.ctx, pullRequest).catch((error) =>
-          blockInitialIssue(this.ctx, job.issueNumber, error),
-        );
+        await startPullRequest(this.ctx, pullRequest).catch((error) => blockInitialIssue(this.ctx, job.issueNumber, error));
       } else {
         const issue = await this.ctx.github.getIssue(job.issueNumber);
         await startIssue(this.ctx, issue).catch((error) => handleInitialFailure(this.ctx, issue.number, error));
@@ -115,23 +115,13 @@ export class IssueWorker {
         await processFeedbackJob(this.ctx, job);
         continue;
       }
-      if (
-        [
-          "addressing_ci",
-          "committing_ci",
-          "reporting_ci_block",
-          "reporting_ci_pr_comment",
-        ].includes(job.status) &&
-        job.prNumber
-      ) {
+      if (["addressing_ci", "committing_ci", "reporting_ci_block", "reporting_ci_pr_comment"].includes(job.status) && job.prNumber) {
         await processCiJob(this.ctx, job);
         continue;
       }
       if (job.prNumber || !["claimed", "implementing"].includes(job.status)) continue;
       const issue = await this.ctx.github.getIssue(job.issueNumber);
-      await implementIssue(this.ctx, issue, job).catch((error) =>
-        handleInitialFailure(this.ctx, job.issueNumber, error),
-      );
+      await implementIssue(this.ctx, issue, job).catch((error) => handleInitialFailure(this.ctx, job.issueNumber, error));
     }
   }
 }

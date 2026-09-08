@@ -8,8 +8,7 @@ import type { PiAgentRunner } from "../src/pi-agent.js";
 import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
 import type { PullRequestFeedback } from "../src/types.js";
-import { IssueWorker } from "../src/worker.js";
-import { config, issue } from "./helpers/worker-fixtures.js";
+import { config, issue, TestIssueWorker as IssueWorker } from "./helpers/worker-fixtures.js";
 
 test("addressing_review jobs recover after a restart", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-review-recovery-"));
@@ -177,4 +176,3 @@ test("trusted review feedback reuses the job and records event idempotency", asy
     await rm(root, { recursive: true, force: true });
   }
 });
-

@@ -76,6 +76,58 @@ test("ready pull requests expose their trusted same-repository head metadata", a
   ]);
 });
 
+test("planning creates the fixed label, lists plan-only issues, then comments before removing labels", async () => {
+  const calls: Array<{ args: readonly string[]; input?: string }> = [];
+  const client = new GitHubClient(
+    loadConfig({
+      PI_WORKER_REPOSITORY: "example/widgets",
+      PI_WORKER_BASE_BRANCH: "main",
+      PI_WORKER_LABEL_PREFIX: "agent",
+      PI_WORKER_ALLOW_DOCKER: "0",
+    }),
+    async (args, input) => {
+      calls.push({ args, ...(input === undefined ? {} : { input }) });
+      if (args[0] === "issue" && args[1] === "list") {
+        return JSON.stringify([{
+          number: 42,
+          title: "Plan this",
+          body: null,
+          url: "https://example.test/issues/42",
+          updatedAt: "2026-09-06T00:00:00Z",
+          labels: [{ name: "pi-plan" }],
+          author: { login: "maintainer" },
+        }]);
+      }
+      return "";
+    },
+  );
+
+  await client.ensureLabels();
+  assert.ok(calls.some(({ args }) => args[0] === "label" && args[2] === "pi-plan"));
+  assert.deepEqual(await client.listPlanningIssues(), [{
+    number: 42,
+    title: "Plan this",
+    body: "",
+    url: "https://example.test/issues/42",
+    updatedAt: "2026-09-06T00:00:00Z",
+    labels: [{ name: "pi-plan" }],
+    author: { login: "maintainer" },
+  }]);
+
+  const firstFinishCall = calls.length;
+  await client.finishPlanning(42, "Plan is ready");
+  assert.deepEqual(calls.slice(firstFinishCall).map(({ args, input }) => ({ args, input })), [
+    {
+      args: ["issue", "comment", "42", "--repo", "example/widgets", "--body-file", "-"],
+      input: "<!-- pi-issue-worker -->\nPlan is ready\n",
+    },
+    {
+      args: ["issue", "edit", "42", "--repo", "example/widgets", "--remove-label", "pi-plan", "--remove-label", "agent-ready"],
+      input: undefined,
+    },
+  ]);
+});
+
 test("pull requests inherit source issue labels without transient worker state", async () => {
   const calls: Array<{ args: readonly string[]; input?: string }> = [];
   const client = new GitHubClient(
@@ -209,4 +261,3 @@ test("blocking an invalid ready PR removes the adoption label", async () => {
   assert.ok(edit.includes("pi-ready"));
   assert.ok(edit.includes("pi-blocked"));
 });
-

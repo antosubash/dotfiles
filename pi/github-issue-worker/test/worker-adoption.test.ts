@@ -8,8 +8,7 @@ import type { PiAgentRunner } from "../src/pi-agent.js";
 import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
 import type { GitHubPullRequest } from "../src/types.js";
-import { IssueWorker } from "../src/worker.js";
-import { config, issue } from "./helpers/worker-fixtures.js";
+import { config, issue, TestIssueWorker as IssueWorker } from "./helpers/worker-fixtures.js";
 
 test("worker adopts a pi-ready pull request into an isolated tracked worktree", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-adopt-pr-"));
@@ -245,4 +244,3 @@ test("invalid tracked ready PRs are blocked without aborting the poll", async ()
     await rm(root, { recursive: true, force: true });
   }
 });
-

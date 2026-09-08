@@ -5,7 +5,8 @@ and draft pull requests, and adopts existing pull requests that carry the ready 
 multiple profile-isolated children from one installation.
 
 The worker deliberately does **not** auto-merge. GitHub labels, comments, pushes, commits, and PR
-creation belong to the controller. Pi edits and verifies code inside an issue-specific linked worktree.
+creation belong to the controller. Pi implements inside an issue-specific linked worktree; fresh independent
+QA and design-verification sessions evaluate its output before the controller can ship it.
 
 ## Lifecycle
 
@@ -16,7 +17,10 @@ creation belong to the controller. Pi edits and verifies code inside an issue-sp
    extensions are disabled because they run in the controller process outside the tool sandbox. Pi works
    in a persistent issue session and may edit, test, and capture ignored evidence, but policy hooks block
    GitHub CLI use, git mutation, secret paths, CI workflows, and configured protected paths.
-4. The controller validates the changed path set, commits, pushes, and opens a **draft** PR with
+4. A separate QA session verifies acceptance, regressions, and relevant negative cases using actual checks
+   (plus fresh browser evidence for UI). If the issue contains Figma links, another separate session compares
+   every linked frame against the implementation. Missing/failed evidence blocks shipping. The controller
+   then validates the changed path set, commits, pushes, and opens a **draft** PR with
    `Closes #<number>`.
 5. The worker monitors mergeability. When the configured base conflicts with the feature branch, the
    controller merges the freshly fetched base without rebasing, the same Pi session resolves unprotected
@@ -37,6 +41,60 @@ Each repository child handles its work sequentially. This is intentional: reposi
 databases, browser sessions, or expensive builds should not be fanned out accidentally. A per-profile
 `worker.lock` is acquired before SQLite opens; a concurrent instance exits with the owning PID. Different
 profiles may run concurrently under the supervisor while retaining separate state and process boundaries.
+
+## Optional pi-plan and independent acceptance gates
+
+Planning is **opt-in**. Apply the `pi-plan` label to an issue to create only an implementation plan and a
+verification checklist. The planner has only read/grep/find/ls tools: it cannot implement, run tests/servers,
+commit, push, or open a PR. The controller creates/preserves an isolated worktree for reconnaissance, stores
+`<data-dir>/plans/issue-<number>.json`, and comments the plan on the issue. Both `pi-plan` and any simultaneous
+`pi-ready` label are removed; review the plan, then explicitly apply `pi-ready` to start implementation.
+Requesting planning on an active job pauses it without editing source; inspect it and request planning again.
+A blocked plan does not start implementation. Reapply `pi-plan` after clarifying its blocker.
+
+Each checklist entry has a stable `P1`/`P2` ID, `behavioral` or `design` kind, requirement, reproducible steps,
+and expected result. The implementation worker receives the saved plan. Independent QA verifies every
+behavioral entry; the separate Figma verifier verifies every design entry. Both also check the original issue.
+An edited issue title/body makes an existing plan stale and blocks implementation/verification until replanned.
+Labels and timestamps do not invalidate plans. With **no plan requested**, the normal acceptance/regression QA
+flow runs; planning is not an automatic prerequisite. Interactive Pi has the equivalent `/pi-plan` prompt,
+`issue-verifier` and `design-verifier` agents, and `issue-qa` / `figma-verify` orchestration skills.
+
+**No Figma link does not mean no QA.** Every implementation, review/CI fix, merge update, and interrupted
+push recovery passes a fresh independent QA session. Non-UI work runs meaningful repository-native checks
+without requiring a browser. UI work requires actual changed-surface interactions and desktop/mobile PNGs.
+The implementer's claims or existing media never substitute for independent evidence. Verifier source is
+OS-read-only, write/edit tools are restricted to private evidence, and Docker daemon access is disabled for
+verifiers (the implementation worker retains its configured Docker policy). Tests/builds must use documented
+flags to put outputs/caches in private scratch space; if that is impossible, verification blocks with the exact
+requirement rather than relaxing isolation. The controller also hashes HEAD, index, tracked contents, and
+nonignored untracked contents before/after each verifier and rejects mutation. QA commands must match
+successful runner-recorded tool executions; browser evidence requires screenshot-command and image-read
+receipts. These are LLM-assisted behavioral/visual assessments, not mathematical proof of design equivalence.
+
+Figma links in issue title/body (including Markdown, bare links, `/file`, `/design`, `/proto`, `/board`, and
+branch links) are canonicalized and deduplicated by file/node, ignoring tracking parameters. Exact HTTPS
+Figma hosts only; Make, file-only/ambiguous links, invalid nodes, or more than ten selected frames block the
+gate. Supply explicit `node-id` frame links. The controller invokes the **operator-installed**
+`<agent-dir>/skills/figma/scripts/figma.py`, never a CLI from the untrusted issue checkout. Install the Figma
+skill and Python 3.10+ on the worker host, and configure a private token with `file_content:read` for the
+service user using the skill's setup guide. No token is copied to issue worktrees; exported Figma credentials
+are scrubbed from ALL agent sessions and only the controller-owned CLI gets them. The supervisor needs no
+separate setting: each repository child runs its own gates and private storage.
+
+Design bundles are cached under `<data-dir>/figma/issue-<number>/designs/`, pinned to their recorded version,
+and reused across fixes. Fresh independent sessions/screenshots/verdicts are created for each verification.
+No automatic API retry, including 429; report Retry-After and require operator action. To deliberately refresh
+a changed design or retry an incomplete bundle, stop the profile, inspect/archive the affected private cache
+entry, then explicitly retry. Never reuse an incomplete manifest or a PASS after source changes.
+
+QA reports/logs live under `<data-dir>/verification/issue-<number>/`; design reports/bundles under
+`<data-dir>/figma/issue-<number>/`; planning sessions under `<data-dir>/planning/`. These are private local
+artifacts, separate from the implementation session and ordinary published `.qa` media. Design bundles and
+verifier screenshots are **not automatically uploaded or committed**. Review `result.json` and `verdict.txt`
+for failed checks. Failed/blocked/partial verification stops the headless flow for human action and explicit
+retry; the verifiers never patch source. Interactive orchestration can return concrete findings to `worker`
+within its bounded fix loop, always followed by fresh verification.
 
 ## Requirements
 
@@ -127,6 +185,7 @@ one configured poll cycle.
 
 On first start, the worker creates these configurable-prefix labels:
 
+- `pi-plan` — fixed, opt-in planning-only label; review its output before separately applying `pi-ready`
 - `pi-ready` — maintainer approval and queue entry
 - `pi-working` — claimed
 - `pi-pr-open` — draft PR created

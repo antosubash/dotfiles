@@ -8,8 +8,7 @@ import type { PiAgentRunner } from "../src/pi-agent.js";
 import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
 import type { PullRequestFeedback } from "../src/types.js";
-import { IssueWorker } from "../src/worker.js";
-import { config, issue } from "./helpers/worker-fixtures.js";
+import { config, issue, TestIssueWorker as IssueWorker } from "./helpers/worker-fixtures.js";
 
 test("an interrupted CI repair remains resumable and does not consume the head twice", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-ci-recovery-"));
@@ -274,4 +273,3 @@ test("a non-interruption Pi failure blocks the CI head without an unbounded retr
     await rm(root, { recursive: true, force: true });
   }
 });
-

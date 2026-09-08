@@ -1,6 +1,9 @@
 import type { WorkerConfig } from "../config.js";
+import type { FigmaVerificationService } from "../figma-verification.js";
 import type { GitHubClient } from "../github.js";
+import type { IssuePlanService } from "../issue-plan.js";
 import type { PiAgentRunner } from "../pi-agent.js";
+import type { QaVerificationService } from "../qa-verification.js";
 import type { RepositoryManager } from "../repository.js";
 import type { WorkerState } from "../state.js";
 import type { GitHubIssue } from "../types.js";
@@ -11,6 +14,9 @@ export interface WorkerContext {
   readonly github: GitHubClient;
   readonly repository: RepositoryManager;
   readonly agent: PiAgentRunner;
+  readonly designVerifier: Pick<FigmaVerificationService, "verify">;
+  readonly qaVerifier: Pick<QaVerificationService, "verify">;
+  readonly plans: Pick<IssuePlanService, "load" | "create">;
 }
 
 export function errorText(error: unknown): string {

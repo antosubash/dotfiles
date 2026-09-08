@@ -11,6 +11,7 @@ import {
   visualEvidenceNote,
 } from "./evidence-flow.js";
 import { ensureJobWorktree } from "./job-worktree.js";
+import { verifyImplementation } from "./verification-flow.js";
 import {
   containsUiFiles,
   errorText,
@@ -35,6 +36,7 @@ export async function handleCiFailure(
   if (recoveringCommittedHead) {
     try {
       const issue = await ctx.github.getIssue(job.issueNumber);
+      await verifyImplementation(ctx, job, worktree.path, issue);
       const unpushed = await ctx.repository.hasUnpushedCommits(worktree.path, worktree.branch);
       if (unpushed) {
         await ctx.repository.pushIfAhead(worktree.path, worktree.branch);
@@ -157,6 +159,13 @@ export async function handleCiFailure(
     }
   }
 
+  try {
+    result.finalText += await verifyImplementation(ctx, job, worktree.path, issue);
+  } catch (error) {
+    await ctx.repository.clearAgentChanges(worktree.path, worktree.branch).catch(() => undefined);
+    await reportCiBlock(ctx, job, eventKey, errorText(error));
+    return;
+  }
   ctx.state.setStatus(job.issueNumber, "committing_ci");
   let changed: string[];
   try {

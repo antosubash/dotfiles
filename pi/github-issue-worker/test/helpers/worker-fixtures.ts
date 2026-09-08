@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { loadConfig } from "../../src/config.js";
 import type { GitHubIssue } from "../../src/types.js";
+import { IssueWorker as RuntimeIssueWorker } from "../../src/worker.js";
 
 export const issue: GitHubIssue = {
   number: 42,
@@ -11,6 +12,16 @@ export const issue: GitHubIssue = {
   labels: [{ name: "pi-ready" }],
   author: { login: "maintainer" },
 };
+
+// Controller-flow tests do not exercise the independent QA service itself.
+export class TestIssueWorker extends RuntimeIssueWorker {
+  constructor(...args: ConstructorParameters<typeof RuntimeIssueWorker>) {
+    super(args[0], args[1], {
+      qaVerifier: { verify: async () => "/private/qa/result.json" },
+      ...args[2],
+    });
+  }
+}
 
 export function config(root: string) {
   return loadConfig({

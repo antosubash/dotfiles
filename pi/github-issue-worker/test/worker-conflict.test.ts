@@ -7,8 +7,7 @@ import type { GitHubClient } from "../src/github.js";
 import type { PiAgentRunner } from "../src/pi-agent.js";
 import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
-import { IssueWorker } from "../src/worker.js";
-import { config, issue } from "./helpers/worker-fixtures.js";
+import { config, issue, TestIssueWorker as IssueWorker } from "./helpers/worker-fixtures.js";
 
 test("a conflicting tracked PR is merged from base and resolved through its persistent agent", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-merge-conflict-"));
@@ -20,6 +19,7 @@ test("a conflicting tracked PR is merged from base and resolved through its pers
   let finished = 0;
   const comments: string[] = [];
   const github = {
+    getIssue: async () => issue,
     listReadyIssues: async () => [],
     isPullRequestOpen: async () => true,
     getPullRequestMergeState: async () => ({
@@ -83,6 +83,7 @@ test("a committed conflict resolution retries after an ambiguous push failure", 
   let unpushed = true;
   let runs = 0;
   const github = {
+    getIssue: async () => issue,
     listReadyIssues: async () => [],
     isPullRequestOpen: async () => true,
     getPullRequestMergeState: async () => ({

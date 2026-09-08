@@ -17,6 +17,7 @@ import {
   visualEvidenceNote,
 } from "./evidence-flow.js";
 import { ensureJobWorktree } from "./job-worktree.js";
+import { verifyImplementation } from "./verification-flow.js";
 import {
   containsUiFiles,
   errorText,
@@ -102,6 +103,7 @@ export async function startIssue(ctx: WorkerContext, issue: GitHubIssue): Promis
 }
 
 export async function implementIssue(ctx: WorkerContext, issue: GitHubIssue, job: IssueJob): Promise<void> {
+  if (issue.labels.some((label) => label.name.toLowerCase() === "pi-plan")) return;
   const existingPull = await ctx.github.findOpenPullRequest(job.branch);
   if (existingPull) {
     await labelPullRequestFromIssue(ctx, existingPull.number, issue);
@@ -150,6 +152,7 @@ export async function implementIssue(ctx: WorkerContext, issue: GitHubIssue, job
           evidenceDir: evidence?.relativeRunDir ?? null,
           qaManifest: await loadQaManifest(worktree.path, ctx.config.qaManifestPath),
           category: classifyIssue(issue),
+          plan: await ctx.plans.load(issue),
         }),
         logFile,
         visualVerification: evidence !== null,
@@ -208,6 +211,7 @@ export async function implementIssue(ctx: WorkerContext, issue: GitHubIssue, job
       throw new Error(`Visual evidence finalization failed: ${errorText(error)}`);
     }
   }
+  finalText += await verifyImplementation(ctx, job, worktree.path, issue);
   const changedFiles = await ctx.repository.changedFiles(worktree.path);
   let controllerMutationExpected = false;
   try {

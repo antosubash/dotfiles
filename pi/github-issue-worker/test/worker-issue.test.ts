@@ -8,8 +8,7 @@ import type { PiAgentRunner } from "../src/pi-agent.js";
 import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
 import type { PullRequestFeedback } from "../src/types.js";
-import { IssueWorker } from "../src/worker.js";
-import { config, issue } from "./helpers/worker-fixtures.js";
+import { config, issue, TestIssueWorker as IssueWorker } from "./helpers/worker-fixtures.js";
 
 test("worker claims an approved issue and opens a draft PR", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-flow-"));
@@ -250,4 +249,3 @@ test("initial BLOCKED output cannot be committed or pushed", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
-

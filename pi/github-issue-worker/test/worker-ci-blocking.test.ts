@@ -8,8 +8,7 @@ import type { PiAgentRunner } from "../src/pi-agent.js";
 import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
 import type { PullRequestFeedback } from "../src/types.js";
-import { IssueWorker } from "../src/worker.js";
-import { config, issue } from "./helpers/worker-fixtures.js";
+import { config, issue, TestIssueWorker as IssueWorker } from "./helpers/worker-fixtures.js";
 
 test("a failed blocker notification resumes without rerunning the CI agent", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-ci-block-report-"));
@@ -221,4 +220,3 @@ test("a reporting_ci_block state does not apply an old blocker to a newer failed
     await rm(root, { recursive: true, force: true });
   }
 });
-

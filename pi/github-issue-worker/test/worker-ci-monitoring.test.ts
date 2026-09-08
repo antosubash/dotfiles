@@ -7,8 +7,7 @@ import type { GitHubClient } from "../src/github.js";
 import type { PiAgentRunner } from "../src/pi-agent.js";
 import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
-import { IssueWorker } from "../src/worker.js";
-import { config, issue } from "./helpers/worker-fixtures.js";
+import { config, issue, TestIssueWorker as IssueWorker } from "./helpers/worker-fixtures.js";
 
 test("pending CI checks are observed without invoking the agent", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-ci-pending-"));
@@ -245,4 +244,3 @@ test("exhausted CI repair attempts block once without invoking the agent", async
     await rm(root, { recursive: true, force: true });
   }
 });
-

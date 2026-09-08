@@ -52,6 +52,14 @@ export class GitHubClient {
     return labels.ensureLabels(this.gh, this.config);
   }
 
+  listPlanningIssues(): Promise<GitHubIssue[]> {
+    return queries.listPlanningIssues(this.gh, this.config);
+  }
+
+  finishPlanning(issueNumber: number, message: string): Promise<void> {
+    return labels.finishPlanning(this.gh, this.config, issueNumber, message);
+  }
+
   listReadyIssues(): Promise<GitHubIssue[]> {
     return queries.listReadyIssues(this.gh, this.config);
   }

@@ -1,10 +1,11 @@
 import { lstat, readFile, readdir, rm } from "node:fs/promises";
-import { accessSync, constants, existsSync, readFileSync, readdirSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import type { WorkerConfig } from "../config.js";
+import type { VerificationOptions } from "./policy.js";
 
 function packageRootFromModule(moduleUrl: string): string {
   let current = dirname(fileURLToPath(moduleUrl));
@@ -70,6 +71,7 @@ export async function removeStaleSandboxTemps(
 function gitMetadataPaths(worktree: string): string[] {
   const gitFile = resolve(worktree, ".git");
   if (!existsSync(gitFile)) return [];
+  if (lstatSync(gitFile).isDirectory()) return [gitFile];
   const contents = readFileSync(gitFile, "utf8").trim();
   const match = contents.match(/^gitdir:\s*(.+)$/im);
   if (!match) return [];
@@ -80,10 +82,18 @@ function gitMetadataPaths(worktree: string): string[] {
 export function sandboxConfig(
   worktree: string,
   config: WorkerConfig,
-  options: { privateTemp?: string; visualVerification?: boolean; dockerSocket?: string | null } = {},
+  options: {
+    privateTemp?: string;
+    visualVerification?: boolean;
+    dockerSocket?: string | null;
+    verification?: VerificationOptions;
+  } = {},
 ): SandboxRuntimeConfig {
   const home = resolve(process.env.HOME || homedir());
   const privateTemp = resolve(options.privateTemp || "/tmp");
+  if (options.verification && privateTemp === "/tmp") {
+    throw new Error("Verifier requires a private temporary directory, not shared /tmp.");
+  }
   const pathReadPaths = (process.env.PATH || "")
     .split(":")
     .filter((path) => path.startsWith(`${home}/`))
@@ -108,6 +118,7 @@ export function sandboxConfig(
       ...gitMetadataPaths(worktree),
       ...pathReadPaths,
       ...playwrightFfmpegPaths,
+      ...(options.verification ? [...options.verification.readPaths, options.verification.evidenceDir] : []),
       ...(options.dockerSocket ? [options.dockerSocket] : []),
     ]),
   ];
@@ -157,11 +168,12 @@ export function sandboxConfig(
       ],
       allowRead: readPaths,
       allowWrite: [
-        worktree,
-        ...(linuxSocketAccess ? [privateTemp] : ["/tmp"]),
+        ...(options.verification ? [options.verification.evidenceDir] : [worktree]),
+        ...(linuxSocketAccess || options.verification ? [privateTemp] : ["/tmp"]),
         ...(options.dockerSocket ? [options.dockerSocket] : []),
       ],
       denyWrite: [
+        ...(options.verification ? [worktree, ...gitMetadataPaths(worktree)] : []),
         resolve(home, ".ssh"),
         resolve(home, ".aws"),
         resolve(home, ".gnupg"),

@@ -5,6 +5,7 @@ import { BranchDivergenceError } from "../repository.js";
 import type { IssueJob } from "../types.js";
 import { publishEvidence, runUiVerification, visualEvidenceNote } from "./evidence-flow.js";
 import { ensureJobWorktree } from "./job-worktree.js";
+import { verifyImplementation } from "./verification-flow.js";
 import {
   CONFLICT_BLOCK_PREFIX,
   containsUiFiles,
@@ -87,6 +88,11 @@ export async function handleMergeConflict(
           throw new BranchDivergenceError(`Visual QA failed before push recovery: ${errorText(error)}`);
         }
       }
+      try {
+        await verifyImplementation(ctx, job, worktree.path);
+      } catch (error) {
+        throw new BranchDivergenceError(errorText(error));
+      }
       await ctx.repository.recoverBaseMergePush(
         worktree.path,
         worktree.branch,
@@ -129,6 +135,7 @@ export async function handleMergeConflict(
         ) {
           evidence = await runUiVerification(ctx, job, worktree.path, job.prNumber!);
         }
+        await verifyImplementation(ctx, job, worktree.path);
         await assertPullRequestMergeContext(
           ctx,
           job.prNumber!,
@@ -145,6 +152,7 @@ export async function handleMergeConflict(
         !merge.alreadyCurrent &&
         (await ctx.repository.hasUnpushedCommits(worktree.path, worktree.branch))
       ) {
+        await verifyImplementation(ctx, job, worktree.path);
         await ctx.repository.pushIfAhead(worktree.path, worktree.branch);
       }
       await ctx.github.markPullRequestOpen(job.issueNumber);
@@ -190,6 +198,7 @@ export async function handleMergeConflict(
       containsUiFiles(await ctx.repository.filesChangedBetween(worktree.path, pullRequestHead))
         ? await runUiVerification(ctx, job, worktree.path, job.prNumber!)
         : null;
+    result.finalText += await verifyImplementation(ctx, job, worktree.path);
     await assertPullRequestMergeContext(
       ctx,
       job.prNumber!,

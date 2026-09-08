@@ -69,5 +69,20 @@ require_text scripts/tmux-worktree-window.sh 'git -C "$repo_path" worktree add -
 require_text scripts/tmux-worktree-kill.sh 'worktree remove refused:'
 require_text pi/agent/skills/worktree-first/SKILL.md 'Never force-remove a dirty worktree.'
 
+require_text pi/agent/prompts/pi-plan.md 'planning only'
+require_text pi/agent/prompts/pi-plan.md 'Do not claim the issue, start a worker'
+require_text pi/agent/prompts/pi-plan.md 'implementation and verification have NOT run'
+require_text pi/agent/skills/issue-qa/SKILL.md 'If no plan was requested, run usual QA'
+require_text pi/agent/skills/issue-qa/SKILL.md 'never skip verification merely because there is no design'
+require_text pi/agent/skills/figma-verify/SKILL.md 'fresh single subagent call with `cwd=WORK_CWD`'
+require_text pi/agent/skills/figma-verify/SKILL.md 'Do not loop on missing credentials or 429'
+require_text pi/agent/agents/issue-verifier.md 'QA VERDICT: BLOCKED'
+require_text pi/agent/agents/design-verifier.md 'DESIGN VERDICT: BLOCKED'
+for workflow in implement loop ship vf; do
+    require_text "pi/agent/prompts/$workflow.md" 'issue-qa'
+    require_text "pi/agent/prompts/$workflow.md" 'pi-plan'
+    require_text "pi/agent/prompts/$workflow.md" 'design-verifier'
+done
+
 printf 'PASS: %d  FAIL: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

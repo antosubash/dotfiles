@@ -5,6 +5,7 @@ import type { GhRunner } from "./gh.js";
 
 export async function ensureLabels(gh: GhRunner, config: WorkerConfig): Promise<void> {
   const labels = [
+    ["pi-plan", "bfd4f2", "Create a plan and verification checklist only; do not implement"],
     [config.readyLabel, "1d76db", "Approved for the headless Pi worker"],
     [config.workingLabel, "fbca04", "The headless Pi worker is implementing this issue"],
     [config.pullRequestLabel, "0e8a16", "The headless Pi worker opened a draft pull request"],
@@ -25,6 +26,27 @@ export async function ensureLabels(gh: GhRunner, config: WorkerConfig): Promise<
       "--force",
     ]);
   }
+}
+
+export async function finishPlanning(
+  gh: GhRunner,
+  config: WorkerConfig,
+  issueNumber: number,
+  message: string,
+): Promise<void> {
+  await commentIssue(gh, config, issueNumber, message);
+  // Planning wins over simultaneous approval. A later explicit approval starts implementation.
+  await gh([
+    "issue",
+    "edit",
+    String(issueNumber),
+    "--repo",
+    config.repository,
+    "--remove-label",
+    "pi-plan",
+    "--remove-label",
+    config.readyLabel,
+  ]);
 }
 
 export async function claimIssue(

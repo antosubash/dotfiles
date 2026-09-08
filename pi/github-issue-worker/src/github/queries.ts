@@ -9,6 +9,28 @@ import type {
 import { apiPages } from "./gh.js";
 import type { GhRunner } from "./gh.js";
 
+export async function listPlanningIssues(
+  gh: GhRunner,
+  config: WorkerConfig,
+): Promise<GitHubIssue[]> {
+  const output = await gh([
+    "issue",
+    "list",
+    "--repo",
+    config.repository,
+    "--state",
+    "open",
+    "--label",
+    "pi-plan",
+    "--limit",
+    String(config.maxIssuesPerPoll),
+    "--json",
+    "number,title,body,url,updatedAt,labels,author",
+  ]);
+  const issues = JSON.parse(output || "[]") as Array<GitHubIssue & { body: string | null }>;
+  return issues.map((issue) => ({ ...issue, body: issue.body || "" }));
+}
+
 export async function listReadyIssues(gh: GhRunner, config: WorkerConfig): Promise<GitHubIssue[]> {
   const output = await gh([
     "issue",

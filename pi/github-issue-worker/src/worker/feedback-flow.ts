@@ -12,6 +12,7 @@ import {
   visualEvidenceNote,
 } from "./evidence-flow.js";
 import { ensureJobWorktree } from "./job-worktree.js";
+import { verifyImplementation } from "./verification-flow.js";
 import {
   containsUiFiles,
   errorText,
@@ -100,6 +101,16 @@ export async function handleFeedback(
     job.status === "addressing_review" &&
     (await ctx.repository.hasUnpushedCommits(worktree.path, worktree.branch))
   ) {
+    try {
+      await verifyImplementation(ctx, job, worktree.path, issue);
+    } catch (error) {
+      const message = errorText(error);
+      ctx.state.setStatus(job.issueNumber, "pr_open", message);
+      await ctx.github.markBlocked(job.issueNumber, message);
+      await ctx.github.commentPullRequest(job.prNumber!, `⛔ Feedback recovery blocked. ${message}`);
+      for (const item of feedback) ctx.state.markProcessed(job.issueNumber, item.eventKey);
+      return;
+    }
     await ctx.repository.pushIfAhead(worktree.path, worktree.branch);
     for (const item of feedback) ctx.state.markProcessed(job.issueNumber, item.eventKey);
     ctx.state.setStatus(job.issueNumber, "pr_open");
@@ -152,6 +163,7 @@ export async function handleFeedback(
       evidence = await runUiVerification(ctx, job, worktree.path, job.prNumber!);
     }
     if (evidence) await finalizeEvidence(ctx, evidence);
+    result.finalText += await verifyImplementation(ctx, job, worktree.path, issue);
     const gifCreated = evidence !== null;
     controllerPhase = true;
     const evidenceNote = await visualEvidenceNote(
