@@ -42,6 +42,16 @@ test("command receipts reject commands that were never recorded or that add to w
   assert.throws(() => assertQaExecution(verdict(claimed, "git diff --check"), runnerRecorded(recorded)), /runner-recorded/);
 });
 
+// The Pi bash tool throws on a non-zero exit, so a recorded command is one that exited 0. A claim may
+// therefore drop only trailing exit-status bookkeeping; dropping a trailing command that could itself
+// have produced the zero exit (`; true`) would let a failing check be claimed as a bare passing one.
+test("a claim may drop trailing exit-status bookkeeping but not a trailing command", () => {
+  assertQaExecution(verdict("npm test"), runnerRecorded(`npm test\nstatus=$?\nprintf 'exit=%s\\n' "$status"`));
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded("npm test; true")), /runner-recorded/);
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded("npm test; :")), /runner-recorded/);
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded("npm test; npm run lint")), /runner-recorded/);
+});
+
 // A claimed command must match a whole recorded statement, not just any contiguous slice of text: a
 // name like `npm test` is a plain prefix of the unrelated `npm test:unit --silent`, and matching a
 // partial word would let a verifier claim a command it never ran.

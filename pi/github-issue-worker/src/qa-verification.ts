@@ -53,19 +53,36 @@ function splitStatements(command: string): string[] {
     .filter((statement) => statement.length > 0);
 }
 
-/** True when `needle` appears as a contiguous, whole-statement run inside `haystack`. */
+/**
+ * Trailing statements a claim may leave out: capturing `$?` into a variable, or printing it. The Pi bash
+ * tool throws on a non-zero exit, so a recorded run is one that exited 0 — dropping a trailing statement
+ * that could itself have supplied that zero (`; true`, or another command) would let a verifier report a
+ * failing check as a bare passing one, so only these no-op forms are droppable.
+ */
+const STATUS_BOOKKEEPING = /^(?:[A-Za-z_][A-Za-z0-9_]*=\$\?|(?:printf|echo)\b)/;
+
+/**
+ * True when `needle` appears as a contiguous, whole-statement run inside `haystack` and every statement
+ * after it is exit-status bookkeeping. Statements BEFORE the match may be anything: a leading assignment
+ * such as `EVIDENCE=…` cannot mask an exit status.
+ */
 function containsConsecutiveStatements(haystack: string[], needle: string[]): boolean {
   if (needle.length === 0 || needle.length > haystack.length) return false;
   for (let start = 0; start <= haystack.length - needle.length; start++) {
-    if (needle.every((statement, index) => haystack[start + index] === statement)) return true;
+    if (!needle.every((statement, index) => haystack[start + index] === statement)) continue;
+    if (haystack.slice(start + needle.length).every((statement) => STATUS_BOOKKEEPING.test(statement))) return true;
   }
   return false;
 }
 
 /**
  * Every claimed command must be contained in a successful runner-recorded execution. The recording is
- * ground truth, so a claim may omit wrapper statements (exit-status capture) but may never add to what
- * ran, and may never be satisfied by a partial-word match against an unrelated recorded statement.
+ * ground truth, so a claim may omit exit-status bookkeeping but may never add to what ran, drop a
+ * trailing command, or be satisfied by a partial-word match against an unrelated recorded statement.
+ *
+ * This proves a command was invoked and that its run exited 0 — not that the check it performed passed.
+ * A run wrapped in status bookkeeping exits 0 whatever the wrapped command did; that is inherent to the
+ * wrapper, not to this matching, and the verdict's own reported status carries that claim.
  */
 export function assertQaExecution(verdict: unknown, evidence: VerificationEvidence | undefined): void {
   const report = verdict as { commands: Array<{ command: string }> };
