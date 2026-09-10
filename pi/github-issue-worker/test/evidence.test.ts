@@ -163,6 +163,41 @@ test("an oversized PNG screenshot still fails the run", async () => {
   }
 });
 
+// A mandatory PNG must never be starved by an optional GIF that already used up the shared run
+// budget: mandatory evidence is reserved budget first regardless of alphabetical filename order.
+test("an accepted optional GIF never causes a later mandatory PNG to blow the run budget", async (context) => {
+  if (!(await commandExists("ffmpeg"))) {
+    context.skip("ffmpeg is not installed");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "pi-worker-budget-order-"));
+  try {
+    // "desktop.png" < "diagram.gif" < "mobile.png" alphabetically. Real (ffmpeg-decodable) noise
+    // images sized so each is under the 10 MiB per-file limit, any two fit under the 25 MiB run
+    // budget, but all three together (~28 MiB) do not.
+    await execFile("ffmpeg", [
+      "-v", "error", "-f", "lavfi", "-i", "nullsrc=size=2650x2650,geq=random(1)*255:128:128",
+      "-frames:v", "1", join(directory, "desktop.png"), "-y",
+    ]);
+    await execFile("ffmpeg", [
+      "-v", "error", "-f", "lavfi", "-i", "nullsrc=size=3000x3000,geq=random(1)*255:random(2)*255:random(3)*255",
+      "-frames:v", "1", "-pix_fmt", "rgb8", join(directory, "diagram.gif"), "-y",
+    ]);
+    await execFile("ffmpeg", [
+      "-v", "error", "-f", "lavfi", "-i", "nullsrc=size=2650x2650,geq=random(1)*255:128:128",
+      "-frames:v", "1", join(directory, "mobile.png"), "-y",
+    ]);
+    const skipped: Array<{ name: string; reason: string }> = [];
+    const attachments = await collectEvidenceAttachments(directory, { onSkip: (name, reason) => skipped.push({ name, reason }) });
+    assert.deepEqual(attachments.map((attachment) => attachment.name).sort(), ["desktop.png", "mobile.png"]);
+    assert.equal(skipped.length, 1);
+    assert.equal(skipped[0]!.name, "diagram.gif");
+    assert.match(skipped[0]!.reason, /25 MiB run limit/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("preflight probes cannot satisfy or enter final evidence", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-worker-final-attachments-"));
   try {

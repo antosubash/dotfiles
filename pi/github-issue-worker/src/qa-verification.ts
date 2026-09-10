@@ -130,12 +130,17 @@ export async function validateQaResult(text: string, checkIds: string[], evidenc
     }
   }
   if (ui || result.surface === "ui") {
-    if (!Array.isArray(result.screenshots) || result.screenshots.length < 2) throw new QaReportingError("UI QA requires fresh desktop and mobile screenshots.");
+    // Missing, duplicated, or corrupt screenshots are a substantive evidence gap, not a reporting
+    // glitch: unlike a misnamed log or unmatched command, no repair turn can retroactively produce a
+    // fresh screenshot it never captured, so these stay plain Errors and are never repair-eligible.
+    if (!Array.isArray(result.screenshots) || new Set(result.screenshots).size < 2) {
+      throw new Error("UI QA requires fresh, distinct desktop and mobile screenshots.");
+    }
     for (const screenshot of result.screenshots) {
-      if (typeof screenshot !== "string") throw new QaReportingError("Invalid QA screenshot path.");
+      if (typeof screenshot !== "string") throw new Error("Invalid QA screenshot path.");
       const bytes = await regularFile(evidenceDir, screenshot, 50 * 1024 * 1024);
       if (bytes.length < 24 || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
-        throw new QaReportingError("Invalid QA PNG screenshot.");
+        throw new Error("Invalid QA PNG screenshot.");
       }
     }
   }

@@ -90,6 +90,33 @@ test("a missing or empty log list is reported by name instead of a raw filesyste
   } finally { await f.cleanup(); }
 });
 
+// --- screenshot evidence is never repair-eligible ----------------------------
+
+function uiVerdict(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify({ status: "passed", surface: "ui", summary: "ok", checks: qaChecks,
+    commands: [{ command: "pnpm test", status: "passed", log: "checks.log" }], screenshots: ["desktop.png", "mobile.png"], ...overrides });
+}
+
+test("a verdict claiming the same screenshot twice is a terminal error, not repair-eligible", async () => {
+  const f = await evidenceFixture("desktop.png", "checks.log");
+  try {
+    await assert.rejects(
+      validateQaResult(uiVerdict({ screenshots: ["desktop.png", "desktop.png"] }), DEFAULT_QA_CHECKS, f.dir, true),
+      (error: Error) => /distinct desktop and mobile screenshots/.test(error.message) && error.constructor.name === "Error",
+    );
+  } finally { await f.cleanup(); }
+});
+
+test("fewer than two screenshots is a terminal error, not repair-eligible", async () => {
+  const f = await evidenceFixture("desktop.png", "checks.log");
+  try {
+    await assert.rejects(
+      validateQaResult(uiVerdict({ screenshots: ["desktop.png"] }), DEFAULT_QA_CHECKS, f.dir, true),
+      (error: Error) => /distinct desktop and mobile screenshots/.test(error.message) && error.constructor.name === "Error",
+    );
+  } finally { await f.cleanup(); }
+});
+
 // --- bounded repair turn -----------------------------------------------------
 
 const issue: GitHubIssue = { number: 42, title: "Add behavior", body: "Return the required result.", url: "https://github.com/example/repo/issues/42", updatedAt: "now", labels: [], author: { login: "owner" } };

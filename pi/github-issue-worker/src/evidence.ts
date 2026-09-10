@@ -123,9 +123,15 @@ export async function collectEvidenceAttachments(
   const include = options.include ?? (() => true);
   const onSkip = options.onSkip ?? (() => {});
   await assertCanonicalDirectory(runDir);
+  // Mandatory PNGs are ordered before optional GIF/WebM so the shared run budget is reserved for
+  // required evidence first: an optional attachment must never consume budget that causes a later,
+  // otherwise-valid PNG to blow the run limit and fail the whole run.
   const names = (await readdir(runDir))
     .filter((name) => /\.(?:png|gif|webm)$/i.test(name) && include(name))
-    .sort();
+    .sort((a, b) => {
+      const rank = (name: string): number => (/\.png$/i.test(name) ? 0 : 1);
+      return rank(a) - rank(b) || a.localeCompare(b);
+    });
   const attachments: EvidenceAttachment[] = [];
   let totalBytes = 0;
   for (const name of names) {
