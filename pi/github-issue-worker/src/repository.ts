@@ -142,8 +142,9 @@ export class RepositoryManager {
     worktree: string,
     branch: string,
     expectedHead: string,
+    prNumber: number,
   ): Promise<void> {
-    return removeManagedWorktree(this.ctx, kind, number, worktree, branch, expectedHead);
+    return removeManagedWorktree(this.ctx, kind, number, worktree, branch, expectedHead, prNumber);
   }
 
   headRevision(worktree: string): Promise<string> {

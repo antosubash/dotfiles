@@ -10,17 +10,59 @@ import { buildUiVerificationPrompt } from "./prompts.js";
 import { loadQaManifest } from "./qa-manifest.js";
 import type { GitHubIssue, VerificationEvidence } from "./types.js";
 
+/**
+ * The verdict describes a passing run but is malformed (bad JSON shape, an unmatched command receipt, a
+ * misnamed log). Unlike a substantive failure, this earns one repair turn: the verifier re-emits the JSON.
+ */
+export class QaReportingError extends Error {}
+
+/** Collapse statement separators and whitespace so a verdict's echo of a command compares by content, not layout. */
+function canonicalCommand(command: string): string {
+  return command.replace(/\s*;\s*/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Every claimed command must be contained in a successful runner-recorded execution. The recording is
+ * ground truth, so a claim may omit wrapper lines (exit-status capture) but may never add to what ran.
+ */
 export function assertQaExecution(verdict: unknown, evidence: VerificationEvidence | undefined): void {
   const report = verdict as { commands: Array<{ command: string }> };
-  if (!evidence || !report.commands.every((command) => evidence.commands.some((record) => record.command === command.command))) {
-    throw new Error("QA verdict claims commands without successful runner-recorded execution.");
+  const recorded = (evidence?.commands ?? []).map((record) => canonicalCommand(record.command));
+  const executed = (command: string) => command.length > 0 && recorded.some((record) => record.includes(command));
+  if (!evidence || !report.commands.every((command) => executed(canonicalCommand(command.command)))) {
+    throw new QaReportingError("QA verdict claims commands without successful runner-recorded execution.");
   }
 }
 
 export const DEFAULT_QA_CHECKS = ["acceptance", "regression", "negative-cases", "diff-review"];
 
+const VERDICT_SCHEMA = `Return ONLY JSON (no fences): {"status":"passed|failed|blocked","surface":"ui|non-ui","summary":"...",
+"checks":[{"id":"one entry for EACH requiredCheckId","status":"passed|failed|blocked","notes":"observed evidence"}],
+"commands":[{"command":"the successful bash tool command you ran (whitespace/separator layout may differ; never paraphrase, shorten to a fragment, or add flags that did not run)","status":"passed|failed","log":"relative-output.log or [\\"a.log\\",\\"b.log\\"] when one command wrote several"}],
+"screenshots":["desktop.png","mobile.png"]}. Any failed/blocked or omitted check prevents shipping.`;
+
+function repairPrompt(error: QaReportingError): string {
+  return `Your QA verdict was rejected for a REPORTING problem, not for its result: ${error.message}
+Do not run commands, capture screenshots, or change anything. Only the runner-recorded executions from your
+verification count as evidence; a re-run now is ignored. Re-emit the complete verdict with the same results,
+fixing only the reporting problem. ${VERDICT_SCHEMA}`;
+}
+
+/** A command's `log` may name one file, several files, or several joined by `;`. */
+function commandLogs(log: unknown): string[] {
+  const entries = Array.isArray(log) ? log : typeof log === "string" ? log.split(";") : [];
+  return entries.every((entry) => typeof entry === "string")
+    ? entries.map((entry) => entry.trim()).filter((entry) => entry.length > 0)
+    : [];
+}
+
 export async function validateQaResult(text: string, checkIds: string[], evidenceDir: string, ui: boolean): Promise<unknown> {
-  const result = JSON.parse(text);
+  let result;
+  try {
+    result = JSON.parse(text);
+  } catch {
+    throw new QaReportingError("QA verdict is not valid JSON.");
+  }
   if (result?.status !== "passed" || !Array.isArray(result.checks) ||
       !checkIds.every((id) => result.checks.some((check: { id?: string; status?: string; notes?: string }) =>
         check?.id === id && check.status === "passed" && typeof check.notes === "string" && check.notes.trim())) ||
@@ -30,18 +72,24 @@ export async function validateQaResult(text: string, checkIds: string[], evidenc
     throw new Error(`Independent QA ${result?.status === "failed" ? "FAILED" : "BLOCKED"}: ${String(result?.summary ?? "missing required checks").slice(0, 1500)}`);
   }
   for (const command of result.commands) {
-    if (!command || typeof command.command !== "string" || !command.command.trim() || command.status !== "passed" || typeof command.log !== "string") {
-      throw new Error("Independent QA omitted validation command outcomes/logs.");
+    const logs = commandLogs(command?.log);
+    if (!command || typeof command.command !== "string" || !command.command.trim() || command.status !== "passed" || logs.length === 0) {
+      throw new QaReportingError("Independent QA omitted validation command outcomes/logs.");
     }
-    await regularFile(evidenceDir, command.log, 2 * 1024 * 1024);
+    for (const log of logs) {
+      await regularFile(evidenceDir, log, 2 * 1024 * 1024).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") throw new QaReportingError(`QA command log was not found in the evidence directory: ${log}`);
+        throw error;
+      });
+    }
   }
   if (ui || result.surface === "ui") {
-    if (!Array.isArray(result.screenshots) || result.screenshots.length < 2) throw new Error("UI QA requires fresh desktop and mobile screenshots.");
+    if (!Array.isArray(result.screenshots) || result.screenshots.length < 2) throw new QaReportingError("UI QA requires fresh desktop and mobile screenshots.");
     for (const screenshot of result.screenshots) {
-      if (typeof screenshot !== "string") throw new Error("Invalid QA screenshot path.");
+      if (typeof screenshot !== "string") throw new QaReportingError("Invalid QA screenshot path.");
       const bytes = await regularFile(evidenceDir, screenshot, 50 * 1024 * 1024);
       if (bytes.length < 24 || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
-        throw new Error("Invalid QA PNG screenshot.");
+        throw new QaReportingError("Invalid QA PNG screenshot.");
       }
     }
   }
@@ -61,11 +109,22 @@ export class QaVerificationService {
     const ui = /\b(?:ui|ux|frontend|front-end|layout|responsive|browser|figma|page|screen|form|button|dialog|modal|component)\b|(?:^|\/)(?:app|frontend|client|views?|routes?|pages?|components?|templates?|static|ui)\/|\.(?:tsx|jsx|vue|svelte|astro|css|scss|sass|less|html)\b/im.test(`${issue.title}\n${issue.body}\n${changed}\n${untracked}`);
     const checkIds = [...DEFAULT_QA_CHECKS, ...(plan?.checks.filter((check) => check.kind === "behavioral").map((check) => check.id) ?? [])];
     const reportPath = join(runDir, "result.json");
+    const runOptions = {
+      worktree, sessionDir: join(runDir, "sessions"), logFile: join(runDir, "agent.log"),
+      visualVerification: ui, dockerAccess: false, verification: { readPaths: [], evidenceDir },
+    };
+    // A verdict is always validated against the ORIGINAL run's receipts: the repair turn re-emits JSON, it never adds evidence.
+    const validate = async (finalText: string, evidence: VerificationEvidence | undefined): Promise<unknown> => {
+      if (await sourceFingerprint(worktree) !== source) throw new Error("QA verifier changed source; only the worker may implement fixes.");
+      const verdict = await validateQaResult(finalText, checkIds, evidenceDir, ui);
+      assertQaExecution(verdict, evidence);
+      const report = verdict as { surface: string; screenshots: string[] };
+      if (ui || report.surface === "ui") assertBrowserExecution(report.screenshots.map((path) => join(evidenceDir, path)), evidence);
+      return verdict;
+    };
     try {
       const result = await this.agent.run({
-        worktree, sessionFile: null, sessionDir: join(runDir, "sessions"), logFile: join(runDir, "agent.log"),
-        visualVerification: ui, dockerAccess: false,
-        verification: { readPaths: [], evidenceDir },
+        ...runOptions, sessionFile: null,
         prompt: `You are the independent issue QA verifier, NOT the implementation worker. This is a fresh session.
 Verify the ACTUAL current implementation against the original issue and, when present, EVERY saved pi-plan
 check below. A plan supplements, never weakens, the issue's acceptance criteria and regression checks.
@@ -90,18 +149,19 @@ EVERY captured PNG with the read tool; the controller checks runner-recorded scr
 Figma comparison is another independent stage; ordinary
 QA cannot waive it. Report all behavioral plan checks here. Plan checks with kind=design belong to the separate
 Figma verifier, which the controller also requires; never mark those checks passed or claim visual fidelity here.
-Return ONLY JSON (no fences): {"status":"passed|failed|blocked","surface":"ui|non-ui","summary":"...",
-"checks":[{"id":"one entry for EACH requiredCheckId","status":"passed|failed|blocked","notes":"observed evidence"}],
-"commands":[{"command":"EXACT full successful bash tool command, including redirects or multiline script","status":"passed|failed","log":"relative-output.log"}],
-"screenshots":["desktop.png","mobile.png"]}. Any failed/blocked or omitted check prevents shipping.
+${VERDICT_SCHEMA}
 Source is fingerprinted before/after: any mutation invalidates verification.`,
       });
       await writeFile(join(runDir, "verdict.txt"), result.finalText, { mode: 0o600, flag: "wx" });
-      if (await sourceFingerprint(worktree) !== source) throw new Error("QA verifier changed source; only the worker may implement fixes.");
-      const verdict = await validateQaResult(result.finalText, checkIds, evidenceDir, ui);
-      assertQaExecution(verdict, result.verificationEvidence);
-      const report = verdict as { surface: string; screenshots: string[] };
-      if (ui || report.surface === "ui") assertBrowserExecution(report.screenshots.map((path) => join(evidenceDir, path)), result.verificationEvidence);
+      let verdict: unknown;
+      try {
+        verdict = await validate(result.finalText, result.verificationEvidence);
+      } catch (error) {
+        if (!(error instanceof QaReportingError)) throw error;
+        const repaired = await this.agent.run({ ...runOptions, sessionFile: result.sessionFile, prompt: repairPrompt(error) });
+        await writeFile(join(runDir, "verdict-repaired.txt"), repaired.finalText, { mode: 0o600, flag: "wx" });
+        verdict = await validate(repaired.finalText, result.verificationEvidence);
+      }
       await writeFile(reportPath, JSON.stringify({ status: "passed", sourceFingerprint: source, plan, verdict, execution: result.verificationEvidence }, null, 2), { mode: 0o600, flag: "wx" });
       return reportPath;
     } catch (error) {

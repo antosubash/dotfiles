@@ -171,6 +171,39 @@ export async function ensurePullRequestWorktree(
   return { branch, path: expectedPath };
 }
 
+/**
+ * GitHub keeps `refs/pull/<n>/head` at the PR's final head even after a squash merge deletes the branch,
+ * so it is the one ref that reliably carries the merged commit. A worktree is safe to remove when it holds
+ * no commit the merged head does not contain — equality is not required, because a remote "Update branch"
+ * merge leaves the local branch permanently one commit behind.
+ */
+async function assertContainedInMergedHead(
+  ctx: RepositoryContext,
+  head: string,
+  mergedHead: string,
+  prNumber: number,
+): Promise<void> {
+  const present = await ctx.run("git", ["cat-file", "-e", `${mergedHead}^{commit}`], {
+    cwd: ctx.controlPath,
+    allowFailure: true,
+  });
+  if (present.exitCode !== 0) {
+    await ctx.run("git", ["fetch", "--quiet", "origin", `refs/pull/${prNumber}/head`], {
+      cwd: ctx.controlPath,
+      timeoutMs: 120_000,
+    });
+  }
+  const contained = await ctx.run("git", ["merge-base", "--is-ancestor", head, mergedHead], {
+    cwd: ctx.controlPath,
+    allowFailure: true,
+  });
+  if (contained.exitCode !== 0) {
+    throw new Error(
+      `Refusing cleanup because worktree HEAD ${head} is not contained in merged PR head ${mergedHead}`,
+    );
+  }
+}
+
 export async function removeManagedWorktree(
   ctx: RepositoryContext,
   kind: JobKind,
@@ -178,6 +211,7 @@ export async function removeManagedWorktree(
   worktree: string,
   branch: string,
   expectedHead: string,
+  prNumber: number,
 ): Promise<void> {
   const expectedPath = resolve(
     kind === "pull_request" ? pathForPullRequest(ctx.worktreesRoot, number) : pathForIssue(ctx.worktreesRoot, number),
@@ -201,11 +235,7 @@ export async function removeManagedWorktree(
     throw new Error(`Refusing cleanup with tracked or untracked changes: ${changed.join(", ")}`);
   }
   const head = await headRevision(ctx, expectedPath);
-  if (head !== expectedHead) {
-    throw new Error(
-      `Refusing cleanup because worktree HEAD ${head} does not match merged PR head ${expectedHead}`,
-    );
-  }
+  if (head !== expectedHead) await assertContainedInMergedHead(ctx, head, expectedHead, prNumber);
   await ctx.run("git", ["worktree", "remove", expectedPath], {
     cwd: ctx.controlPath,
     timeoutMs: 5 * 60_000,

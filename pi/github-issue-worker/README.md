@@ -35,7 +35,7 @@ QA and design-verification sessions evaluate its output before the controller ca
    conversation comments require an explicit `/pi` command.
 8. A maintainer may instead apply `pi-ready` directly to an existing same-repository PR targeting the configured base. The worker checks out that exact remote head in `worktrees/pr-<number>`, adopts its trusted `/pi` feedback, conflicts, and CI without opening another PR. Fork PRs and alternate bases fail closed.
 9. Every review, conflicting head/base pair, and CI-head event is persisted in SQLite, making handling
-   idempotent across restarts. After GitHub reports a tracked PR as merged, the cleanup service removes its clean, exact-head managed worktree; closed-unmerged PRs and dirty/diverged worktrees are preserved.
+   idempotent across restarts. After GitHub reports a tracked PR as merged, the cleanup service removes its clean managed worktree once every local commit is contained in the merged PR head (fetched from `refs/pull/<n>/head`, which survives squash merges and branch deletion); closed-unmerged PRs and dirty or diverged worktrees are preserved.
 
 Each repository child handles its work sequentially. This is intentional: repositories with integration
 databases, browser sessions, or expensive builds should not be fanned out accidentally. A per-profile
@@ -68,9 +68,13 @@ OS-read-only, write/edit tools are restricted to private evidence, and Docker da
 verifiers (the implementation worker retains its configured Docker policy). Tests/builds must use documented
 flags to put outputs/caches in private scratch space; if that is impossible, verification blocks with the exact
 requirement rather than relaxing isolation. The controller also hashes HEAD, index, tracked contents, and
-nonignored untracked contents before/after each verifier and rejects mutation. QA commands must match
-successful runner-recorded tool executions; browser evidence requires screenshot-command and image-read
-receipts. These are LLM-assisted behavioral/visual assessments, not mathematical proof of design equivalence.
+nonignored untracked contents before/after each verifier and rejects mutation. Every QA command claimed must
+be contained in a successful runner-recorded tool execution (whitespace and `;`/newline layout may differ; a
+claim can never add to what ran); browser evidence requires screenshot-command and image-read receipts. A
+verdict that describes a passing run but is malformed — invalid JSON, an unmatched command receipt, a
+misnamed log — gets exactly one repair turn in the same verifier session and is re-validated against the
+original run's receipts; failed or blocked verdicts are never sent back. These are LLM-assisted
+behavioral/visual assessments, not mathematical proof of design equivalence.
 
 Figma links in issue title/body (including Markdown, bare links, `/file`, `/design`, `/proto`, `/board`, and
 branch links) are canonicalized and deduplicated by file/node, ignoring tracking parameters. Exact HTTPS
@@ -313,7 +317,9 @@ Visual evidence is local and intentionally untracked:
 
 The controller adds `/.qa/` to its private control clone's Git exclude and never stages it on the feature
 branch. By default it rejects symlinked evidence, decodes and deterministically re-encodes PNG/GIF/WebM
-inside a credential-free networkless media sandbox, enforces per-file and per-run size limits, publishes
+inside a credential-free networkless media sandbox, enforces per-file and per-run size limits (a PNG
+screenshot over the limit fails the run; a workflow GIF/WebM over it is omitted and noted in the PR comment,
+as is a GIF that was never produced), publishes
 sanitized artifacts to the orphan `PI_WORKER_EVIDENCE_BRANCH`, and embeds the images/GIF in the PR
 comment. Set `PI_WORKER_PUBLISH_EVIDENCE=0` to keep evidence local only. Old local timestamped runs are
 removed after `PI_WORKER_QA_RETENTION_DAYS`; published branch history is retained.
@@ -356,7 +362,7 @@ PI_WORKER_DATA_DIR/
 ```
 
 A restart resumes claimed/implementing issues, adopted pull requests, unprocessed feedback for `addressing_review` jobs, and
-interrupted `addressing_ci` repairs in the persistent session. A poll-time cleanup service removes managed worktrees only after the associated PR is merged and only when the worktree is registered, clean, and still at the merged PR head; cleanup failures remain retryable in SQLite. CI attempts and handled head SHAs
+interrupted `addressing_ci` repairs in the persistent session. A poll-time cleanup service removes managed worktrees only after the associated PR is merged and only when the worktree is registered, clean, and holds no commit the merged PR head does not contain (a remote "Update branch" merge may leave the local branch behind the merged head; that is still safe to remove); cleanup failures remain retryable in SQLite. CI attempts and handled head SHAs
 survive restarts, preventing duplicate repair loops. Evidence runs have persistent `pending`, `valid`,
 `published`, `blocked`, and `invalid-terminal` states; failed historical captures are terminal and cannot
 poison a later successful PR or be retried on every poll. Runner/startup failures and isolated test timeouts

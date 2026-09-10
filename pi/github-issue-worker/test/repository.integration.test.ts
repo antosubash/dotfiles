@@ -136,7 +136,7 @@ test("repository manager adopts and safely removes a pull request worktree", asy
 
     await writeFile(join(worktree.path, "README.md"), "dirty\n");
     await assert.rejects(
-      manager.removeManagedWorktree("pull_request", 88, worktree.path, worktree.branch, featureHead),
+      manager.removeManagedWorktree("pull_request", 88, worktree.path, worktree.branch, featureHead, 88),
       /changes/,
     );
     await execFile("git", ["reset", "--hard", "HEAD"], { cwd: worktree.path });
@@ -148,6 +148,7 @@ test("repository manager adopts and safely removes a pull request worktree", asy
       worktree.path,
       worktree.branch,
       featureHead,
+      88,
     );
     await assert.rejects(access(worktree.path));
   } finally {

@@ -403,7 +403,7 @@ Adoption fails closed for fork heads, a base other than `PI_WORKER_BASE_BRANCH`,
 
 ## Merged PR worktree was not removed
 
-Cleanup runs inside every repository poll. It removes a managed worktree only after GitHub reports the PR as merged and only when the registered worktree is clean and its HEAD exactly matches the merged PR head. Inspect the job's `last_error` and the child journal; do not force-remove a dirty or diverged path. Closed-unmerged PRs are retained intentionally.
+Cleanup runs inside every repository poll. It removes a managed worktree only after GitHub reports the PR as merged and only when the registered worktree is clean and every commit on it is contained in the merged PR head, which the controller fetches from `refs/pull/<n>/head` when it is not already local. A worktree that is merely *behind* the merged head (for example after a remote "Update branch" merge) is removed; one holding a commit the merged head does not contain is preserved with `not contained in merged PR head` in `last_error`. Inspect the job's `last_error` and the child journal; do not force-remove a dirty or diverged path. Closed-unmerged PRs are retained intentionally.
 
 ## Inspecting state safely
 

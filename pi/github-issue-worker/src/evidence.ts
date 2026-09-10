@@ -107,10 +107,21 @@ export async function findLatestEvidenceRun(
   return runs.at(-1) ?? null;
 }
 
+export type EvidenceSkip = (name: string, reason: string) => void;
+
+const ATTACHMENT_LIMIT = 10 * 1024 * 1024;
+const RUN_LIMIT = 25 * 1024 * 1024;
+
+/**
+ * PNG screenshots are the evidence the gate validates, so their limits fail the run. A workflow GIF or
+ * WebM is supporting material: when it breaches a limit it is skipped and reported instead.
+ */
 export async function collectEvidenceAttachments(
   runDir: string,
-  include: (name: string) => boolean = () => true,
+  options: { include?: (name: string) => boolean; onSkip?: EvidenceSkip } = {},
 ): Promise<EvidenceAttachment[]> {
+  const include = options.include ?? (() => true);
+  const onSkip = options.onSkip ?? (() => {});
   await assertCanonicalDirectory(runDir);
   const names = (await readdir(runDir))
     .filter((name) => /\.(?:png|gif|webm)$/i.test(name) && include(name))
@@ -124,13 +135,19 @@ export async function collectEvidenceAttachments(
     const path = join(runDir, name);
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink()) continue;
-    if (info.size > 10 * 1024 * 1024) throw new Error(`QA attachment exceeds 10 MiB: ${name}`);
-    const content = await readFile(path);
     const mediaType = name.toLowerCase().endsWith(".png")
       ? "image/png"
       : name.toLowerCase().endsWith(".gif")
         ? "image/gif"
         : "video/webm";
+    const optional = mediaType !== "image/png";
+    const overLimit = (message: string): boolean => {
+      if (!optional) throw new Error(message);
+      onSkip(name, message);
+      return true;
+    };
+    if (info.size > ATTACHMENT_LIMIT && overLimit(`QA attachment exceeds 10 MiB: ${name}`)) continue;
+    const content = await readFile(path);
     const valid = mediaType === "image/png"
       ? content.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
       : mediaType === "image/gif"
@@ -138,11 +155,9 @@ export async function collectEvidenceAttachments(
         : content.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
     if (!valid) throw new Error(`QA attachment has invalid ${mediaType} signature: ${name}`);
     const sanitized = await sanitizedMedia(path, mediaType);
-    if (sanitized.length > 10 * 1024 * 1024) {
-      throw new Error(`Sanitized QA attachment exceeds 10 MiB: ${name}`);
-    }
+    if (sanitized.length > ATTACHMENT_LIMIT && overLimit(`Sanitized QA attachment exceeds 10 MiB: ${name}`)) continue;
+    if (totalBytes + sanitized.length > RUN_LIMIT && overLimit(`QA attachments exceed the 25 MiB run limit: ${name}`)) continue;
     totalBytes += sanitized.length;
-    if (totalBytes > 25 * 1024 * 1024) throw new Error("QA attachments exceed the 25 MiB run limit");
     attachments.push({ name, content: sanitized, mediaType });
   }
   return attachments;
@@ -150,11 +165,12 @@ export async function collectEvidenceAttachments(
 
 export async function collectFinalEvidenceAttachments(
   runDir: string,
+  onSkip?: EvidenceSkip,
 ): Promise<EvidenceAttachment[]> {
-  return await collectEvidenceAttachments(
-    runDir,
-    (name) => !/^preflight(?:[._-]|$)/i.test(name),
-  );
+  return await collectEvidenceAttachments(runDir, {
+    include: (name) => !/^preflight(?:[._-]|$)/i.test(name),
+    ...(onSkip ? { onSkip } : {}),
+  });
 }
 
 export async function removeExpiredEvidence(

@@ -4,6 +4,7 @@ import {
   collectFinalEvidenceAttachments,
   convertWebmToGif,
   createEvidenceRun,
+  type EvidenceAttachment,
   type EvidenceRun,
 } from "../evidence.js";
 import { buildUiVerificationPrompt } from "../prompts.js";
@@ -108,22 +109,38 @@ export async function runUiVerification(
   return evidence;
 }
 
+/**
+ * PNG screenshots are mandatory: they are what the gate validates. The workflow GIF is supporting
+ * material, so a missing or oversized one is reported in the PR note rather than blocking the run.
+ */
+async function finalAttachments(runDir: string): Promise<{ attachments: EvidenceAttachment[]; omitted: string[] }> {
+  const skipped: Array<{ name: string; reason: string }> = [];
+  const attachments = await collectFinalEvidenceAttachments(runDir, (name, reason) => skipped.push({ name, reason }));
+  const omitted = skipped.map(({ name, reason }) => `\`${name}\` — ${reason}`);
+  const hasGif = attachments.some((item) => item.mediaType === "image/gif") ||
+    skipped.some(({ name }) => /\.gif$/i.test(name));
+  if (!hasGif) omitted.push("workflow GIF was not produced");
+  return { attachments, omitted };
+}
+
+function omissionNote(omitted: string[]): string {
+  return omitted.length === 0 ? "" : `\n\nOmitted evidence:\n${omitted.map((entry) => `- ${entry}`).join("\n")}`;
+}
+
 export async function finalizeEvidence(ctx: WorkerContext, evidence: EvidenceRun | null): Promise<void> {
   if (!evidence) return;
   try {
     await finishRequestedGif(evidence.runDir);
-    const attachments = await collectFinalEvidenceAttachments(evidence.runDir);
+    const { attachments, omitted } = await finalAttachments(evidence.runDir);
     if (!attachments.some((item) => item.mediaType === "image/png")) {
       throw new Error("Visual QA produced no PNG screenshot");
-    }
-    if (!attachments.some((item) => item.mediaType === "image/gif")) {
-      throw new Error("Visual QA produced no workflow GIF");
     }
     ctx.state.recordEvidenceRun(
       evidence.issueNumber,
       evidence.prNumber,
       evidence.runId,
       "valid",
+      omitted.length > 0 ? omissionNote(omitted).trim() : undefined,
     );
   } catch (error) {
     const report = await readFile(join(evidence.runDir, "report.md"), "utf8").catch(() => "");
@@ -150,7 +167,7 @@ export async function publishEvidence(
 ): Promise<{ note: string; eventKey: string } | null> {
   if (!evidence || typeof ctx.github.publishEvidence !== "function") return null;
   await finalizeEvidence(ctx, evidence);
-  const attachments = await collectFinalEvidenceAttachments(evidence.runDir);
+  const { attachments, omitted } = await finalAttachments(evidence.runDir);
   if (attachments.length === 0) return null;
   const runId = basename(evidence.runDir);
   const eventKey = `evidence:${prNumber}:${runId}`;
@@ -167,7 +184,7 @@ export async function publishEvidence(
     ctx.state.markProcessed(evidence.issueNumber, eventKey);
     return null;
   }
-  return { note, eventKey };
+  return { note: `${note}${omissionNote(omitted)}`, eventKey };
 }
 
 export async function publishBlockedEvidence(

@@ -68,6 +68,7 @@ test("merged pull request cleanup removes its managed worktree exactly once", as
       join(root, "worktrees", "pr-88"),
       "feature/adopt-me",
       "abc123",
+      88,
     ]);
     assert.equal(state.requireJob(88).status, "completed");
     assert.equal(state.hasProcessed("worktree-cleanup:88:abc123"), true);

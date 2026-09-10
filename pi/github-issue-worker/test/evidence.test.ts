@@ -104,6 +104,42 @@ test("only signature-validated visual artifacts are publishable", async () => {
   }
 });
 
+// Shape taken from iiasa/IIASA.GeoWiki#558: a workflow GIF over 10 MiB made the
+// whole run terminal even though the PNG screenshots were valid.
+test("an oversized workflow GIF is skipped with a note while PNG screenshots still publish", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-worker-oversized-"));
+  try {
+    const validPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    await writeFile(join(directory, "desktop.png"), validPng);
+    const oversized = Buffer.alloc(11 * 1024 * 1024);
+    oversized.write("GIF89a", 0, "ascii");
+    await writeFile(join(directory, "workflow.gif"), oversized);
+    const skipped: Array<{ name: string; reason: string }> = [];
+    const attachments = await collectFinalEvidenceAttachments(directory, (name, reason) => skipped.push({ name, reason }));
+    assert.deepEqual(attachments.map((attachment) => attachment.name), ["desktop.png"]);
+    assert.equal(skipped.length, 1);
+    assert.equal(skipped[0]!.name, "workflow.gif");
+    assert.match(skipped[0]!.reason, /10 MiB/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an oversized PNG screenshot still fails the run", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-worker-oversized-png-"));
+  try {
+    const oversized = Buffer.alloc(11 * 1024 * 1024);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(oversized);
+    await writeFile(join(directory, "desktop.png"), oversized);
+    await assert.rejects(() => collectEvidenceAttachments(directory), /exceeds 10 MiB: desktop\.png/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("preflight probes cannot satisfy or enter final evidence", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-worker-final-attachments-"));
   try {
