@@ -116,13 +116,15 @@ function verdictJson(overrides: Record<string, unknown> = {}) {
 }
 
 /** Scripted verifier: each entry is one agent turn's final text plus the commands the runner recorded during it. */
-function scriptedAgent(turns: Array<{ finalText: string; recorded?: string[] }>) {
+function scriptedAgent(turns: Array<{ finalText: string; recorded?: string[]; mutate?: (evidenceDir: string) => Promise<void> }>) {
   const calls: Array<{ sessionFile: string | null; prompt: string }> = [];
   const agent: Pick<PiAgentRunner, "run"> = { run: async (options) => {
     const turn = turns[calls.length];
     if (!turn) throw new Error(`unexpected agent turn ${calls.length + 1}`);
     calls.push({ sessionFile: options.sessionFile, prompt: options.prompt });
-    await writeFile(join(options.verification!.evidenceDir, "checks.log"), "test output\n", { flag: "a" });
+    // Only the first turn writes evidence: a compliant repair turn re-emits JSON and changes nothing on disk.
+    if (calls.length === 1) await writeFile(join(options.verification!.evidenceDir, "checks.log"), "test output\n");
+    if (turn.mutate) await turn.mutate(options.verification!.evidenceDir);
     return { sessionFile: join(options.sessionDir, "qa.jsonl"), finalText: turn.finalText,
       verificationEvidence: { commands: (turn.recorded ?? []).map((command) => ({ command, output: "ok" })), readPaths: [] } };
   } };
@@ -176,6 +178,24 @@ test("the repair turn cannot add evidence: only the original run's receipts coun
     const claimsLint = verdictJson({ commands: [{ command: "pnpm lint", status: "passed", log: "checks.log" }] });
     const { agent, calls } = scriptedAgent([{ finalText: claimsLint, recorded: ["pnpm test"] }, { finalText: claimsLint, recorded: ["pnpm lint"] }]);
     await assert.rejects(new QaVerificationService(f.config, agent).verify(issue, f.worktree, null), /runner-recorded/);
+    assert.equal(calls.length, 2);
+  } finally { await f.cleanup(); }
+});
+
+test("a repair turn that changes evidence is rejected without a further repair", async () => {
+  const f = await worktreeFixture();
+  try {
+    const malformed = verdictJson({ commands: [{ command: "pnpm test --coverage", status: "passed", log: "checks.log" }] });
+    const corrected = verdictJson();
+    const { agent, calls } = scriptedAgent([
+      { finalText: malformed, recorded: ["pnpm test"] },
+      { finalText: corrected, recorded: ["pnpm test"], mutate: (evidenceDir) => writeFile(join(evidenceDir, "checks.log"), "tampered\n") },
+    ]);
+    await assert.rejects(new QaVerificationService(f.config, agent).verify(issue, f.worktree, null), (error: Error) => {
+      assert.match(error.message, /repair turn changed evidence/);
+      assert.doesNotMatch(error.message, /runner-recorded/);
+      return true;
+    });
     assert.equal(calls.length, 2);
   } finally { await f.cleanup(); }
 });

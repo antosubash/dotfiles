@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
 import type { WorkerConfig } from "./config.js";
 import { execFile } from "./exec.js";
 import { assertBrowserExecution, regularFile, sourceFingerprint } from "./figma-verification.js";
@@ -15,6 +15,30 @@ import type { GitHubIssue, VerificationEvidence } from "./types.js";
  * misnamed log). Unlike a substantive failure, this earns one repair turn: the verifier re-emits the JSON.
  */
 export class QaReportingError extends Error {}
+
+/**
+ * Fingerprint every regular file under `dir` (recursively, symlinks skipped). Validation re-reads log and
+ * screenshot bytes from disk by claimed relative path, so a repair turn could pass validation by pinning
+ * commands while silently rewriting the files those commands are claimed to have produced. Comparing this
+ * fingerprint before and after the repair turn catches that: a repair may only re-emit the verdict JSON.
+ */
+export async function directoryFingerprint(dir: string): Promise<string> {
+  const files: string[] = [];
+  const walk = async (current: string): Promise<void> => {
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      const absolute = join(current, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) { await walk(absolute); continue; }
+      if (!entry.isFile()) continue;
+      const digest = createHash("sha256").update(await readFile(absolute)).digest("hex");
+      files.push(`${relative(dir, absolute)}\0${digest}`);
+    }
+  };
+  await walk(dir);
+  const hash = createHash("sha256");
+  for (const entry of files.sort()) hash.update(entry).update("\n");
+  return hash.digest("hex");
+}
 
 /**
  * Split a recorded/claimed command into its individual statements (on `;` or newline), collapsing
@@ -180,8 +204,13 @@ Source is fingerprinted before/after: any mutation invalidates verification.`,
         verdict = await validate(result.finalText, result.verificationEvidence);
       } catch (error) {
         if (!(error instanceof QaReportingError)) throw error;
+        // Validation only reads, so fingerprinting here still captures the evidence exactly as the first run left it.
+        const evidenceFingerprint = await directoryFingerprint(evidenceDir);
         const repaired = await this.agent.run({ ...runOptions, sessionFile: result.sessionFile, prompt: repairPrompt(error) });
         await writeFile(join(runDir, "verdict-repaired.txt"), repaired.finalText, { mode: 0o600, flag: "wx" });
+        if (await directoryFingerprint(evidenceDir) !== evidenceFingerprint) {
+          throw new Error("QA repair turn changed evidence; a repair may only re-emit the verdict.");
+        }
         verdict = await validate(repaired.finalText, result.verificationEvidence);
       }
       await writeFile(reportPath, JSON.stringify({ status: "passed", sourceFingerprint: source, plan, verdict, execution: result.verificationEvidence }, null, 2), { mode: 0o600, flag: "wx" });

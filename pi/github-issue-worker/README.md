@@ -73,7 +73,8 @@ be contained in a successful runner-recorded tool execution (whitespace and `;`/
 claim can never add to what ran); browser evidence requires screenshot-command and image-read receipts. A
 verdict that describes a passing run but is malformed — invalid JSON, an unmatched command receipt, a
 misnamed log — gets exactly one repair turn in the same verifier session and is re-validated against the
-original run's receipts; failed or blocked verdicts are never sent back. These are LLM-assisted
+original run's receipts; evidence files are fingerprinted across the repair turn and any change to them
+rejects the verdict outright, with no further repair. Failed or blocked verdicts are never sent back. These are LLM-assisted
 behavioral/visual assessments, not mathematical proof of design equivalence.
 
 Figma links in issue title/body (including Markdown, bare links, `/file`, `/design`, `/proto`, `/board`, and
