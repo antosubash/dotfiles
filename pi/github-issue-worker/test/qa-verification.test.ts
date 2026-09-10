@@ -52,6 +52,21 @@ test("a claim may drop trailing exit-status bookkeeping but not a trailing comma
   assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded("npm test; npm run lint")), /runner-recorded/);
 });
 
+// A trailing `echo`/`printf` is only bookkeeping when it actually reports the exit status. Bare text —
+// or a variable never captured from `$?` — always succeeds regardless of what ran before it, exactly
+// like `true`, so it must not be droppable: `npm test; echo done` must not read as a bare passing
+// `npm test` just because the trailing statement happens to start with `echo`.
+test("a trailing echo/printf must reference the exit status to count as bookkeeping", () => {
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded("npm test; echo done")), /runner-recorded/);
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded(`npm test; printf 'done\\n'`)), /runner-recorded/);
+  assert.throws(
+    () => assertQaExecution(verdict("npm test"), runnerRecorded("npm test\nstatus=$?\necho unrelated")),
+    /runner-recorded/,
+  );
+  assertQaExecution(verdict("npm test"), runnerRecorded("npm test; echo $?"));
+  assertQaExecution(verdict("npm test"), runnerRecorded(`npm test\nstatus=$?\necho "$status"`));
+});
+
 // A claimed command must match a whole recorded statement, not just any contiguous slice of text: a
 // name like `npm test` is a plain prefix of the unrelated `npm test:unit --silent`, and matching a
 // partial word would let a verifier claim a command it never ran.
