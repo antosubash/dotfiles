@@ -128,6 +128,29 @@ test("an oversized workflow GIF is skipped with a note while PNG screenshots sti
   }
 });
 
+// A corrupt/truncated workflow GIF is the same class of problem as an oversized one: supporting
+// material, not the evidence the gate validates, so it must be skipped rather than blocking an
+// otherwise-valid PNG screenshot.
+test("a workflow GIF with an invalid signature is skipped with a note while PNG screenshots still publish", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-worker-corrupt-gif-"));
+  try {
+    const validPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    await writeFile(join(directory, "desktop.png"), validPng);
+    await writeFile(join(directory, "workflow.gif"), Buffer.from("not a gif"));
+    const skipped: Array<{ name: string; reason: string }> = [];
+    const attachments = await collectFinalEvidenceAttachments(directory, (name, reason) => skipped.push({ name, reason }));
+    assert.deepEqual(attachments.map((attachment) => attachment.name), ["desktop.png"]);
+    assert.equal(skipped.length, 1);
+    assert.equal(skipped[0]!.name, "workflow.gif");
+    assert.match(skipped[0]!.reason, /invalid image\/gif signature/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("an oversized PNG screenshot still fails the run", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-worker-oversized-png-"));
   try {

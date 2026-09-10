@@ -16,20 +16,42 @@ import type { GitHubIssue, VerificationEvidence } from "./types.js";
  */
 export class QaReportingError extends Error {}
 
-/** Collapse statement separators and whitespace so a verdict's echo of a command compares by content, not layout. */
-function canonicalCommand(command: string): string {
-  return command.replace(/\s*;\s*/g, " ").replace(/\s+/g, " ").trim();
+/**
+ * Split a recorded/claimed command into its individual statements (on `;` or newline), collapsing
+ * internal whitespace per statement. Matching whole statements, rather than raw substrings of the
+ * flattened text, keeps a claim of `npm test` from being "contained in" an unrelated `npm test:unit`
+ * recording just because one string happens to prefix the other.
+ */
+function splitStatements(command: string): string[] {
+  return command
+    .split(/[;\n]/)
+    .map((statement) => statement.replace(/\s+/g, " ").trim())
+    .filter((statement) => statement.length > 0);
+}
+
+/** True when `needle` appears as a contiguous, whole-statement run inside `haystack`. */
+function containsConsecutiveStatements(haystack: string[], needle: string[]): boolean {
+  if (needle.length === 0 || needle.length > haystack.length) return false;
+  for (let start = 0; start <= haystack.length - needle.length; start++) {
+    if (needle.every((statement, index) => haystack[start + index] === statement)) return true;
+  }
+  return false;
 }
 
 /**
  * Every claimed command must be contained in a successful runner-recorded execution. The recording is
- * ground truth, so a claim may omit wrapper lines (exit-status capture) but may never add to what ran.
+ * ground truth, so a claim may omit wrapper statements (exit-status capture) but may never add to what
+ * ran, and may never be satisfied by a partial-word match against an unrelated recorded statement.
  */
 export function assertQaExecution(verdict: unknown, evidence: VerificationEvidence | undefined): void {
   const report = verdict as { commands: Array<{ command: string }> };
-  const recorded = (evidence?.commands ?? []).map((record) => canonicalCommand(record.command));
-  const executed = (command: string) => command.length > 0 && recorded.some((record) => record.includes(command));
-  if (!evidence || !report.commands.every((command) => executed(canonicalCommand(command.command)))) {
+  const recordedRuns = (evidence?.commands ?? []).map((record) => splitStatements(record.command));
+  const executed = (claimed: string): boolean => {
+    const claimedStatements = splitStatements(claimed);
+    return claimedStatements.length > 0 &&
+      recordedRuns.some((statements) => containsConsecutiveStatements(statements, claimedStatements));
+  };
+  if (!evidence || !report.commands.every((command) => executed(command.command))) {
     throw new QaReportingError("QA verdict claims commands without successful runner-recorded execution.");
   }
 }

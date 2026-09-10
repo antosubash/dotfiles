@@ -42,6 +42,20 @@ test("command receipts reject commands that were never recorded or that add to w
   assert.throws(() => assertQaExecution(verdict(claimed, "git diff --check"), runnerRecorded(recorded)), /runner-recorded/);
 });
 
+// A claimed command must match a whole recorded statement, not just any contiguous slice of text: a
+// name like `npm test` is a plain prefix of the unrelated `npm test:unit --silent`, and matching a
+// partial word would let a verifier claim a command it never ran.
+test("command receipts reject a claim that is only a partial-word match of an unrelated recorded command", () => {
+  assert.throws(
+    () => assertQaExecution(verdict("npm test"), runnerRecorded("npm test:unit --silent")),
+    /runner-recorded/,
+  );
+  assert.throws(
+    () => assertQaExecution(verdict("pnpm lint"), runnerRecorded("pnpm lint:fix --quiet")),
+    /runner-recorded/,
+  );
+});
+
 const qaChecks = DEFAULT_QA_CHECKS.map((id) => ({ id, status: "passed", notes: "observed" }));
 
 function passedVerdict(log: unknown) {

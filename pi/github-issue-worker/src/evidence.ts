@@ -141,22 +141,31 @@ export async function collectEvidenceAttachments(
         ? "image/gif"
         : "video/webm";
     const optional = mediaType !== "image/png";
-    const overLimit = (message: string): boolean => {
+    // PNG screenshots are what the gate validates, so any defect fails the run; a GIF/WebM is
+    // supporting material, so every defect here (oversized, corrupt, or over the run budget) is
+    // skipped and reported instead of blocking otherwise-valid PNG evidence.
+    const skippable = (message: string): boolean => {
       if (!optional) throw new Error(message);
       onSkip(name, message);
       return true;
     };
-    if (info.size > ATTACHMENT_LIMIT && overLimit(`QA attachment exceeds 10 MiB: ${name}`)) continue;
+    if (info.size > ATTACHMENT_LIMIT && skippable(`QA attachment exceeds 10 MiB: ${name}`)) continue;
     const content = await readFile(path);
     const valid = mediaType === "image/png"
       ? content.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
       : mediaType === "image/gif"
         ? /^(?:GIF87a|GIF89a)$/.test(content.subarray(0, 6).toString("ascii"))
         : content.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
-    if (!valid) throw new Error(`QA attachment has invalid ${mediaType} signature: ${name}`);
-    const sanitized = await sanitizedMedia(path, mediaType);
-    if (sanitized.length > ATTACHMENT_LIMIT && overLimit(`Sanitized QA attachment exceeds 10 MiB: ${name}`)) continue;
-    if (totalBytes + sanitized.length > RUN_LIMIT && overLimit(`QA attachments exceed the 25 MiB run limit: ${name}`)) continue;
+    if (!valid && skippable(`QA attachment has invalid ${mediaType} signature: ${name}`)) continue;
+    let sanitized: Buffer;
+    try {
+      sanitized = await sanitizedMedia(path, mediaType);
+    } catch (error) {
+      skippable(error instanceof Error ? error.message : String(error));
+      continue;
+    }
+    if (sanitized.length > ATTACHMENT_LIMIT && skippable(`Sanitized QA attachment exceeds 10 MiB: ${name}`)) continue;
+    if (totalBytes + sanitized.length > RUN_LIMIT && skippable(`QA attachments exceed the 25 MiB run limit: ${name}`)) continue;
     totalBytes += sanitized.length;
     attachments.push({ name, content: sanitized, mediaType });
   }
