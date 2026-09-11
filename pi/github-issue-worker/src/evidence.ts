@@ -107,7 +107,12 @@ export async function findLatestEvidenceRun(
   return runs.at(-1) ?? null;
 }
 
-export type EvidenceSkip = (name: string, reason: string) => void;
+/**
+ * Reports an attachment left out of a run. Carries the `mediaType` this collection already classified,
+ * so callers never re-derive it from the filename — a second classifier in another file would be free to
+ * drift away from this one.
+ */
+export type EvidenceSkip = (skip: { name: string; mediaType: MediaType; reason: string }) => void;
 
 const ATTACHMENT_LIMIT = 10 * 1024 * 1024;
 const RUN_LIMIT = 25 * 1024 * 1024;
@@ -152,7 +157,7 @@ export async function collectEvidenceAttachments(
     // skipped and reported instead of blocking otherwise-valid PNG evidence.
     const skippable = (message: string): boolean => {
       if (!optional) throw new Error(message);
-      onSkip(name, message);
+      onSkip({ name, mediaType, reason: message });
       return true;
     };
     if (info.size > ATTACHMENT_LIMIT && skippable(`QA attachment exceeds 10 MiB: ${name}`)) continue;

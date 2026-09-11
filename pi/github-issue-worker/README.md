@@ -69,7 +69,8 @@ verifiers (the implementation worker retains its configured Docker policy). Test
 flags to put outputs/caches in private scratch space; if that is impossible, verification blocks with the exact
 requirement rather than relaxing isolation. The controller also hashes HEAD, index, tracked contents, and
 nonignored untracked contents before/after each verifier and rejects mutation. Every QA command claimed must
-be contained in a successful runner-recorded tool execution (whitespace and `;`/newline layout may differ, and
+be contained in a successful runner-recorded tool execution (whitespace and `;`/newline layout may differ —
+separators inside quotes are data, not statement boundaries — and
 a claim may leave out trailing exit-status bookkeeping, but never a trailing command and never anything that
 did not run). This proves a command was invoked and that its run exited zero — not that the check it performed
 passed: a run wrapped in status bookkeeping exits zero whatever the wrapped command did, and the verdict's own

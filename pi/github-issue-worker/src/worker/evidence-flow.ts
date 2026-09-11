@@ -7,6 +7,7 @@ import {
   type EvidenceAttachment,
   type EvidenceRun,
 } from "../evidence.js";
+import type { MediaType } from "../media.js";
 import { buildUiVerificationPrompt } from "../prompts.js";
 import { loadQaManifest } from "../qa-manifest.js";
 import type { IssueJob } from "../types.js";
@@ -114,12 +115,12 @@ export async function runUiVerification(
  * material, so a missing or oversized one is reported in the PR note rather than blocking the run.
  */
 async function finalAttachments(runDir: string): Promise<{ attachments: EvidenceAttachment[]; omitted: string[] }> {
-  const skipped: Array<{ name: string; reason: string }> = [];
-  const attachments = await collectFinalEvidenceAttachments(runDir, (name, reason) => skipped.push({ name, reason }));
+  const skipped: Array<{ name: string; mediaType: MediaType; reason: string }> = [];
+  const attachments = await collectFinalEvidenceAttachments(runDir, (skip) => skipped.push(skip));
   const omitted = skipped.map(({ name, reason }) => `\`${name}\` — ${reason}`);
-  const hasGif = attachments.some((item) => item.mediaType === "image/gif") ||
-    skipped.some(({ name }) => /\.gif$/i.test(name));
-  if (!hasGif) omitted.push("workflow GIF was not produced");
+  // Both lists carry the media type evidence collection assigned, so nothing here re-classifies by name.
+  const isGif = (item: { mediaType: MediaType }) => item.mediaType === "image/gif";
+  if (!attachments.some(isGif) && !skipped.some(isGif)) omitted.push("workflow GIF was not produced");
   return { attachments, omitted };
 }
 

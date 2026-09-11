@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
-import type { EvidenceRun } from "../src/evidence.js";
+import { collectFinalEvidenceAttachments, type EvidenceRun } from "../src/evidence.js";
 import { finalizeEvidence, publishEvidence } from "../src/worker/evidence-flow.js";
 import type { WorkerContext } from "../src/worker/shared.js";
 
@@ -67,6 +67,21 @@ test("an oversized workflow GIF is omitted from a valid run and the published no
     assert.match(result?.note ?? "", /workflow\.gif/);
     assert.match(result?.note ?? "", /10 MiB/);
     assert.ok(f.recorded.some((entry) => entry.status === "valid"));
+  } finally { await f.cleanup(); }
+});
+
+// The GIF-attempted note must come from the classification evidence.ts already performed, not from a
+// second filename regex in another file that could drift out of sync with it.
+test("a skipped attachment reports the media type evidence collection assigned it", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(join(f.runDir, "desktop.png"), png);
+    await writeFile(join(f.runDir, "workflow.gif"), oversizedGif());
+    const skipped: Array<{ name: string; mediaType: string; reason: string }> = [];
+    await collectFinalEvidenceAttachments(f.runDir, (skip) => skipped.push(skip));
+    assert.deepEqual(skipped.map(({ name, mediaType }) => ({ name, mediaType })), [
+      { name: "workflow.gif", mediaType: "image/gif" },
+    ]);
   } finally { await f.cleanup(); }
 });
 

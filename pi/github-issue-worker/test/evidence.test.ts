@@ -117,8 +117,8 @@ test("an oversized workflow GIF is skipped with a note while PNG screenshots sti
     const oversized = Buffer.alloc(11 * 1024 * 1024);
     oversized.write("GIF89a", 0, "ascii");
     await writeFile(join(directory, "workflow.gif"), oversized);
-    const skipped: Array<{ name: string; reason: string }> = [];
-    const attachments = await collectFinalEvidenceAttachments(directory, (name, reason) => skipped.push({ name, reason }));
+    const skipped: Array<{ name: string; mediaType: string; reason: string }> = [];
+    const attachments = await collectFinalEvidenceAttachments(directory, (skip) => skipped.push(skip));
     assert.deepEqual(attachments.map((attachment) => attachment.name), ["desktop.png"]);
     assert.equal(skipped.length, 1);
     assert.equal(skipped[0]!.name, "workflow.gif");
@@ -140,8 +140,8 @@ test("a workflow GIF with an invalid signature is skipped with a note while PNG 
     );
     await writeFile(join(directory, "desktop.png"), validPng);
     await writeFile(join(directory, "workflow.gif"), Buffer.from("not a gif"));
-    const skipped: Array<{ name: string; reason: string }> = [];
-    const attachments = await collectFinalEvidenceAttachments(directory, (name, reason) => skipped.push({ name, reason }));
+    const skipped: Array<{ name: string; mediaType: string; reason: string }> = [];
+    const attachments = await collectFinalEvidenceAttachments(directory, (skip) => skipped.push(skip));
     assert.deepEqual(attachments.map((attachment) => attachment.name), ["desktop.png"]);
     assert.equal(skipped.length, 1);
     assert.equal(skipped[0]!.name, "workflow.gif");
@@ -187,8 +187,8 @@ test("an accepted optional GIF never causes a later mandatory PNG to blow the ru
       "-v", "error", "-f", "lavfi", "-i", "nullsrc=size=2650x2650,geq=random(1)*255:128:128",
       "-frames:v", "1", join(directory, "mobile.png"), "-y",
     ]);
-    const skipped: Array<{ name: string; reason: string }> = [];
-    const attachments = await collectEvidenceAttachments(directory, { onSkip: (name, reason) => skipped.push({ name, reason }) });
+    const skipped: Array<{ name: string; mediaType: string; reason: string }> = [];
+    const attachments = await collectEvidenceAttachments(directory, { onSkip: (skip) => skipped.push(skip) });
     assert.deepEqual(attachments.map((attachment) => attachment.name).sort(), ["desktop.png", "mobile.png"]);
     assert.equal(skipped.length, 1);
     assert.equal(skipped[0]!.name, "diagram.gif");
