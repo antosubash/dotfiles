@@ -266,6 +266,11 @@ test("the verifier prompt describes fingerprinting, not a read-only mount, when 
     await new QaVerificationService({ ...f.config, sandbox: false }, agent).verify(issue, f.worktree, null);
     assert.match(calls[0]!.prompt, /merely not running is not an unavailable dependency/);
     assert.match(calls[0]!.prompt, /report blocked only with the exact launch failure/);
+    // Attempt 5 on #501: the verifier built with --no-restore and a stale node_modules after a base merge and
+    // reported 44 missing-assets errors as a code failure. Restore first; untouched-file failures are notes.
+    assert.match(calls[0]!.prompt, /Restore and install dependencies first, exactly as the repository's CI does/);
+    assert.match(calls[0]!.prompt, /Never pass `--no-restore`\/`--no-build` unless this session restored\/built that exact project/);
+    assert.match(calls[0]!.prompt, /fails only in files the task diff does not touch, after a fresh restore\/install, is a\npre-existing base-branch condition/);
     assert.doesNotMatch(calls[0]!.prompt, /OS-read-only/);
   } finally { await f.cleanup(); }
 });

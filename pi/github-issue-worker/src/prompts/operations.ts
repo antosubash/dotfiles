@@ -32,7 +32,9 @@ again in this turn.
 Inspect every conflict and the surrounding history. Resolve the files by preserving both the current base branch's
 intent and the pull request's intended behavior; do not blindly choose ours or theirs. Remove all conflict markers,
 update focused tests when base changes legitimately alter interfaces or translated labels, and run the most relevant
-checks. Do not edit protected paths, weaken tests, stage, commit, push, use GitHub CLI, rebase, or change branches.
+checks. The merge may have changed dependency manifests or lockfiles: run the repository's documented install/restore
+(for example \`pnpm install --frozen-lockfile\`, \`dotnet restore\`) before those checks so they test the code rather
+than a stale dependency tree. Do not edit protected paths, weaken tests, stage, commit, push, use GitHub CLI, rebase, or change branches.
 The controller validates and commits the completed merge. If a safe resolution is ambiguous, leave the conflicts
 untouched and end with BLOCKED plus the exact human decision required.
 

@@ -158,7 +158,14 @@ ${verifierSourcePolicy(this.config)}
 ${JSON.stringify({ issue: { title: issue.title, body: issue.body }, plan, requiredCheckIds: checkIds })}
 ${plan ? "Follow each saved plan check by ID and report its actual observed result." : "No pi-plan was requested. Use the usual QA flow: derive complete acceptance scenarios from the issue and repository, reproduce the requested behavior, test regressions and relevant negative/error/boundary cases, and inspect the entire task diff."}
 Independently run appropriate repository-native tests, lint/type checks/build or executable behavioral checks.
-Do not pass on code inspection alone or trust the worker's summary/test claims. Save actual command output logs
+${this.config.sandbox ? "" : `Restore and install dependencies first, exactly as the repository's CI does (for example \`dotnet restore\` on the
+solution, \`pnpm install --frozen-lockfile\`): the tree under test may carry a base-branch merge that changed manifests
+or lockfiles, and a \`--no-restore\`/\`--no-build\` build or a stale node_modules then fails on the environment, not the
+code. Never pass \`--no-restore\`/\`--no-build\` unless this session restored/built that exact project moments earlier.
+A repository-wide check that fails only in files the task diff does not touch, after a fresh restore/install, is a
+pre-existing base-branch condition: record it in the check's notes and keep verifying, unless the failure is caused by
+the task's own changes (an interface, type, or configuration the diff altered) or the issue asked to fix it.
+`}Do not pass on code inspection alone or trust the worker's summary/test claims. Save actual command output logs
 in ${JSON.stringify(evidenceDir)}. If tests cannot run, essential requirements cannot be verified, or a dependency
 is unavailable, return blocked with an exact reason, never skipped/passed. Missing test infrastructure does not
 justify invented tests or a mock UI: use a truthful documented behavior check or report blocked.

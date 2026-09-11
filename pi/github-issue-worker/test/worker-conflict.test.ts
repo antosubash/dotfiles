@@ -53,9 +53,8 @@ test("a conflicting tracked PR is merged from base and resolved through its pers
     run: async (options: { prompt: string; sessionFile: string | null }) => {
       runs += 1;
       assert.match(options.prompt, /Resolve merge conflicts/);
-      // A resumed session may "remember" a resolution the controller discarded (#501, attempt 3): say so.
-      assert.match(options.prompt, /contain conflict markers RIGHT NOW/);
-      assert.match(options.prompt, /that work was discarded by the controller/);
+      // #501 attempts 3 and 5: a resumed session "remembered" a discarded resolution; checks ran on a stale install.
+      for (const rule of [/contain conflict markers RIGHT NOW/, /that work was discarded by the controller/, /documented install\/restore/]) assert.match(options.prompt, rule);
       assert.equal(options.sessionFile, join(root, "session.jsonl"));
       return { sessionFile: join(root, "session.jsonl"), finalText: "Resolved both intents and tested." };
     },
