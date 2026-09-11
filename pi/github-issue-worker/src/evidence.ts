@@ -107,14 +107,36 @@ export async function findLatestEvidenceRun(
   return runs.at(-1) ?? null;
 }
 
+/**
+ * Reports an attachment left out of a run. Carries the `mediaType` this collection already classified,
+ * so callers never re-derive it from the filename — a second classifier in another file would be free to
+ * drift away from this one.
+ */
+export type EvidenceSkip = (skip: { name: string; mediaType: MediaType; reason: string }) => void;
+
+const ATTACHMENT_LIMIT = 10 * 1024 * 1024;
+const RUN_LIMIT = 25 * 1024 * 1024;
+
+/**
+ * PNG screenshots are the evidence the gate validates, so their limits fail the run. A workflow GIF or
+ * WebM is supporting material: when it breaches a limit it is skipped and reported instead.
+ */
 export async function collectEvidenceAttachments(
   runDir: string,
-  include: (name: string) => boolean = () => true,
+  options: { include?: (name: string) => boolean; onSkip?: EvidenceSkip } = {},
 ): Promise<EvidenceAttachment[]> {
+  const include = options.include ?? (() => true);
+  const onSkip = options.onSkip ?? (() => {});
   await assertCanonicalDirectory(runDir);
+  // Mandatory PNGs are ordered before optional GIF/WebM so the shared run budget is reserved for
+  // required evidence first: an optional attachment must never consume budget that causes a later,
+  // otherwise-valid PNG to blow the run limit and fail the whole run.
   const names = (await readdir(runDir))
     .filter((name) => /\.(?:png|gif|webm)$/i.test(name) && include(name))
-    .sort();
+    .sort((a, b) => {
+      const rank = (name: string): number => (/\.png$/i.test(name) ? 0 : 1);
+      return rank(a) - rank(b) || a.localeCompare(b);
+    });
   const attachments: EvidenceAttachment[] = [];
   let totalBytes = 0;
   for (const name of names) {
@@ -124,25 +146,38 @@ export async function collectEvidenceAttachments(
     const path = join(runDir, name);
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink()) continue;
-    if (info.size > 10 * 1024 * 1024) throw new Error(`QA attachment exceeds 10 MiB: ${name}`);
-    const content = await readFile(path);
     const mediaType = name.toLowerCase().endsWith(".png")
       ? "image/png"
       : name.toLowerCase().endsWith(".gif")
         ? "image/gif"
         : "video/webm";
+    const optional = mediaType !== "image/png";
+    // PNG screenshots are what the gate validates, so any defect fails the run; a GIF/WebM is
+    // supporting material, so every defect here (oversized, corrupt, or over the run budget) is
+    // skipped and reported instead of blocking otherwise-valid PNG evidence.
+    const skippable = (message: string): boolean => {
+      if (!optional) throw new Error(message);
+      onSkip({ name, mediaType, reason: message });
+      return true;
+    };
+    if (info.size > ATTACHMENT_LIMIT && skippable(`QA attachment exceeds 10 MiB: ${name}`)) continue;
+    const content = await readFile(path);
     const valid = mediaType === "image/png"
       ? content.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
       : mediaType === "image/gif"
         ? /^(?:GIF87a|GIF89a)$/.test(content.subarray(0, 6).toString("ascii"))
         : content.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
-    if (!valid) throw new Error(`QA attachment has invalid ${mediaType} signature: ${name}`);
-    const sanitized = await sanitizedMedia(path, mediaType);
-    if (sanitized.length > 10 * 1024 * 1024) {
-      throw new Error(`Sanitized QA attachment exceeds 10 MiB: ${name}`);
+    if (!valid && skippable(`QA attachment has invalid ${mediaType} signature: ${name}`)) continue;
+    let sanitized: Buffer;
+    try {
+      sanitized = await sanitizedMedia(path, mediaType);
+    } catch (error) {
+      skippable(error instanceof Error ? error.message : String(error));
+      continue;
     }
+    if (sanitized.length > ATTACHMENT_LIMIT && skippable(`Sanitized QA attachment exceeds 10 MiB: ${name}`)) continue;
+    if (totalBytes + sanitized.length > RUN_LIMIT && skippable(`QA attachments exceed the 25 MiB run limit: ${name}`)) continue;
     totalBytes += sanitized.length;
-    if (totalBytes > 25 * 1024 * 1024) throw new Error("QA attachments exceed the 25 MiB run limit");
     attachments.push({ name, content: sanitized, mediaType });
   }
   return attachments;
@@ -150,11 +185,12 @@ export async function collectEvidenceAttachments(
 
 export async function collectFinalEvidenceAttachments(
   runDir: string,
+  onSkip?: EvidenceSkip,
 ): Promise<EvidenceAttachment[]> {
-  return await collectEvidenceAttachments(
-    runDir,
-    (name) => !/^preflight(?:[._-]|$)/i.test(name),
-  );
+  return await collectEvidenceAttachments(runDir, {
+    include: (name) => !/^preflight(?:[._-]|$)/i.test(name),
+    ...(onSkip ? { onSkip } : {}),
+  });
 }
 
 export async function removeExpiredEvidence(

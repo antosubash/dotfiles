@@ -47,6 +47,7 @@ export class PullRequestWorktreeCleanupService {
           job.worktreePath,
           job.branch,
           lifecycle.headSha,
+          job.prNumber,
         );
         this.state.completeEvent(job.issueNumber, eventKey, "completed");
       } catch (error) {

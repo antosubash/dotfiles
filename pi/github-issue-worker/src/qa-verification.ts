@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
 import type { WorkerConfig } from "./config.js";
 import { execFile } from "./exec.js";
 import { assertBrowserExecution, regularFile, sourceFingerprint } from "./figma-verification.js";
@@ -8,19 +8,65 @@ import type { IssuePlan } from "./issue-plan.js";
 import type { PiAgentRunner } from "./pi-agent.js";
 import { buildUiVerificationPrompt } from "./prompts.js";
 import { loadQaManifest } from "./qa-manifest.js";
+import { QaReportingError, assertQaExecution } from "./qa-receipts.js";
 import type { GitHubIssue, VerificationEvidence } from "./types.js";
 
-export function assertQaExecution(verdict: unknown, evidence: VerificationEvidence | undefined): void {
-  const report = verdict as { commands: Array<{ command: string }> };
-  if (!evidence || !report.commands.every((command) => evidence.commands.some((record) => record.command === command.command))) {
-    throw new Error("QA verdict claims commands without successful runner-recorded execution.");
-  }
+// Re-exported so callers keep a single entry point for the QA gate.
+export { QaReportingError, assertQaExecution };
+
+/**
+ * Fingerprint every regular file under `dir` (recursively, symlinks skipped). Validation re-reads log and
+ * screenshot bytes from disk by claimed relative path, so a repair turn could pass validation by pinning
+ * commands while silently rewriting the files those commands are claimed to have produced. Comparing this
+ * fingerprint before and after the repair turn catches that: a repair may only re-emit the verdict JSON.
+ */
+export async function directoryFingerprint(dir: string): Promise<string> {
+  const files: string[] = [];
+  const walk = async (current: string): Promise<void> => {
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      const absolute = join(current, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) { await walk(absolute); continue; }
+      if (!entry.isFile()) continue;
+      const digest = createHash("sha256").update(await readFile(absolute)).digest("hex");
+      files.push(`${relative(dir, absolute)}\0${digest}`);
+    }
+  };
+  await walk(dir);
+  const hash = createHash("sha256");
+  for (const entry of files.sort()) hash.update(entry).update("\n");
+  return hash.digest("hex");
 }
 
 export const DEFAULT_QA_CHECKS = ["acceptance", "regression", "negative-cases", "diff-review"];
 
+const VERDICT_SCHEMA = `Return ONLY JSON (no fences): {"status":"passed|failed|blocked","surface":"ui|non-ui","summary":"...",
+"checks":[{"id":"one entry for EACH requiredCheckId","status":"passed|failed|blocked","notes":"observed evidence"}],
+"commands":[{"command":"the successful bash tool command you ran (whitespace/separator layout may differ; never paraphrase, shorten to a fragment, or add flags that did not run)","status":"passed|failed","log":"relative-output.log or [\\"a.log\\",\\"b.log\\"] when one command wrote several"}],
+"screenshots":["desktop.png","mobile.png"]}. Any failed/blocked or omitted check prevents shipping.`;
+
+function repairPrompt(error: QaReportingError): string {
+  return `Your QA verdict was rejected for a REPORTING problem, not for its result: ${error.message}
+Do not run commands, capture screenshots, or change anything. Only the runner-recorded executions from your
+verification count as evidence; a re-run now is ignored. Re-emit the complete verdict with the same results,
+fixing only the reporting problem. ${VERDICT_SCHEMA}`;
+}
+
+/** A command's `log` may name one file, several files, or several joined by `;`. */
+function commandLogs(log: unknown): string[] {
+  const entries = Array.isArray(log) ? log : typeof log === "string" ? log.split(";") : [];
+  return entries.every((entry) => typeof entry === "string")
+    ? entries.map((entry) => entry.trim()).filter((entry) => entry.length > 0)
+    : [];
+}
+
 export async function validateQaResult(text: string, checkIds: string[], evidenceDir: string, ui: boolean): Promise<unknown> {
-  const result = JSON.parse(text);
+  let result;
+  try {
+    result = JSON.parse(text);
+  } catch {
+    throw new QaReportingError("QA verdict is not valid JSON.");
+  }
   if (result?.status !== "passed" || !Array.isArray(result.checks) ||
       !checkIds.every((id) => result.checks.some((check: { id?: string; status?: string; notes?: string }) =>
         check?.id === id && check.status === "passed" && typeof check.notes === "string" && check.notes.trim())) ||
@@ -30,13 +76,24 @@ export async function validateQaResult(text: string, checkIds: string[], evidenc
     throw new Error(`Independent QA ${result?.status === "failed" ? "FAILED" : "BLOCKED"}: ${String(result?.summary ?? "missing required checks").slice(0, 1500)}`);
   }
   for (const command of result.commands) {
-    if (!command || typeof command.command !== "string" || !command.command.trim() || command.status !== "passed" || typeof command.log !== "string") {
-      throw new Error("Independent QA omitted validation command outcomes/logs.");
+    const logs = commandLogs(command?.log);
+    if (!command || typeof command.command !== "string" || !command.command.trim() || command.status !== "passed" || logs.length === 0) {
+      throw new QaReportingError("Independent QA omitted validation command outcomes/logs.");
     }
-    await regularFile(evidenceDir, command.log, 2 * 1024 * 1024);
+    for (const log of logs) {
+      await regularFile(evidenceDir, log, 2 * 1024 * 1024).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") throw new QaReportingError(`QA command log was not found in the evidence directory: ${log}`);
+        throw error;
+      });
+    }
   }
   if (ui || result.surface === "ui") {
-    if (!Array.isArray(result.screenshots) || result.screenshots.length < 2) throw new Error("UI QA requires fresh desktop and mobile screenshots.");
+    // Missing, duplicated, or corrupt screenshots are a substantive evidence gap, not a reporting
+    // glitch: unlike a misnamed log or unmatched command, no repair turn can retroactively produce a
+    // fresh screenshot it never captured, so these stay plain Errors and are never repair-eligible.
+    if (!Array.isArray(result.screenshots) || new Set(result.screenshots).size < 2) {
+      throw new Error("UI QA requires fresh, distinct desktop and mobile screenshots.");
+    }
     for (const screenshot of result.screenshots) {
       if (typeof screenshot !== "string") throw new Error("Invalid QA screenshot path.");
       const bytes = await regularFile(evidenceDir, screenshot, 50 * 1024 * 1024);
@@ -61,11 +118,22 @@ export class QaVerificationService {
     const ui = /\b(?:ui|ux|frontend|front-end|layout|responsive|browser|figma|page|screen|form|button|dialog|modal|component)\b|(?:^|\/)(?:app|frontend|client|views?|routes?|pages?|components?|templates?|static|ui)\/|\.(?:tsx|jsx|vue|svelte|astro|css|scss|sass|less|html)\b/im.test(`${issue.title}\n${issue.body}\n${changed}\n${untracked}`);
     const checkIds = [...DEFAULT_QA_CHECKS, ...(plan?.checks.filter((check) => check.kind === "behavioral").map((check) => check.id) ?? [])];
     const reportPath = join(runDir, "result.json");
+    const runOptions = {
+      worktree, sessionDir: join(runDir, "sessions"), logFile: join(runDir, "agent.log"),
+      visualVerification: ui, dockerAccess: false, verification: { readPaths: [], evidenceDir },
+    };
+    // A verdict is always validated against the ORIGINAL run's receipts: the repair turn re-emits JSON, it never adds evidence.
+    const validate = async (finalText: string, evidence: VerificationEvidence | undefined): Promise<unknown> => {
+      if (await sourceFingerprint(worktree) !== source) throw new Error("QA verifier changed source; only the worker may implement fixes.");
+      const verdict = await validateQaResult(finalText, checkIds, evidenceDir, ui);
+      assertQaExecution(verdict, evidence);
+      const report = verdict as { surface: string; screenshots: string[] };
+      if (ui || report.surface === "ui") assertBrowserExecution(report.screenshots.map((path) => join(evidenceDir, path)), evidence);
+      return verdict;
+    };
     try {
       const result = await this.agent.run({
-        worktree, sessionFile: null, sessionDir: join(runDir, "sessions"), logFile: join(runDir, "agent.log"),
-        visualVerification: ui, dockerAccess: false,
-        verification: { readPaths: [], evidenceDir },
+        ...runOptions, sessionFile: null,
         prompt: `You are the independent issue QA verifier, NOT the implementation worker. This is a fresh session.
 Verify the ACTUAL current implementation against the original issue and, when present, EVERY saved pi-plan
 check below. A plan supplements, never weakens, the issue's acceptance criteria and regression checks.
@@ -90,18 +158,24 @@ EVERY captured PNG with the read tool; the controller checks runner-recorded scr
 Figma comparison is another independent stage; ordinary
 QA cannot waive it. Report all behavioral plan checks here. Plan checks with kind=design belong to the separate
 Figma verifier, which the controller also requires; never mark those checks passed or claim visual fidelity here.
-Return ONLY JSON (no fences): {"status":"passed|failed|blocked","surface":"ui|non-ui","summary":"...",
-"checks":[{"id":"one entry for EACH requiredCheckId","status":"passed|failed|blocked","notes":"observed evidence"}],
-"commands":[{"command":"EXACT full successful bash tool command, including redirects or multiline script","status":"passed|failed","log":"relative-output.log"}],
-"screenshots":["desktop.png","mobile.png"]}. Any failed/blocked or omitted check prevents shipping.
+${VERDICT_SCHEMA}
 Source is fingerprinted before/after: any mutation invalidates verification.`,
       });
       await writeFile(join(runDir, "verdict.txt"), result.finalText, { mode: 0o600, flag: "wx" });
-      if (await sourceFingerprint(worktree) !== source) throw new Error("QA verifier changed source; only the worker may implement fixes.");
-      const verdict = await validateQaResult(result.finalText, checkIds, evidenceDir, ui);
-      assertQaExecution(verdict, result.verificationEvidence);
-      const report = verdict as { surface: string; screenshots: string[] };
-      if (ui || report.surface === "ui") assertBrowserExecution(report.screenshots.map((path) => join(evidenceDir, path)), result.verificationEvidence);
+      let verdict: unknown;
+      try {
+        verdict = await validate(result.finalText, result.verificationEvidence);
+      } catch (error) {
+        if (!(error instanceof QaReportingError)) throw error;
+        // Validation only reads, so fingerprinting here still captures the evidence exactly as the first run left it.
+        const evidenceFingerprint = await directoryFingerprint(evidenceDir);
+        const repaired = await this.agent.run({ ...runOptions, sessionFile: result.sessionFile, prompt: repairPrompt(error) });
+        await writeFile(join(runDir, "verdict-repaired.txt"), repaired.finalText, { mode: 0o600, flag: "wx" });
+        if (await directoryFingerprint(evidenceDir) !== evidenceFingerprint) {
+          throw new Error("QA repair turn changed evidence; a repair may only re-emit the verdict.");
+        }
+        verdict = await validate(repaired.finalText, result.verificationEvidence);
+      }
       await writeFile(reportPath, JSON.stringify({ status: "passed", sourceFingerprint: source, plan, verdict, execution: result.verificationEvidence }, null, 2), { mode: 0o600, flag: "wx" });
       return reportPath;
     } catch (error) {
