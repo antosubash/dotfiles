@@ -80,7 +80,10 @@ reported status carries that claim. Browser evidence requires screenshot-command
 verdict that describes a passing run but is malformed — invalid JSON, an unmatched command receipt, a
 misnamed log — gets exactly one repair turn in the same verifier session and is re-validated against the
 original run's receipts; evidence files are fingerprinted across the repair turn and any change to them
-rejects the verdict outright, with no further repair. Failed or blocked verdicts are never sent back. These are LLM-assisted
+rejects the verdict outright, with no further repair. Failed or blocked verdicts are never sent back. A passed
+verdict is a statement about one exact tree: when the same fingerprint and plan come back (a merge resumed
+after a GitHub outage, an interrupted push) the passed report is reused instead of re-run; any change to the
+tree is a new fingerprint and a fresh session. These are LLM-assisted
 behavioral/visual assessments, not mathematical proof of design equivalence.
 
 Figma links in issue title/body (including Markdown, bare links, `/file`, `/design`, `/proto`, `/board`, and

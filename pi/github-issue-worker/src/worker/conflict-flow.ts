@@ -4,6 +4,7 @@ import { buildMergeConflictPrompt } from "../prompts.js";
 import { BranchDivergenceError } from "../repository.js";
 import type { IssueJob } from "../types.js";
 import { publishEvidence, runUiVerification, visualEvidenceNote } from "./evidence-flow.js";
+import { assertPullRequestMergeContext, mergeConflictEventKey } from "./conflict-context.js";
 import { ensureJobWorktree } from "./job-worktree.js";
 import { verifyImplementation } from "./verification-flow.js";
 import {
@@ -14,19 +15,9 @@ import {
   isBlockedFinalOutput,
   isInterruptedRun,
   markdownSummary,
+  RetryableControllerError,
   type WorkerContext,
 } from "./shared.js";
-
-/**
- * One resolution attempt per (PR, base branch, head, base) — note GitHub's baseRefOid moves only when the
- * PR syncs, so a processed key stays processed until `/pi retry` forgets it or the PR head changes.
- */
-export function mergeConflictEventKey(
-  prNumber: number,
-  mergeState: { baseBranch: string; headSha: string; baseSha: string },
-): string {
-  return `merge-conflict:${prNumber}:${mergeState.baseBranch}:${mergeState.headSha}:${mergeState.baseSha}`;
-}
 
 export async function processPullRequestConflicts(ctx: WorkerContext): Promise<boolean> {
   if (typeof ctx.github.getPullRequestMergeState !== "function") return false;
@@ -251,6 +242,12 @@ export async function handleMergeConflict(
     }
   } catch (error) {
     if (isInterruptedRun(error)) throw error;
+    // GitHub being unreachable says nothing about the resolution. Leave the staged merge exactly where it is:
+    // the next tick sees MERGE_HEAD, resumes it, re-verifies (cheaply, from the cached verdict) and pushes.
+    if (error instanceof RetryableControllerError) {
+      ctx.state.setStatus(job.issueNumber, "pr_open", errorText(error));
+      throw error;
+    }
     const localHead = await ctx.repository.headRevision(worktree.path).catch(() => null);
     if (
       !(error instanceof BranchDivergenceError) &&
@@ -273,23 +270,5 @@ export async function handleMergeConflict(
       `⛔ I could not safely resolve the base-branch conflict. Human resolution is required.\n\n${markdownSummary(message)}`,
     );
     ctx.state.completeEvent(job.issueNumber, eventKey, "pr_open", message);
-  }
-}
-
-export async function assertPullRequestMergeContext(
-  ctx: WorkerContext,
-  prNumber: number,
-  expectedHead: string,
-  expectedBase: string,
-): Promise<void> {
-  const current = await ctx.github.getPullRequestMergeState(prNumber);
-  if (
-    current.baseBranch !== ctx.config.baseBranch ||
-    current.headSha !== expectedHead ||
-    current.baseSha !== expectedBase
-  ) {
-    throw new BranchDivergenceError(
-      `Pull request merge context moved while resolving conflicts (base ${current.baseBranch}@${current.baseSha}, head ${current.headSha})`,
-    );
   }
 }

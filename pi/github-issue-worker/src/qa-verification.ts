@@ -123,11 +123,31 @@ export async function validateQaResult(text: string, checkIds: string[], evidenc
 export class QaVerificationService {
   constructor(private readonly config: WorkerConfig, private readonly agent: Pick<PiAgentRunner, "run">) {}
 
+  /**
+   * A passed report for this issue whose fingerprint (HEAD, index, tracked and untracked content) and plan
+   * equal the current ones. Such a verdict already answers the question for this exact tree, so a resumed
+   * merge or an interrupted push after a pass is finished in minutes rather than re-verified for an hour.
+   */
+  private async passedReport(issueNumber: number, source: string, plan: IssuePlan | null): Promise<string | null> {
+    const runsDir = join(this.config.dataDir, "verification", `issue-${issueNumber}`);
+    for (const entry of await readdir(runsDir, { withFileTypes: true }).catch(() => [])) {
+      if (!entry.isDirectory()) continue;
+      const path = join(runsDir, entry.name, "result.json");
+      let report: { status?: string; sourceFingerprint?: string; plan?: unknown } | null = null;
+      try { report = JSON.parse(await readFile(path, "utf8")); } catch { continue; }
+      if (report?.status === "passed" && report.sourceFingerprint === source &&
+          JSON.stringify(report.plan ?? null) === JSON.stringify(plan)) return path;
+    }
+    return null;
+  }
+
   async verify(issue: GitHubIssue, worktree: string, plan: IssuePlan | null): Promise<string> {
+    const source = await sourceFingerprint(worktree);
+    const reused = await this.passedReport(issue.number, source, plan);
+    if (reused) return reused;
     const runDir = join(this.config.dataDir, "verification", `issue-${issue.number}`, randomUUID());
     const evidenceDir = join(runDir, "evidence");
     await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
-    const source = await sourceFingerprint(worktree);
     const changed = (await execFile("git", ["diff", "--no-ext-diff", "--no-textconv", "--name-only", `origin/${this.config.baseBranch}`], { cwd: worktree })).stdout;
     const untracked = (await execFile("git", ["ls-files", "--others", "--exclude-standard"], { cwd: worktree })).stdout;
     const ui = /\b(?:ui|ux|frontend|front-end|layout|responsive|browser|figma|page|screen|form|button|dialog|modal|component)\b|(?:^|\/)(?:app|frontend|client|views?|routes?|pages?|components?|templates?|static|ui)\/|\.(?:tsx|jsx|vue|svelte|astro|css|scss|sass|less|html)\b/im.test(`${issue.title}\n${issue.body}\n${changed}\n${untracked}`);

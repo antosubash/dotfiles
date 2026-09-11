@@ -252,6 +252,25 @@ test("a repair turn that changes evidence is rejected without a further repair",
   } finally { await f.cleanup(); }
 });
 
+// A verdict is a statement about one exact tree (the source fingerprint covers HEAD, index, tracked and
+// untracked content). When the same tree comes back — a GitHub outage after a pass, an interrupted push —
+// re-running a 45-minute verification adds nothing; the passed report is the answer. Anything that changes
+// the tree changes the fingerprint and gets a fresh run.
+test("a passed verdict is reused for an identical source fingerprint and never across a change", async () => {
+  const f = await worktreeFixture();
+  try {
+    const { agent, calls } = scriptedAgent([{ finalText: verdictJson(), recorded: ["pnpm test"] }, { finalText: verdictJson(), recorded: ["pnpm test"] }]);
+    const service = new QaVerificationService(f.config, agent);
+    const first = await service.verify(issue, f.worktree, null);
+    assert.equal(await service.verify(issue, f.worktree, null), first);
+    assert.equal(calls.length, 1);
+    // The scripted second turn is deliberately incomplete; what matters is that a changed tree runs again.
+    await writeFile(join(f.worktree, "source.txt"), "changed\n");
+    await service.verify(issue, f.worktree, null).catch(() => undefined);
+    assert.equal(calls.length, 2);
+  } finally { await f.cleanup(); }
+});
+
 // The verifier's prompt must describe the guard that is actually in force. Claiming an OS-read-only source
 // when there is none would send the verifier redirecting every build output for no reason — and, worse,
 // still reporting BLOCKED for a backend it is now perfectly able to start.

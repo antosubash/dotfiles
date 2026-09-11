@@ -13,7 +13,7 @@ import {
 } from "./evidence-flow.js";
 import { ensureJobWorktree } from "./job-worktree.js";
 import { verifyImplementation } from "./verification-flow.js";
-import { mergeConflictEventKey } from "./conflict-flow.js";
+import { mergeConflictEventKey } from "./conflict-context.js";
 import {
   CONFLICT_BLOCK_PREFIX,
   containsUiFiles,
