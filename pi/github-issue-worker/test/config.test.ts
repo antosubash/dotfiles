@@ -156,3 +156,14 @@ test("loadConfig requires repository identity and an explicit base branch", () =
     /PI_WORKER_BASE_BRANCH/,
   );
 });
+
+// Sandboxing is a per-profile switch that is OFF by default for now: the OS sandbox blocks the repository
+// stacks the agents must run (host dev services, toolchain caches under $HOME), so the harness runs agent
+// commands directly until that is solved. Re-enabling is an explicit opt-in that must parse strictly.
+test("loadConfig disables OS sandboxing unless PI_WORKER_SANDBOX opts in", () => {
+  assert.equal(loadConfig(base).sandbox, false);
+  assert.equal(loadConfig({ ...base, PI_WORKER_SANDBOX: "0" }).sandbox, false);
+  assert.equal(loadConfig({ ...base, PI_WORKER_SANDBOX: "1" }).sandbox, true);
+  assert.equal(loadConfig({ ...base, PI_WORKER_SANDBOX: "yes" }).sandbox, true);
+  assert.throws(() => loadConfig({ ...base, PI_WORKER_SANDBOX: "maybe" }), /PI_WORKER_SANDBOX/);
+});

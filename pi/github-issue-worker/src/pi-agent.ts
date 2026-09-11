@@ -1,4 +1,4 @@
-import { access, appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   createAgentSession,
@@ -7,7 +7,6 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import type { WorkerConfig } from "./config.js";
 import type { AgentRunResult, VerificationEvidence } from "./types.js";
 import { AGENT_POLICY, headlessPolicyExtension, type VerificationOptions } from "./agent/policy.js";
@@ -16,18 +15,8 @@ import {
   createAgentSettlementWatchdog,
   extractAssistantText,
 } from "./agent/settlement.js";
-import {
-  applySandboxTempEnvironment,
-  assertVisualSandboxIsolation,
-  removeStaleSandboxTemps,
-  sandboxConfig,
-  sandboxTempRoot,
-} from "./agent/sandbox.js";
-import {
-  activeCommandProcessGroupPath,
-  createSandboxedBashOperations,
-  stopTrackedProcessGroup,
-} from "./agent/process-group.js";
+import { openIsolation, type Isolation } from "./agent/isolation.js";
+import { activeCommandProcessGroupPath } from "./agent/process-group.js";
 
 interface AgentRunOptions {
   worktree: string;
@@ -86,41 +75,23 @@ export class PiAgentRunner {
   private async runWithScrubbedEnvironment(options: AgentRunOptions): Promise<AgentRunResult> {
     await mkdir(options.sessionDir, { recursive: true });
     await mkdir(dirname(options.logFile), { recursive: true });
-    const processGroupFile = activeCommandProcessGroupPath(this.config.dataDir);
-    const visualVerification = options.visualVerification === true;
     const dockerAccess = options.dockerAccess === true;
-    if (options.verification && dockerAccess) throw new Error("Independent verifiers cannot access the Docker daemon.");
-    if (dockerAccess && (!this.config.allowDocker || !this.config.dockerSocket)) {
-      throw new Error("Docker access was requested but is not enabled for this worker profile");
-    }
-    const tempRoot = sandboxTempRoot(visualVerification || dockerAccess);
-    await removeStaleSandboxTemps(tempRoot);
-    const sandboxTemp = await mkdtemp(join(tempRoot, "piw-"));
-    await writeFile(join(sandboxTemp, ".owner-pid"), `${process.pid}\n`, { mode: 0o600 });
-    const restoreEnvironment = applySandboxTempEnvironment(
-      sandboxTemp,
-      Boolean(options.verification) || (visualVerification || dockerAccess) && process.platform === "linux",
-    );
     const shutdownController = new AbortController();
     const onInterrupt = () => shutdownController.abort();
     process.on("SIGINT", onInterrupt);
     process.on("SIGTERM", onInterrupt);
+    let isolation: Isolation | null = null;
     try {
-      await SandboxManager.initialize(sandboxConfig(options.worktree, this.config, {
-        privateTemp: sandboxTemp,
-        visualVerification,
-        dockerSocket: dockerAccess ? this.config.dockerSocket : null,
+      isolation = await openIsolation(this.config, {
+        worktree: options.worktree,
+        processGroupFile: activeCommandProcessGroupPath(this.config.dataDir),
+        visualVerification: options.visualVerification === true,
+        dockerAccess,
         ...(options.verification ? { verification: options.verification } : {}),
-      }));
-      if (process.platform === "linux" && (visualVerification || dockerAccess)) {
-        assertVisualSandboxIsolation(await SandboxManager.wrapWithSandbox("true"));
-      }
+        shutdownSignal: shutdownController.signal,
+      });
       const settingsManager = SettingsManager.create(options.worktree, this.config.agentDir);
-      const bashOperations = createSandboxedBashOperations(
-        processGroupFile,
-        shutdownController.signal,
-        dockerAccess && this.config.dockerSocket ? { DOCKER_HOST: `unix://${this.config.dockerSocket}` } : {},
-      );
+      const bashOperations = isolation.bashOperations;
       const loader = new DefaultResourceLoader({
         cwd: options.worktree,
         agentDir: this.config.agentDir,
@@ -233,16 +204,7 @@ export class PiAgentRunner {
     } finally {
       process.off("SIGINT", onInterrupt);
       process.off("SIGTERM", onInterrupt);
-      try {
-        await stopTrackedProcessGroup(processGroupFile);
-      } finally {
-        try {
-          await SandboxManager.reset();
-        } finally {
-          restoreEnvironment();
-          await rm(sandboxTemp, { recursive: true, force: true });
-        }
-      }
+      await isolation?.close();
     }
   }
 }
@@ -250,4 +212,4 @@ export class PiAgentRunner {
 export { commandBlockReason } from "./agent/policy.js";
 export { awaitAgentPromptCompletion, createAgentSettlementWatchdog } from "./agent/settlement.js";
 export { assertVisualSandboxIsolation, removeStaleSandboxTemps, sandboxConfig, sandboxEnvironment } from "./agent/sandbox.js";
-export { ACTIVE_COMMAND_PROCESS_GROUP_FILE, activeCommandProcessGroupPath, createSandboxedBashOperations, stopTrackedProcessGroup } from "./agent/process-group.js";
+export { ACTIVE_COMMAND_PROCESS_GROUP_FILE, activeCommandProcessGroupPath, createBashOperations, stopTrackedProcessGroup } from "./agent/process-group.js";

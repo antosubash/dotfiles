@@ -102,14 +102,24 @@ export async function stopTrackedProcessGroup(processGroupFile: string): Promise
   }
 }
 
-export function createSandboxedBashOperations(
+export interface BashOperationOptions {
+  /**
+   * Wrap every command with the Anthropic Sandbox Runtime. When false the command runs through a plain
+   * `bash -c`: the detached process group, credential scrub, timeout/abort handling and the leftover
+   * background-process check below all still apply — they are the harness's own guarantees, not bwrap's.
+   */
+  sandbox: boolean;
+  shutdownSignal?: AbortSignal;
+  environmentOverrides?: NodeJS.ProcessEnv;
+}
+
+export function createBashOperations(
   processGroupFile: string,
-  shutdownSignal?: AbortSignal,
-  environmentOverrides: NodeJS.ProcessEnv = {},
+  { sandbox, shutdownSignal, environmentOverrides = {} }: BashOperationOptions,
 ): BashOperations {
   return {
     async exec(command, cwd, { onData, signal, timeout }) {
-      const wrappedCommand = await SandboxManager.wrapWithSandbox(command);
+      const wrappedCommand = sandbox ? await SandboxManager.wrapWithSandbox(command) : command;
       return await new Promise((resolveResult, reject) => {
         const child = spawn("bash", ["-c", wrappedCommand], {
           cwd,
@@ -118,7 +128,7 @@ export function createSandboxedBashOperations(
           stdio: ["ignore", "pipe", "pipe"],
         });
         if (!child.pid) {
-          reject(new Error("Failed to start sandboxed bash process"));
+          reject(new Error("Failed to start bash process"));
           return;
         }
         try {
@@ -181,7 +191,7 @@ export function createSandboxedBashOperations(
             const pid = child.pid;
             if (pid !== undefined && isProcessGroupAlive(pid)) {
               await stopCurrentProcessGroup();
-              reject(new Error("sandboxed bash left background processes running"));
+              reject(new Error("bash command left background processes running"));
               return;
             }
             if (pid !== undefined) clearTrackedProcessGroupFile(processGroupFile, pid);

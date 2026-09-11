@@ -39,6 +39,13 @@ export interface WorkerConfig {
   playwrightState: string | null;
   qaRetentionDays: number;
   agentDir: string;
+  /**
+   * Whether agent bash commands run inside the Anthropic Sandbox Runtime (bwrap on Linux). Off by
+   * default for now: the OS sandbox cannot reach host-loopback dev services or toolchain caches under
+   * $HOME, which blocks every repository stack the agents must start. The tool-level policy, secret
+   * environment scrubbing, and the verifier's source fingerprint still apply either way.
+   */
+  sandbox: boolean;
   sandboxAllowedDomains: readonly string[];
   allowDocker: boolean;
   dockerSocket: string | null;
@@ -234,6 +241,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       14,
     ),
     agentDir: expandPath(env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent", home),
+    sandbox: booleanFlag("PI_WORKER_SANDBOX", env.PI_WORKER_SANDBOX ?? "0"),
     sandboxAllowedDomains: [...new Set(sandboxAllowedDomains)],
     allowDocker,
     dockerSocket,
