@@ -13,7 +13,9 @@ import {
 } from "./evidence-flow.js";
 import { ensureJobWorktree } from "./job-worktree.js";
 import { verifyImplementation } from "./verification-flow.js";
+import { mergeConflictEventKey } from "./conflict-flow.js";
 import {
+  CONFLICT_BLOCK_PREFIX,
   containsUiFiles,
   errorText,
   evidenceCommentMarker,
@@ -64,11 +66,27 @@ export async function handleFeedback(
     return;
   }
 
-  const onlyCiRetry =
-    Boolean(job.ciHeadSha && job.lastError) &&
+  const onlyRetry =
     feedback.every((item) => item.source === "conversation") &&
     commands.length > 0 &&
     commands.every((command) => command === "retry");
+  // A conflict block is checked before a CI block: the job may carry an older ciHeadSha as well, and the
+  // conflict prefix on lastError is the specific signal. Forgetting the processed event re-queues the
+  // resolution for the next tick; the agent is never handed a bare "retry" as feedback.
+  if (onlyRetry && job.lastError?.startsWith(CONFLICT_BLOCK_PREFIX)) {
+    const mergeState = await ctx.github.getPullRequestMergeState(job.prNumber!);
+    ctx.state.forgetProcessed(mergeConflictEventKey(job.prNumber!, mergeState));
+    ctx.state.setStatus(job.issueNumber, "pr_open");
+    for (const item of feedback) ctx.state.markProcessed(job.issueNumber, item.eventKey);
+    await ctx.github.markPullRequestOpen(job.issueNumber);
+    await ctx.github.commentPullRequest(
+      job.prNumber!,
+      "🔄 Base-branch conflict resolution retry queued.",
+    );
+    return;
+  }
+
+  const onlyCiRetry = Boolean(job.ciHeadSha && job.lastError) && onlyRetry;
   if (onlyCiRetry) {
     ctx.state.forgetProcessed(`ci-failure:${job.prNumber}:${job.ciHeadSha}`);
     ctx.state.forgetProcessed(`ci-rerun:${job.prNumber}:${job.ciHeadSha}`);

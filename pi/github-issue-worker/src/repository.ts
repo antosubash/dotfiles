@@ -223,8 +223,8 @@ export class RepositoryManager {
     return commitAndPush(this.ctx, worktree, branch, commitMessage);
   }
 
-  clearAgentChanges(worktree: string, branch: string): Promise<void> {
-    return clearAgentChanges(this.ctx, worktree, branch);
+  clearAgentChanges(worktree: string, branch: string, options: { ignored?: boolean } = {}): Promise<void> {
+    return clearAgentChanges(this.ctx, worktree, branch, options);
   }
 
   hasCommitsAhead(worktree: string): Promise<boolean> {

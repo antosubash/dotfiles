@@ -376,6 +376,19 @@ up instead of launching the stack. Check, in order:
 Fixed: the controller now stages the agent's resolution before the QA gate. If it recurs, the agent left
 real conflict markers or unresolved paths, and the same message names them.
 
+### `Cannot update from origin/<base> with existing worktree changes` on a conflict retry
+
+Fixed: an abandoned resolution is now discarded from the worktree (`reset --hard` + `clean -fd`, ignored
+build outputs and `.qa` kept) when the controller blocks. A worktree left dirty by an older worker still
+needs one manual `git checkout -- <path>` in `<data-dir>/worktrees/pr-<n>`, then `/pi retry` on the PR.
+
+### Retrying a blocked base-branch conflict resolution
+
+Post a trusted `/pi retry` on the PR. The controller forgets the processed
+`merge-conflict:<pr>:<base>:<head>:<base-oid>` event and re-runs the resolution on its next poll; the PR's
+base commit as GitHub reports it (`baseRefOid`) does not move when the base branch does, so without the
+retry the block would persist until the PR head changed.
+
 ## Draft PR CI is failing or unattended
 
 Inspect the current rollup without printing logs:

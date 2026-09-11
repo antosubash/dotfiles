@@ -17,6 +17,17 @@ import {
   type WorkerContext,
 } from "./shared.js";
 
+/**
+ * One resolution attempt per (PR, base branch, head, base) — note GitHub's baseRefOid moves only when the
+ * PR syncs, so a processed key stays processed until `/pi retry` forgets it or the PR head changes.
+ */
+export function mergeConflictEventKey(
+  prNumber: number,
+  mergeState: { baseBranch: string; headSha: string; baseSha: string },
+): string {
+  return `merge-conflict:${prNumber}:${mergeState.baseBranch}:${mergeState.headSha}:${mergeState.baseSha}`;
+}
+
 export async function processPullRequestConflicts(ctx: WorkerContext): Promise<boolean> {
   if (typeof ctx.github.getPullRequestMergeState !== "function") return false;
   let startedConflictResolution = false;
@@ -43,7 +54,7 @@ export async function processPullRequestConflicts(ctx: WorkerContext): Promise<b
       }
       continue;
     }
-    const eventKey = `merge-conflict:${job.prNumber}:${mergeState.baseBranch}:${mergeState.headSha}:${mergeState.baseSha}`;
+    const eventKey = mergeConflictEventKey(job.prNumber, mergeState);
     if (ctx.state.hasProcessed(eventKey)) continue;
     startedConflictResolution = true;
     await handleMergeConflict(
@@ -250,7 +261,12 @@ export async function handleMergeConflict(
       throw error;
     }
     await ctx.repository.abortBaseMerge(worktree.path).catch(() => undefined);
-    const message = `${CONFLICT_BLOCK_PREFIX} ${errorText(error)}`;
+    // `merge --abort` keeps unstaged agent edits to auto-merged files, and beginBaseMerge refuses a dirty
+    // worktree, so an abandoned resolution must be discarded outright or no retry can ever merge again.
+    const discardFailure = await ctx.repository
+      .clearAgentChanges(worktree.path, worktree.branch, { ignored: false })
+      .then(() => "", (discardError: unknown) => ` Worktree cleanup also failed: ${errorText(discardError)}`);
+    const message = `${CONFLICT_BLOCK_PREFIX} ${errorText(error)}${discardFailure}`;
     await ctx.github.markBlocked(job.issueNumber, message).catch(() => undefined);
     await ctx.github.commentPullRequest(
       job.prNumber!,

@@ -186,3 +186,112 @@ test("a conflict resolution is staged before the QA gate runs and committed afte
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// `git merge --abort` restores the merge itself but keeps unstaged edits the agent made to auto-merged
+// files, and beginBaseMerge refuses to merge onto a dirty worktree — so once a resolution failed, every
+// retry died with "Cannot update from origin/dev with existing worktree changes" (IIASA.GeoWiki#501).
+// Abandoning a resolution has to mean discarding it completely, ignored build outputs excepted.
+test("a failed conflict resolution is discarded from the worktree so a retry can merge again", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-merge-discard-"));
+  const state = new WorkerState(join(root, "state.sqlite"));
+  state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
+  state.setPullRequest(42, 77, "https://github.com/example/widgets/pull/77");
+  const order: string[] = [];
+  const github = {
+    getIssue: async () => issue,
+    listReadyIssues: async () => [],
+    isPullRequestOpen: async () => true,
+    getPullRequestMergeState: async () => ({
+      headSha: "feature-head", baseSha: "base-head", baseBranch: "main", mergeable: "CONFLICTING", mergeStateStatus: "DIRTY",
+    }),
+    markPullRequestOpen: async () => undefined,
+    commentPullRequest: async () => undefined,
+    markBlocked: async () => { order.push("blocked"); },
+    listFeedback: async () => [],
+    getPullRequestChecks: async () => ({ headSha: "feature-head", state: "pending", failures: [] }),
+  };
+  const repository = {
+    ensureIssueWorktree: async () => ({ branch: "pi/issue-42", path: join(root, "worktree") }),
+    headRevision: async () => "feature-head",
+    beginBaseMerge: async () => ({ baseSha: "base-head", conflicts: ["src/form.ts"], alreadyCurrent: false, mergeInProgress: true }),
+    stageBaseMerge: async () => { order.push("staged"); },
+    finishBaseMerge: async () => { order.push("committed"); },
+    abortBaseMerge: async () => { order.push("aborted"); },
+    clearAgentChanges: async (_worktree: string, _branch: string, options?: { ignored?: boolean }) => {
+      order.push(`discarded(ignored=${String(options?.ignored ?? true)})`);
+    },
+  };
+  const agent = { run: async () => { order.push("resolved"); return { sessionFile: join(root, "session.jsonl"), finalText: "Resolved." }; } };
+  try {
+    const worker = new IssueWorker(config(root), state, {
+      github: github as unknown as GitHubClient,
+      repository: repository as unknown as RepositoryManager,
+      agent: agent as unknown as PiAgentRunner,
+      qaVerifier: { verify: async () => { throw new Error("Independent QA BLOCKED: backend unavailable"); } },
+    });
+    await worker.tick();
+    assert.deepEqual(order, ["resolved", "staged", "aborted", "discarded(ignored=false)", "blocked"]);
+    assert.match(state.getJob(42)?.lastError ?? "", /conflict resolution failed/);
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// A conflict block is keyed on the PR's head and base OIDs, and GitHub's baseRefOid only moves when the PR
+// syncs — so once processed, the resolution never re-ran and the documented `/pi retry` only knew about CI
+// blocks. Retrying a conflict block must re-queue the resolution (next tick), not send the agent "retry".
+test("trusted /pi retry on a conflict-blocked PR re-queues the base-branch resolution", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-merge-retry-"));
+  const state = new WorkerState(join(root, "state.sqlite"));
+  state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
+  state.setPullRequest(42, 77, "https://github.com/example/widgets/pull/77");
+  state.setStatus(42, "pr_open", "Automatic base-branch conflict resolution failed: Independent QA gate: fixture");
+  state.markProcessed(42, "merge-conflict:77:main:feature-head:base-head");
+  const order: string[] = [];
+  const github = {
+    getIssue: async () => issue,
+    listReadyIssues: async () => [],
+    isPullRequestOpen: async () => true,
+    getPullRequestMergeState: async () => ({
+      headSha: "feature-head", baseSha: "base-head", baseBranch: "main", mergeable: "CONFLICTING", mergeStateStatus: "DIRTY",
+    }),
+    markPullRequestOpen: async () => undefined,
+    commentPullRequest: async (_pr: number, body: string) => { order.push(`comment:${body.slice(0, 40)}`); },
+    markBlocked: async () => undefined,
+    listFeedback: async () => [{
+      eventKey: "conversation:retry-conflict", source: "conversation", id: 11, body: "/pi retry", author: "maintainer",
+      authorAssociation: "MEMBER", createdAt: "2026-01-02T00:00:00Z", url: null,
+    }],
+    getPullRequestChecks: async () => ({ headSha: "feature-head", state: "pending", failures: [] }),
+  };
+  const repository = {
+    ensureIssueWorktree: async () => ({ branch: "pi/issue-42", path: join(root, "worktree") }),
+    headRevision: async () => "feature-head",
+    beginBaseMerge: async () => { order.push("merge-begun"); return { baseSha: "base-head", conflicts: ["src/form.ts"], alreadyCurrent: false, mergeInProgress: true }; },
+    stageBaseMerge: async () => undefined,
+    finishBaseMerge: async () => { order.push("committed"); },
+    abortBaseMerge: async () => undefined,
+    clearAgentChanges: async () => undefined,
+  };
+  const agent = { run: async () => { order.push("resolved"); return { sessionFile: join(root, "session.jsonl"), finalText: "Resolved." }; } };
+  try {
+    const worker = new IssueWorker(config(root), state, {
+      github: github as unknown as GitHubClient,
+      repository: repository as unknown as RepositoryManager,
+      agent: agent as unknown as PiAgentRunner,
+    });
+    await worker.tick();
+    assert.equal(order.length, 1);
+    assert.match(order[0]!, /^comment:🔄 Base-branch conflict resolution retry/);
+    assert.equal(state.hasProcessed("merge-conflict:77:main:feature-head:base-head"), false);
+    assert.equal(state.hasProcessed("conversation:retry-conflict"), true);
+    await worker.tick();
+    assert.deepEqual(order.slice(1, 4), ["merge-begun", "resolved", "committed"]);
+    assert.match(order[4] ?? "", /^comment:🔀 Base-branch conflicts resolved/);
+    assert.equal(order.length, 5);
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
