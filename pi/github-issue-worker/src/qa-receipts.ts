@@ -7,6 +7,22 @@ import type { VerificationEvidence } from "./types.js";
 export class QaReportingError extends Error {}
 
 /**
+ * True when the character at `index` is escaped by an immediately preceding, odd-length run of
+ * backslashes — `\"` escapes (1 backslash), `\\"` does not (2 backslashes pair off into one literal
+ * backslash, leaving the quote unescaped), `\\\"` does (3), and so on. A quote tracker that only checks
+ * whether the single preceding character is a backslash gets this wrong for every even count ≥ 2: it
+ * reads an unescaped, closing quote as still-escaped and keeps treating the quote as open. Text after
+ * that point is then wrongly read as quoted, either merging it into the wrong statement (splitStatements)
+ * or hiding a real, unquoted `&&`/`||`/`|`/`&` inside it (hasUnquotedShellOperator) — a real chained
+ * command would then ride along as unaccounted-for "bookkeeping".
+ */
+function isBackslashEscaped(text: string, index: number): boolean {
+  let backslashes = 0;
+  for (let i = index - 1; i >= 0 && text[i] === "\\"; i -= 1) backslashes += 1;
+  return backslashes % 2 === 1;
+}
+
+/**
  * Split a command into its statements on `;` or newline, collapsing internal whitespace per statement.
  * Separators inside single or double quotes are data, not boundaries — this is deliberately a quote
  * tracker rather than a shell parser, so an unterminated quote swallows the rest of the command into one
@@ -21,7 +37,7 @@ function splitStatements(command: string): string[] {
     if (quote) {
       current += char;
       // A backslash escapes the closing quote only inside double quotes; in single quotes it is literal.
-      if (char === quote && (quote === "'" || command[index - 1] !== "\\")) quote = null;
+      if (char === quote && (quote === "'" || !isBackslashEscaped(command, index))) quote = null;
       continue;
     }
     if (char === "'" || char === '"') {
@@ -54,7 +70,7 @@ function hasUnquotedShellOperator(statement: string): boolean {
   for (let index = 0; index < statement.length; index += 1) {
     const char = statement[index]!;
     if (quote) {
-      if (char === quote && (quote === "'" || statement[index - 1] !== "\\")) quote = null;
+      if (char === quote && (quote === "'" || !isBackslashEscaped(statement, index))) quote = null;
       continue;
     }
     if (char === "'" || char === '"') { quote = char; continue; }

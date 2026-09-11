@@ -14,7 +14,6 @@ import type { GitHubIssue, VerificationEvidence } from "./types.js";
 // Re-exported so callers keep a single entry point for the QA gate.
 export { QaReportingError, assertQaExecution };
 
-
 /**
  * Fingerprint every regular file under `dir` (recursively, symlinks skipped). Validation re-reads log and
  * screenshot bytes from disk by claimed relative path, so a repair turn could pass validation by pinning
@@ -38,7 +37,6 @@ export async function directoryFingerprint(dir: string): Promise<string> {
   for (const entry of files.sort()) hash.update(entry).update("\n");
   return hash.digest("hex");
 }
-
 
 export const DEFAULT_QA_CHECKS = ["acceptance", "regression", "negative-cases", "diff-review"];
 

