@@ -36,6 +36,7 @@ test("openIsolation runs without the sandbox runtime when config.sandbox is fals
   const root = await mkdtemp(join(tmpdir(), "pi-worker-isolation-off-"));
   const spy = spySandboxManager();
   const previousTmpdir = process.env.TMPDIR;
+  const previousOutputDir = process.env.PLAYWRIGHT_MCP_OUTPUT_DIR;
   try {
     const isolation = await openIsolation(workerConfig(root, false), {
       worktree: root,
@@ -49,6 +50,9 @@ test("openIsolation runs without the sandbox runtime when config.sandbox is fals
     await access(join(isolation.privateTemp, ".owner-pid"));
     assert.equal((await readFile(join(isolation.privateTemp, ".owner-pid"), "utf8")).trim(), String(process.pid));
     assert.equal(process.env.CLAUDE_CODE_TMPDIR, isolation.privateTemp);
+    // playwright-cli drops its `.playwright-cli/` output directory into a writable cwd — with the sandbox off
+    // that is the worktree, where it trips the verifier's source fingerprint and could even be committed.
+    assert.equal(process.env.PLAYWRIGHT_MCP_OUTPUT_DIR, join(isolation.privateTemp, "playwright-cli"));
     const chunks: string[] = [];
     const result = await isolation.bashOperations.exec("echo direct", root, { onData: (data) => chunks.push(String(data)), timeout: 30 });
     assert.equal(result.exitCode, 0);
@@ -56,6 +60,7 @@ test("openIsolation runs without the sandbox runtime when config.sandbox is fals
     await isolation.close();
     await assert.rejects(access(isolation.privateTemp));
     assert.equal(process.env.TMPDIR, previousTmpdir);
+    assert.equal(process.env.PLAYWRIGHT_MCP_OUTPUT_DIR, previousOutputDir);
     assert.deepEqual(spy.calls, []);
   } finally {
     spy.restore();

@@ -202,14 +202,23 @@ export function sandboxEnvironment(environment: NodeJS.ProcessEnv = process.env)
   );
 }
 
+/**
+ * Point every per-run scratch location at the private temp directory. `PLAYWRIGHT_MCP_OUTPUT_DIR` matters
+ * once the OS sandbox is off: playwright-cli otherwise creates `.playwright-cli/` in its cwd — the worktree —
+ * where it is untracked source to the verifier's fingerprint and to the controller's staging. (Under the
+ * sandbox the read-only worktree made the CLI fall back to TMPDIR on its own, which is why this never
+ * surfaced before.)
+ */
 export function applySandboxTempEnvironment(sandboxTemp: string, privateTmpdir: boolean): () => void {
   const previous = {
     CLAUDE_CODE_TMPDIR: process.env.CLAUDE_CODE_TMPDIR,
     TMPDIR: process.env.TMPDIR,
     PLAYWRIGHT_DAEMON_SESSION_DIR: process.env.PLAYWRIGHT_DAEMON_SESSION_DIR,
+    PLAYWRIGHT_MCP_OUTPUT_DIR: process.env.PLAYWRIGHT_MCP_OUTPUT_DIR,
   };
   process.env.CLAUDE_CODE_TMPDIR = sandboxTemp;
   process.env.PLAYWRIGHT_DAEMON_SESSION_DIR = join(sandboxTemp, "playwright-daemon");
+  process.env.PLAYWRIGHT_MCP_OUTPUT_DIR = join(sandboxTemp, "playwright-cli");
   if (privateTmpdir) process.env.TMPDIR = sandboxTemp;
   return () => {
     for (const [name, value] of Object.entries(previous)) {

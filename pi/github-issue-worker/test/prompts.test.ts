@@ -116,6 +116,7 @@ test("visual verification prefers truthful source-backed previews over unrelated
   assert.match(prompt, /read its current `urls` value from Aspire's runtime state/);
   assert.match(prompt, /instead of inferring ports from environment references/);
   assert.match(prompt, /verify each required endpoint directly before opening the browser/);
+  assert.match(prompt, /the API and auth server too, not only the frontend/);
 });
 
 // With the OS sandbox off the network-namespace and Docker-bridge guidance would be actively misleading —
