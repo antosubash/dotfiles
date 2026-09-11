@@ -290,7 +290,12 @@ systemctl --user edit pi-issue-worker-supervisor.service
 ```ini
 [Service]
 Environment="PATH=/home/USERNAME/.local/bin:/home/USERNAME/.local/share/pnpm:/home/USERNAME/.dotnet:/usr/local/bin:/usr/bin:/bin"
+Environment="DOTNET_ROOT=/home/USERNAME/.dotnet"
 ```
+
+`DOTNET_ROOT` matters as soon as agents run unsandboxed: a user-local .NET install found only through
+`PATH` is invisible to tools that launch the runtime host themselves (Aspire's AppHost, `dotnet test`
+hosts), which then fail with a missing-runtime error or need the variable set by hand in every command.
 
 Reload and restart after editing.
 
@@ -381,6 +386,16 @@ real conflict markers or unresolved paths, and the same message names them.
 Fixed: an abandoned resolution is now discarded from the worktree (`reset --hard` + `clean -fd`, ignored
 build outputs and `.qa` kept) when the controller blocks. A worktree left dirty by an older worker still
 needs one manual `git checkout -- <path>` in `<data-dir>/worktrees/pr-<n>`, then `/pi retry` on the PR.
+
+### `.NET test hosts fail with "user limit (128) on the number of inotify instances"`
+
+ABP/ASP.NET test hosts each register file watchers; a parallel `dotnet test` run exhausts the Linux
+default of 128 inotify instances per user and the affected tests fail inside host creation before their
+bodies run. Host setting, operator decision — the usual developer-box value:
+
+```bash
+sudo sysctl -w fs.inotify.max_user_instances=1024   # persist in /etc/sysctl.d/
+```
 
 ### Retrying a blocked base-branch conflict resolution
 
