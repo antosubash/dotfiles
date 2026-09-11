@@ -232,7 +232,7 @@ Expected paths include:
 
 ```text
 %h/.local/share/pi-issue-worker %h/.cache %h/.pi/agent %t
--%h/.nuget -%h/.aspire -%h/.dotnet -%h/.microsoft -%h/.aspnet -%h/.local/share/pnpm -%h/.npm
+-%h/.nuget -%h/.aspire -%h/.dcp -%h/.dotnet -%h/.microsoft -%h/.aspnet -%h/.local/share/pnpm -%h/.npm
 ```
 
 Rerun the installer when the path is missing.

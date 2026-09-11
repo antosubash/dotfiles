@@ -25,7 +25,7 @@ test("systemd units permit Pi SDK auth locking without exposing it to agent bash
 test("systemd units open the toolchain homes an unsandboxed agent must write", async () => {
   for (const path of [supervisorUnit, profileUnit]) {
     const unit = await readFile(path, "utf8");
-    for (const home of [".nuget", ".aspire", ".dotnet", ".microsoft", ".aspnet", ".local/share/pnpm", ".npm"]) {
+    for (const home of [".nuget", ".aspire", ".dcp", ".dotnet", ".microsoft", ".aspnet", ".local/share/pnpm", ".npm"]) {
       assert.match(unit, new RegExp(`^ReadWritePaths=.*-%h/${home.replace(/[./]/g, "\\$&")}(?:\\s|$)`, "m"), `${path} opens ~/${home}`);
     }
   }

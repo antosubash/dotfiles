@@ -225,7 +225,7 @@ journalctl --user -u pi-issue-worker@widgets.service -f
 The supplied units permit controller writes under `~/.local/share/pi-issue-worker`,
 `~/.cache`, `~/.pi/agent` (the Pi SDK locks and may refresh its auth state), the private user runtime
 root used for visual browser sockets, and — because agent commands run under the same unit when
-sandboxing is off — the toolchain homes `~/.nuget`, `~/.aspire`, `~/.dotnet`, `~/.microsoft` (user secrets), `~/.aspnet` (data-protection keys), `~/.local/share/pnpm`, and
+sandboxing is off — the toolchain homes `~/.nuget`, `~/.aspire`, `~/.dotnet`, `~/.dcp` (the Aspire orchestrator's port allocation state), `~/.microsoft` (user secrets), `~/.aspnet` (data-protection keys), `~/.local/share/pnpm`, and
 `~/.npm`. If a profile sets a different data directory, or a repository's toolchain writes elsewhere under
 `$HOME` (`~/.cargo`, `~/go`, …), add that directory to `ReadWritePaths` in a systemd override. With
 `PI_WORKER_SANDBOX=1`, Pi bash commands additionally run inside Anthropic Sandbox Runtime: reads are
