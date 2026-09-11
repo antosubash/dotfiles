@@ -28,6 +28,7 @@ import {
   abortBaseMerge,
   beginBaseMerge,
   finishBaseMerge,
+  stageBaseMerge,
   recoverBaseMergePush,
 } from "./repository/merge.js";
 import {
@@ -186,6 +187,10 @@ export class RepositoryManager {
 
   unmergedFiles(worktree: string): Promise<string[]> {
     return unmergedFiles(this.ctx, worktree);
+  }
+
+  stageBaseMerge(worktree: string, branch: string): Promise<void> {
+    return stageBaseMerge(this.ctx, worktree, branch);
   }
 
   finishBaseMerge(

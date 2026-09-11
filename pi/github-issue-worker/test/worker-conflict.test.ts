@@ -43,6 +43,7 @@ test("a conflicting tracked PR is merged from base and resolved through its pers
       conflicts: ["src/form.ts"],
       alreadyCurrent: false,
     }),
+    stageBaseMerge: async () => undefined,
     finishBaseMerge: async () => {
       finished += 1;
     },
@@ -106,6 +107,7 @@ test("a committed conflict resolution retries after an ambiguous push failure", 
       alreadyCurrent: false,
       mergeInProgress: true,
     }),
+    stageBaseMerge: async () => undefined,
     finishBaseMerge: async () => {
       localHead = "merge-head";
       throw new Error("push connection reset");
@@ -133,6 +135,52 @@ test("a committed conflict resolution retries after an ambiguous push failure", 
     assert.equal(runs, 1);
     assert.equal(unpushed, false);
     assert.equal(state.hasProcessed("merge-conflict:77:main:feature-head:base-head"), true);
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// The agent resolves conflicts in the working tree only (git add is policy-blocked), so until the controller
+// stages the result the index still carries UU entries. The independent verifier reads `git status` as part
+// of its diff review and fails on exactly that, so staging has to come before verification, not after.
+test("a conflict resolution is staged before the QA gate runs and committed after it passes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-merge-order-"));
+  const state = new WorkerState(join(root, "state.sqlite"));
+  state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
+  state.setPullRequest(42, 77, "https://github.com/example/widgets/pull/77");
+  const order: string[] = [];
+  const github = {
+    getIssue: async () => issue,
+    listReadyIssues: async () => [],
+    isPullRequestOpen: async () => true,
+    getPullRequestMergeState: async () => ({
+      headSha: "feature-head", baseSha: "base-head", baseBranch: "main", mergeable: "CONFLICTING", mergeStateStatus: "DIRTY",
+    }),
+    markPullRequestOpen: async () => undefined,
+    commentPullRequest: async () => undefined,
+    markBlocked: async () => undefined,
+    listFeedback: async () => [],
+    getPullRequestChecks: async () => ({ headSha: "feature-head", state: "pending", failures: [] }),
+  };
+  const repository = {
+    ensureIssueWorktree: async () => ({ branch: "pi/issue-42", path: join(root, "worktree") }),
+    headRevision: async () => "feature-head",
+    beginBaseMerge: async () => ({ baseSha: "base-head", conflicts: ["src/form.ts"], alreadyCurrent: false, mergeInProgress: true }),
+    stageBaseMerge: async () => { order.push("staged"); },
+    finishBaseMerge: async () => { order.push("committed"); },
+    abortBaseMerge: async () => { order.push("aborted"); },
+  };
+  const agent = { run: async () => { order.push("resolved"); return { sessionFile: join(root, "session.jsonl"), finalText: "Resolved." }; } };
+  try {
+    const worker = new IssueWorker(config(root), state, {
+      github: github as unknown as GitHubClient,
+      repository: repository as unknown as RepositoryManager,
+      agent: agent as unknown as PiAgentRunner,
+      qaVerifier: { verify: async () => { order.push("verified"); return "/private/qa/result.json"; } },
+    });
+    await worker.tick();
+    assert.deepEqual(order, ["resolved", "staged", "verified", "committed"]);
   } finally {
     state.close();
     await rm(root, { recursive: true, force: true });

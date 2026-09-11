@@ -127,6 +127,9 @@ export async function handleMergeConflict(
     if (merge.conflicts.length === 0) {
       let evidence: EvidenceRun | null = null;
       if (merge.mergeInProgress) {
+        // A resumed merge may hold an agent resolution that was never staged; a fresh clean merge is
+        // already staged and this is a no-op either way.
+        await ctx.repository.stageBaseMerge(worktree.path, worktree.branch);
         if (
           typeof ctx.repository.filesChangedBetween === "function" &&
           containsUiFiles(
@@ -193,6 +196,9 @@ export async function handleMergeConflict(
     });
     ctx.state.setSession(job.issueNumber, result.sessionFile);
     if (isBlockedFinalOutput(result.finalText)) throw new Error(result.finalText);
+    // The agent can only edit the working tree; stage its resolution now so the verifiers below inspect a
+    // merge with no unmerged index entries — the exact tree that finishBaseMerge will commit.
+    await ctx.repository.stageBaseMerge(worktree.path, worktree.branch);
     const evidence =
       typeof ctx.repository.filesChangedBetween === "function" &&
       containsUiFiles(await ctx.repository.filesChangedBetween(worktree.path, pullRequestHead))
