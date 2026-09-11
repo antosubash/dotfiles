@@ -164,7 +164,9 @@ or lockfiles, and a \`--no-restore\`/\`--no-build\` build or a stale node_module
 code. Never pass \`--no-restore\`/\`--no-build\` unless this session restored/built that exact project moments earlier.
 A repository-wide check that fails only in files the task diff does not touch, after a fresh restore/install, is a
 pre-existing base-branch condition: record it in the check's notes and keep verifying, unless the failure is caused by
-the task's own changes (an interface, type, or configuration the diff altered) or the issue asked to fix it.
+the task's own changes (an interface, type, or configuration the diff altered) or the issue asked to fix it. A file
+your own run created (a Playwright auth state, test report, cache) is never a code failure: a lint or format check
+that trips on it has not failed the code — exclude the artifact or re-run the check without it, and say so in the notes.
 `}Do not pass on code inspection alone or trust the worker's summary/test claims. Save actual command output logs
 in ${JSON.stringify(evidenceDir)}. If tests cannot run, essential requirements cannot be verified, or a dependency
 is unavailable, return blocked with an exact reason, never skipped/passed. Missing test infrastructure does not

@@ -271,6 +271,8 @@ test("the verifier prompt describes fingerprinting, not a read-only mount, when 
     assert.match(calls[0]!.prompt, /Restore and install dependencies first, exactly as the repository's CI does/);
     assert.match(calls[0]!.prompt, /Never pass `--no-restore`\/`--no-build` unless this session restored\/built that exact project/);
     assert.match(calls[0]!.prompt, /fails only in files the task diff does not touch, after a fresh restore\/install, is a\npre-existing base-branch condition/);
+    // Attempt 8: Biome tripped on the Playwright auth state the verifier's own e2e run had just written.
+    assert.match(calls[0]!.prompt, /A file\nyour own run created .* is never a code failure/);
     assert.doesNotMatch(calls[0]!.prompt, /OS-read-only/);
   } finally { await f.cleanup(); }
 });
