@@ -105,6 +105,10 @@ If an older unit uses `KillMode=mixed`, rerun the installer and reload systemd.
 
 ## Sandbox failures
 
+Everything in this section applies only with `PI_WORKER_SANDBOX=1`. The switch is **off by default for
+now** (see the README's "Sandboxing" section), in which case agent commands run directly under the
+worker's own systemd unit and none of the bwrap/socat/seccomp material below is in play.
+
 ### Missing Linux commands
 
 ```bash
@@ -216,7 +220,7 @@ Symptom:
 EROFS: read-only file system, mkdir '~/.pi/agent/auth.json.lock'
 ```
 
-Current units permit trusted controller writes to `~/.pi/agent` because the Pi SDK locks and may refresh auth state. Sandboxed agent commands still cannot read that directory.
+Current units permit trusted controller writes to `~/.pi/agent` because the Pi SDK locks and may refresh auth state. With sandboxing on, agent commands cannot read that directory; with it off, bash commands that reference it are policy-blocked instead.
 
 Verify:
 
@@ -228,6 +232,7 @@ Expected paths include:
 
 ```text
 %h/.local/share/pi-issue-worker %h/.cache %h/.pi/agent %t
+-%h/.nuget -%h/.aspire -%h/.dotnet -%h/.local/share/pnpm -%h/.npm
 ```
 
 Rerun the installer when the path is missing.
@@ -348,6 +353,28 @@ Typical causes:
 - tests failed and Pi could not safely repair them.
 
 After correcting the cause, use the documented retry command on the PR when one exists, or reapply the ready label to a blocked initial issue.
+
+### `Independent QA BLOCKED: … backend/… unavailable` or `preflight failed … waits on unavailable backend`
+
+The verifier or the visual run found nothing listening on the application's documented ports and gave
+up instead of launching the stack. Check, in order:
+
+1. `PI_WORKER_SANDBOX` — with it on, the run cannot reach host-loopback services (shared Postgres,
+   Redis, MinIO) or toolchain caches under `$HOME` at all; that is the known gap sandboxing is currently
+   off for. Set it to `0` for the profile and restart.
+2. The unit's `ReadWritePaths` — with sandboxing off, `ProtectHome=read-only` still applies to agent
+   commands, so `dotnet restore`, `aspire`, dev-certs or a package store failing with `EROFS`/"read-only
+   file system" means the toolchain home is missing from the second `ReadWritePaths` line in
+   `systemd/*.service`. Add it and `systemctl --user daemon-reload && systemctl --user restart …`.
+3. The host services themselves — `ss -ltn | grep -E ':(5432|6379|9000)\b'`. The agent is told to start
+   the *application* from the repository's documented isolated launcher, not the shared infrastructure.
+4. The verifier's `evidence/report.md` in the run directory named in the error: an agent that did try to
+   launch records the exact failure there, and that failure is the real bug.
+
+### `diff-review … Unresolved index entries exist` during a base-branch conflict resolution
+
+Fixed: the controller now stages the agent's resolution before the QA gate. If it recurs, the agent left
+real conflict markers or unresolved paths, and the same message names them.
 
 ## Draft PR CI is failing or unattended
 

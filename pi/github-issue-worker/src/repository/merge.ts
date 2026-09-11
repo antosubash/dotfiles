@@ -147,7 +147,11 @@ export async function stageBaseMerge(
   }
 }
 
-/** Stage (idempotently — a re-stage after verification picks up nothing new) and commit, then push. */
+/**
+ * Stage, commit, push. The stage step is repeated here so the commit holds exactly the working tree the
+ * verifiers fingerprinted (the QA verifier rejects any source mutation, so a re-stage after a passing
+ * verification changes nothing), and so a caller that never staged separately still gets every check.
+ */
 export async function finishBaseMerge(
   ctx: RepositoryContext,
   worktree: string,

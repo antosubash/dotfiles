@@ -63,11 +63,13 @@ flow runs; planning is not an automatic prerequisite. Interactive Pi has the equ
 **No Figma link does not mean no QA.** Every implementation, review/CI fix, merge update, and interrupted
 push recovery passes a fresh independent QA session. Non-UI work runs meaningful repository-native checks
 without requiring a browser. UI work requires actual changed-surface interactions and desktop/mobile PNGs.
-The implementer's claims or existing media never substitute for independent evidence. Verifier source is
-OS-read-only, write/edit tools are restricted to private evidence, and Docker daemon access is disabled for
-verifiers (the implementation worker retains its configured Docker policy). Tests/builds must use documented
-flags to put outputs/caches in private scratch space; if that is impossible, verification blocks with the exact
-requirement rather than relaxing isolation. The controller also hashes HEAD, index, tracked contents, and
+The implementer's claims or existing media never substitute for independent evidence. Verifier write/edit
+tools are restricted to private evidence, and Docker commands are policy-blocked for verifiers (the
+implementation worker retains its configured Docker policy). With OS sandboxing on (see
+[Sandboxing](#sandboxing)) verifier source is additionally OS-read-only and tests/builds must use documented
+flags to put outputs/caches in private scratch space; with it off, build outputs land in their normal ignored
+locations and the verifier is expected to start the repository's documented stack rather than report an
+unstarted backend as a blocker. In both modes the controller hashes HEAD, index, tracked contents, and
 nonignored untracked contents before/after each verifier and rejects mutation. Every QA command claimed must
 be contained in a successful runner-recorded tool execution (whitespace and `;`/newline layout may differ —
 separators inside quotes are data, not statement boundaries — and
@@ -112,7 +114,7 @@ within its bounded fix loop, always followed by fresh verification.
 - Pi authentication in `~/.pi/agent` or `PI_CODING_AGENT_DIR`
 - `playwright-cli` for visual evidence
 - `ffmpeg` for optional GIF conversion
-- Anthropic Sandbox Runtime prerequisites: on Linux, `bubblewrap`, `socat`, and `ripgrep`; macOS requires `ripgrep`. The worker fails closed if the OS sandbox cannot initialize.
+- Only with `PI_WORKER_SANDBOX=1`: Anthropic Sandbox Runtime prerequisites — on Linux, `bubblewrap`, `socat`, and `ripgrep`; macOS requires `ripgrep`. The worker then fails closed if the OS sandbox cannot initialize.
 - A dedicated GitHub App or machine-user identity is strongly recommended
 
 The GitHub identity needs repository contents, issues, and pull-request write access. If the worker uses
@@ -165,7 +167,9 @@ PI_WORKER_BASE_BRANCH=main
 PI_WORKER_DATA_DIR=~/.local/share/pi-issue-worker/acme-widgets
 PI_WORKER_PROTECTED_PATHS=.git,.github/workflows,.pi
 PI_WORKER_APP_URL=http://localhost:3000
-# Optional additional hosts for sandboxed build/browser verification (comma-separated)
+# OS sandboxing of agent bash commands. Off (0) by default for now — see "Sandboxing" below.
+PI_WORKER_SANDBOX=0
+# Optional additional hosts for sandboxed build/browser verification (comma-separated; PI_WORKER_SANDBOX=1 only)
 PI_WORKER_SANDBOX_ALLOWED_DOMAINS=
 PI_WORKER_MODEL=openai-codex/gpt-5.6-terra
 PI_WORKER_THINKING_LEVEL=high
@@ -218,15 +222,47 @@ systemctl --user enable --now pi-issue-worker@widgets.service
 journalctl --user -u pi-issue-worker@widgets.service -f
 ```
 
-The supplied hardened units permit controller writes under `~/.local/share/pi-issue-worker`,
-`~/.cache`, `~/.pi/agent` (the Pi SDK locks and may refresh its auth state), and the private user runtime
-root used for visual browser sockets. Sandboxed agent commands
-still cannot read the Pi agent directory. If a profile sets a different data directory, add that directory
-to `ReadWritePaths` in a systemd override. Pi bash commands also run inside Anthropic Sandbox Runtime:
-reads are denied across the home directory except the issue
-worktree and required Git metadata, writes are limited to the worktree and temporary build space, and
-network access uses an allowlist. Add project-specific browser/build hosts with
-`PI_WORKER_SANDBOX_ALLOWED_DOMAINS`; do not put credentials or broad wildcards there.
+The supplied units permit controller writes under `~/.local/share/pi-issue-worker`,
+`~/.cache`, `~/.pi/agent` (the Pi SDK locks and may refresh its auth state), the private user runtime
+root used for visual browser sockets, and — because agent commands run under the same unit when
+sandboxing is off — the toolchain homes `~/.nuget`, `~/.aspire`, `~/.dotnet`, `~/.local/share/pnpm`, and
+`~/.npm`. If a profile sets a different data directory, or a repository's toolchain writes elsewhere under
+`$HOME` (`~/.cargo`, `~/go`, …), add that directory to `ReadWritePaths` in a systemd override. With
+`PI_WORKER_SANDBOX=1`, Pi bash commands additionally run inside Anthropic Sandbox Runtime: reads are
+denied across the home directory except the issue worktree and required Git metadata, writes are limited
+to the worktree and temporary build space, and network access uses an allowlist. Add project-specific
+browser/build hosts with `PI_WORKER_SANDBOX_ALLOWED_DOMAINS`; do not put credentials or broad wildcards
+there.
+
+## Sandboxing
+
+`PI_WORKER_SANDBOX` decides whether agent bash commands run inside the Anthropic Sandbox Runtime
+(bubblewrap on Linux). **It is off by default for now.** The OS sandbox isolates every command in its own
+network namespace and hides `$HOME`, which makes the stacks agents must actually run unstartable: host
+dev services (a shared Postgres/Redis/MinIO on loopback) are unreachable without a Docker bridge that
+verifiers may never use, and toolchain caches such as `~/.nuget/packages` are invisible, so a .NET
+backend cannot even be restored. Sandboxing returns as the default once the stack-launch story works
+inside it; until then set `PI_WORKER_SANDBOX=1` per profile to opt back in.
+
+What is enforced in both modes:
+
+- the agent policy: `gh`, git mutation, `sudo`, recursive deletion, secret files, CI workflows, protected
+  paths, Docker without an explicit grant, and any reference to a credential store under `$HOME` (Pi
+  agent directory, worker profiles, SSH/AWS/GPG/netrc/npm/Docker credentials) are blocked at the
+  tool-call level — a textual rule, so treat it as a tripwire rather than a wall;
+- the verifier may write only its private evidence directory, and its source is fingerprinted before and
+  after the run — any mutation invalidates the verdict;
+- credential-looking environment variables (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, …) are stripped from
+  every agent command, and the worker's own GitHub/Figma tokens are removed from the process for the
+  duration of a run;
+- every bash call is a detached process group that the controller terminates when the call ends, so app
+  servers and browsers must be started, exercised, and stopped within one call.
+
+What is *not* enforced with sandboxing off: `$HOME` is readable, the network is open, and loopback ports
+are shared with the host and with other worker runs. The prompts tell agents to use the repository's
+documented isolated launcher with run-unique instance names (databases, cache prefixes, ports), and that a
+backend which is merely not running is a launch task rather than a blocker. Run the worker under a
+dedicated OS account and treat the host as disposable while sandboxing is off.
 
 ## Run multiple repositories with the supervisor
 
@@ -382,11 +418,12 @@ feature PRs.
 - Applying the ready label is the human approval boundary. Do not grant issue-triage rights broadly.
 - Issue and review text remains untrusted and is delimited as data in prompts.
 - Only configured GitHub author associations can trigger follow-up work.
-- Pi bash commands use Anthropic Sandbox Runtime OS isolation (bubblewrap on Linux, sandbox-exec on
-  macOS, with platform prerequisites installed). Home-directory and credential reads are denied, writes
-  are allow-only, and network access is allowlisted. Initialization failure blocks the run; there is no
-  unsandboxed fallback. Executable user/project Pi extensions are disabled; only the worker-owned policy
-  extension runs in the controller process.
+- With `PI_WORKER_SANDBOX=1`, Pi bash commands use Anthropic Sandbox Runtime OS isolation (bubblewrap on
+  Linux, sandbox-exec on macOS, with platform prerequisites installed). Home-directory and credential reads
+  are denied, writes are allow-only, and network access is allowlisted. Initialization failure blocks the
+  run; there is no silent unsandboxed fallback. **The default is currently `0`** — see
+  [Sandboxing](#sandboxing) for what remains enforced. Executable user/project Pi extensions are disabled
+  in both modes; only the worker-owned policy extension runs in the controller process.
 - The agent policy blocks common GitHub/git mutation, privilege escalation, recursive deletion, secret
   paths, CI workflows, and configured protected paths. The controller checks paths again before commit.
   Explicit `BLOCKED` results are never committed; tracked, untracked, and ignored partial changes are
@@ -400,8 +437,11 @@ feature PRs.
   subtree plus Sandbox Runtime's network bridge. Linux seccomp cannot filter Unix sockets by path, so a dedicated OS account remains
   important defense in depth.
 - Run under a dedicated OS account and dedicated GitHub identity as additional defense in depth.
-- Model credentials are used by the controller/Pi host process and are never exposed to sandboxed bash.
-  Never approve hostile issues.
+- Model credentials are used by the controller/Pi host process and are never exposed to agent bash:
+  credential-looking environment variables are stripped from every command in both modes, and bash
+  commands that reference credential stores (the Pi agent directory, `~/.config/pi-issue-worker`, `~/.ssh`,
+  `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker/config.json`) are policy-blocked. That textual
+  rule is the only guard on those paths while sandboxing is off. Never approve hostile issues.
 - There is no auto-merge, force-push, automatic rebase, or arbitrary attachment upload.
 - Review replies are posted to the PR conversation rather than individual inline threads.
 
