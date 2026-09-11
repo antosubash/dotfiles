@@ -45,12 +45,26 @@ function normalizeToolPath(cwd: string, input: unknown): string | null {
   return local.startsWith("../") || local === ".." ? null : local;
 }
 
+/**
+ * Home-anchored credential stores: `~/…`, `$HOME/…`, `${HOME}/…`, or any absolute path, followed by a
+ * store name and a path/space/quote/end terminator (so a repository's own `.npmrc` or `src/.ssh-ui` stay
+ * usable). The OS sandbox used to hide all of `$HOME`; with it off this textual rule is what stands
+ * between agent bash and the worker's Pi auth, profile `.env` files (which carry `GH_TOKEN`), SSH, AWS,
+ * GPG, netrc, Docker and npm credentials.
+ */
+const CREDENTIAL_STORES =
+  /(?:(?:~|\$\{?HOME\}?)\/|(?:^|[\s'"=:])\/(?:[^\s'"]*\/)?)\.(?:ssh|aws|gnupg|netrc|npmrc|pi\/agent|config\/pi-issue-worker|docker\/config\.json)(?=[\s/'"]|$)/i;
+
 export function commandBlockReason(
   command: string,
   protectedPaths: readonly string[],
-  options: { dockerAccess?: boolean } = {},
+  options: { dockerAccess?: boolean; credentialPaths?: readonly string[] } = {},
 ): string | null {
   const inspectedCommand = command.replace(/\\\r?\n/g, " ");
+  if (CREDENTIAL_STORES.test(inspectedCommand) ||
+      options.credentialPaths?.some((path) => path && inspectedCommand.includes(path))) {
+    return "credential stores are protected";
+  }
   const rules: Array<[RegExp, string]> = [
     [/\bgh\s+/i, "GitHub CLI writes and reads belong to the controller"],
     [/\bgit\b[^\n]*(?:\bpush|\bcommit|\badd|\breset|\bclean|\brebase|\bcheckout|\bswitch|\bworktree)\b/i, "git mutation belongs to the controller"],
@@ -103,6 +117,8 @@ export function headlessPolicyExtension(options: {
   bashOperations: BashOperations;
   /** Whether `bashOperations` wraps commands in the OS sandbox; only the tool's label depends on it. */
   sandboxed?: boolean;
+  /** Absolute credential locations (the resolved Pi agent directory) bash commands may not reference. */
+  credentialPaths?: readonly string[];
   verification?: VerificationOptions;
 }): InlineExtension {
   return {
@@ -118,6 +134,7 @@ export function headlessPolicyExtension(options: {
         if (event.toolName === "bash" && typeof input.command === "string") {
           const reason = commandBlockReason(input.command, options.protectedPaths, {
             dockerAccess: options.dockerAccess,
+            ...(options.credentialPaths ? { credentialPaths: options.credentialPaths } : {}),
           });
           if (reason) return { block: true, reason, terminate: false };
         }

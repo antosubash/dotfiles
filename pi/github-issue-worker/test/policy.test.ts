@@ -220,3 +220,31 @@ test("headless policy blocks privilege, destructive commands, and configured pat
   );
   assert.equal(commandBlockReason("npm test", ["tools/repository-controller"]), null);
 });
+
+// With OS sandboxing off, $HOME is readable by agent bash, so the credential stores that the sandbox used
+// to hide — Pi's auth.json, the worker's own profile .env files with GH_TOKEN, SSH/AWS/GPG material — are
+// protected only by this rule. It is a textual guard, so it must catch the plain spellings an agent would
+// actually type, including a profile file whose name does not start with `.env`.
+test("headless policy blocks commands that reference credential stores", () => {
+  for (const command of [
+    "cat ~/.pi/agent/auth.json",
+    "cat $HOME/.pi/agent/auth.json",
+    "cat ${HOME}/.pi/agent/models.json",
+    "cat /home/worker/.pi/agent/auth.json",
+    "grep -r TOKEN ~/.config/pi-issue-worker/",
+    "cat ~/.config/pi-issue-worker/iiasa-geowiki.env",
+    "cat ~/.ssh/id_ed25519",
+    "cat ~/.aws/credentials",
+    "ls ~/.gnupg",
+    "cat ~/.netrc",
+    "cat /root/.docker/config.json",
+    "cat ~/.npmrc",
+  ]) {
+    assert.match(commandBlockReason(command, []) || "", /credential/, command);
+  }
+  // A custom PI_CODING_AGENT_DIR is protected by the resolved path the controller passes in.
+  assert.match(commandBlockReason("cat /srv/pi-agent/auth.json", [], { credentialPaths: ["/srv/pi-agent"] }) || "", /credential/);
+  for (const command of ["npm test", "cat README.md", "ls src/.ssh-ui", "printf 'aws sdk'", "node scripts/netrc-parser.js", "cat frontend/.npmrc"]) {
+    assert.equal(commandBlockReason(command, []), null, command);
+  }
+});

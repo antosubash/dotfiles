@@ -106,6 +106,7 @@ export class PiAgentRunner {
           dockerAccess,
           bashOperations,
           sandboxed: isolation.sandboxed,
+          credentialPaths: [this.config.agentDir],
           ...(options.verification ? { verification: options.verification } : {}),
         })],
       });
