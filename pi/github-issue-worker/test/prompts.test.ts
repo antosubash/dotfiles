@@ -109,6 +109,8 @@ test("visual verification prefers truthful source-backed previews over unrelated
   assert.match(prompt, /full repository stack when the changed behavior genuinely requires backend integration/);
   assert.match(prompt, /cannot reach host-loopback services outside the sandbox/);
   assert.match(prompt, /never guess ports from launchSettings/);
+  assert.match(prompt, /ASPIRE_CLI_START_TIMEOUT=900/);
+  assert.match(prompt, /the timeout is usually a symptom of the real error above it/);
   assert.match(prompt, /aspire describe --apphost <path-to-AppHost\.csproj> --format Json --non-interactive/);
   assert.match(prompt, /identify each required resource by name/);
   assert.match(prompt, /read its current `urls` value from Aspire's runtime state/);
