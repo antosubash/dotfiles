@@ -24,6 +24,11 @@ ${untrustedJson({
 })}
 </untrusted-merge-conflict-json>
 
+This is a fresh merge attempt: the listed files contain conflict markers RIGHT NOW. If you resolved conflicts for
+this pull request earlier in this session, that work was discarded by the controller together with the failed
+attempt and is not in the working tree; do not report it as still applied. Re-read each listed file and resolve it
+again in this turn.
+
 Inspect every conflict and the surrounding history. Resolve the files by preserving both the current base branch's
 intent and the pull request's intended behavior; do not blindly choose ours or theirs. Remove all conflict markers,
 update focused tests when base changes legitimately alter interfaces or translated labels, and run the most relevant
