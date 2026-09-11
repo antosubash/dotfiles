@@ -101,15 +101,17 @@ export function headlessPolicyExtension(options: {
   protectedPaths: readonly string[];
   dockerAccess: boolean;
   bashOperations: BashOperations;
+  /** Whether `bashOperations` wraps commands in the OS sandbox; only the tool's label depends on it. */
+  sandboxed?: boolean;
   verification?: VerificationOptions;
 }): InlineExtension {
   return {
     name: "headless-worker-policy",
     factory: (pi) => {
-      const sandboxedBash = createBashTool(options.worktree, {
+      const bash = createBashTool(options.worktree, {
         operations: options.bashOperations,
       });
-      pi.registerTool({ ...sandboxedBash, label: "bash (OS sandboxed)" });
+      pi.registerTool({ ...bash, label: options.sandboxed === false ? "bash" : "bash (OS sandboxed)" });
       pi.on("user_bash", () => ({ operations: options.bashOperations }));
       pi.on("tool_call", (event) => {
         const input = event.input as { command?: unknown; path?: unknown };

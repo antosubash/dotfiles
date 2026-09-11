@@ -53,7 +53,7 @@ test("issue and feedback prompts reject seed edits for runtime-managed content f
 
 test("visual verification prefers truthful source-backed previews over unrelated full stacks", () => {
   const prompt = buildUiVerificationPrompt({
-    config: { appUrl: null, playwrightState: null } as WorkerConfig,
+    config: { appUrl: null, playwrightState: null, sandbox: true } as WorkerConfig,
     issueNumber: 548,
     prNumber: null,
     evidenceDir: ".qa/issues/548/pr-pending/runs/example",
@@ -114,4 +114,33 @@ test("visual verification prefers truthful source-backed previews over unrelated
   assert.match(prompt, /read its current `urls` value from Aspire's runtime state/);
   assert.match(prompt, /instead of inferring ports from environment references/);
   assert.match(prompt, /verify each required endpoint directly before opening the browser/);
+});
+
+// With the OS sandbox off the network-namespace and Docker-bridge guidance would be actively misleading —
+// host services ARE reachable and ports ARE shared — so the prompt must swap to the direct-mode facts and,
+// above all, stop treating an unstarted backend as a blocker: that single sentence is what blocked PR 501.
+test("visual verification without the sandbox tells the agent to start the stack, not to block", () => {
+  const prompt = buildUiVerificationPrompt({
+    config: { appUrl: null, playwrightState: null, sandbox: false } as WorkerConfig,
+    issueNumber: 501,
+    prNumber: 501,
+    evidenceDir: ".qa/issues/501/pr-501/runs/example",
+  });
+
+  assert.match(prompt, /Host-loopback development services .* are reachable directly/);
+  assert.match(prompt, /loopback ports are shared with the host and other worker runs/);
+  assert.match(prompt, /isolated or parallel-worktree launcher, use it with a run-unique instance name/);
+  assert.match(prompt, /A backend that is merely not running is NOT a blocker/);
+  assert.match(prompt, /end with BLOCKED only when the launch itself fails, quoting the exact failure/);
+  assert.match(prompt, /the controller terminates every background process when a bash call ends/);
+  assert.match(prompt, /Direct Docker commands stay policy-gated/);
+  // Sandbox-only mechanics must be gone, not merely de-emphasised.
+  assert.doesNotMatch(prompt, /cannot reach host-loopback services outside the sandbox/);
+  assert.doesNotMatch(prompt, /pi-worker-docker-bridge/);
+  assert.doesNotMatch(prompt, /network namespace/);
+  assert.doesNotMatch(prompt, /private browser sandbox/);
+  // Mode-independent guidance stays.
+  assert.match(prompt, /inspect every intended loopback port/);
+  assert.match(prompt, /aspire describe --apphost/);
+  assert.match(prompt, /Never fabricate an ad-hoc mock page/);
 });

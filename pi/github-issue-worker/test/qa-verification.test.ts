@@ -6,7 +6,7 @@ import test from "node:test";
 import { loadConfig } from "../src/config.js";
 import { execFile } from "../src/exec.js";
 import type { PiAgentRunner } from "../src/pi-agent.js";
-import { DEFAULT_QA_CHECKS, QaVerificationService, assertQaExecution, validateQaResult } from "../src/qa-verification.js";
+import { DEFAULT_QA_CHECKS, QaVerificationService, assertQaExecution, validateQaResult, verifierSourcePolicy } from "../src/qa-verification.js";
 import type { GitHubIssue, VerificationEvidence } from "../src/types.js";
 
 // Shapes taken from iiasa/IIASA.GeoWiki#555: the runner recorded a multi-line
@@ -249,5 +249,23 @@ test("a repair turn that changes evidence is rejected without a further repair",
       return true;
     });
     assert.equal(calls.length, 2);
+  } finally { await f.cleanup(); }
+});
+
+// The verifier's prompt must describe the guard that is actually in force. Claiming an OS-read-only source
+// when there is none would send the verifier redirecting every build output for no reason — and, worse,
+// still reporting BLOCKED for a backend it is now perfectly able to start.
+test("the verifier prompt describes fingerprinting, not a read-only mount, when the sandbox is off", async () => {
+  assert.match(verifierSourcePolicy({ sandbox: true }), /OS-read-only/);
+  assert.match(verifierSourcePolicy({ sandbox: false }), /fingerprinted before and after/);
+  assert.match(verifierSourcePolicy({ sandbox: false }), /normal ignored locations/);
+  assert.doesNotMatch(verifierSourcePolicy({ sandbox: false }), /OS-read-only/);
+  const f = await worktreeFixture();
+  try {
+    const { agent, calls } = scriptedAgent([{ finalText: verdictJson(), recorded: ["pnpm test"] }]);
+    await new QaVerificationService({ ...f.config, sandbox: false }, agent).verify(issue, f.worktree, null);
+    assert.match(calls[0]!.prompt, /merely not running is not an unavailable dependency/);
+    assert.match(calls[0]!.prompt, /report blocked only with the exact launch failure/);
+    assert.doesNotMatch(calls[0]!.prompt, /OS-read-only/);
   } finally { await f.cleanup(); }
 });

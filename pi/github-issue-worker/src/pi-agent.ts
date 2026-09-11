@@ -105,6 +105,7 @@ export class PiAgentRunner {
           protectedPaths: this.config.protectedPaths,
           dockerAccess,
           bashOperations,
+          sandboxed: isolation.sandboxed,
           ...(options.verification ? { verification: options.verification } : {}),
         })],
       });
