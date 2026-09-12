@@ -338,6 +338,32 @@ validation commands represented as argument arrays rather than shell strings. Th
 metadata to classify the least expensive truthful workflow, perform a PNG capability preflight before UI
 implementation, resolve Aspire runtime URLs, and avoid rediscovering commands on every issue.
 
+Three further sections turn the facts agents otherwise rediscover on every run into a declared procedure —
+the difference, on a real .NET/Aspire repository, between a verifier that launches, waits, and logs in the
+same way every time and one that improvises a different way each run:
+
+```jsonc
+{
+  "version": 1,
+  "aspire": { "apphost": "App.AppHost/App.AppHost.csproj", "resources": { "frontend": "app-frontend", "api": "app-api", "auth": "app-auth" } },
+  "launch":    { "argv": ["./scripts/start-apphost.sh"], "env": { "APP_DROP_DATABASES_ON_EXIT": "1" }, "notes": "isolated instance, random ports" },
+  "readiness": { "resources": ["api", "auth", "frontend"], "paths": { "api": "/api/abp/application-configuration" } },
+  "auth": {
+    "setup": { "argv": ["pnpm", "--filter", "app", "exec", "playwright", "test", "e2e/tools/save-auth-state.setup.ts"],
+               "envFromEndpoints": { "BASE_URL": "frontend" }, "env": { "E2E_IGNORE_HTTPS_ERRORS": "1" } },
+    "storageState": "frontend/apps/app/e2e/.auth/qa-state.json",
+    "notes": "creates a run-scoped editor and logs in through the real OIDC flow"
+  }
+}
+```
+
+`launch` is the only supported way to bring the stack up; `readiness` names the resources whose URLs must
+resolve and the paths that must answer before a browser opens; `auth.setup` is a repository command that
+logs in through the real flow (its `envFromEndpoints` values are `aspire.resources` keys whose resolved URLs
+the agent supplies as those variables) and writes a Playwright storage state that the agent loads with
+`playwright-cli state-load` — hand-driving the login form is forbidden while `auth` is declared. All argv
+and env values are literals; env names are `[A-Z_][A-Z0-9_]*`; paths are repository-relative.
+
 The controller rejects oversized, malformed, unknown-key, traversal, absolute-path, and symlinked
 manifests. `.pi-worker` is protected from agent writes by default. Component previews may use representative
 props only when they import the exact production component, configuration, and styles; preview-only markup,

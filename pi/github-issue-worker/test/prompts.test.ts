@@ -119,6 +119,33 @@ test("visual verification prefers truthful source-backed previews over unrelated
   assert.match(prompt, /the API and auth server too, not only the frontend/);
 });
 
+// A manifest that declares launch, readiness and auth turns three rediscovered-every-run facts into a
+// procedure; the prompt must render each as an instruction, not leave them as JSON for the agent to infer.
+test("a manifest with launch, readiness and auth sections renders them as procedures", () => {
+  const prompt = buildUiVerificationPrompt({
+    config: { appUrl: null, playwrightState: null, sandbox: false } as WorkerConfig,
+    issueNumber: 501,
+    prNumber: 501,
+    evidenceDir: ".qa/issues/501/pr-501/runs/example",
+    qaManifest: {
+      version: 1,
+      aspire: { apphost: "AppHost/AppHost.csproj", resources: { frontend: "app-frontend", api: "app-api" } },
+      launch: { argv: ["./scripts/start-apphost.sh"] },
+      readiness: { resources: ["api", "frontend"], paths: { api: "/api/abp/application-configuration" } },
+      auth: { storageState: "e2e/.auth/qa-state.json", setup: { argv: ["pnpm", "exec", "playwright", "test", "save-auth-state.setup.ts"], envFromEndpoints: { BASE_URL: "frontend" } } },
+    },
+  });
+  assert.match(prompt, /Start the stack with exactly `launch\.argv`/);
+  assert.match(prompt, /ready only when every `readiness\.resources` entry has a resolved URL/);
+  assert.match(prompt, /playwright-cli -s=<session> state-load <that file>/);
+  assert.match(prompt, /Never hand-drive the login form while this is declared/);
+  const bare = buildUiVerificationPrompt({
+    config: { appUrl: null, playwrightState: null, sandbox: false } as WorkerConfig,
+    issueNumber: 501, prNumber: 501, evidenceDir: ".qa/x", qaManifest: { version: 1 },
+  });
+  assert.doesNotMatch(bare, /launch\.argv|state-load/);
+});
+
 // With the OS sandbox off the network-namespace and Docker-bridge guidance would be actively misleading —
 // host services ARE reachable and ports ARE shared — so the prompt must swap to the direct-mode facts and,
 // above all, stop treating an unstarted backend as a blocker: that single sentence is what blocked PR 501.

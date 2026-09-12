@@ -18,11 +18,22 @@ Content ownership policy:
 
 function qaManifestInstructions(manifest: QaManifest | null | undefined): string {
   if (!manifest) return "";
+  const procedures = [
+    manifest.launch
+      ? `- Start the stack with exactly \`launch.argv\` (plus \`launch.env\`); it is the repository's supported launcher, so do not improvise another way of bringing the application up.`
+      : "",
+    manifest.readiness
+      ? `- The application is ready only when every \`readiness.resources\` entry has a resolved URL and every \`readiness.paths\` probe answers; poll those before opening a browser and record the responses as evidence.`
+      : "",
+    manifest.auth
+      ? `- Authenticate through \`auth\`: run \`auth.setup.argv\` with \`auth.setup.env\` and, for each \`auth.setup.envFromEndpoints\` entry, the named resource's resolved URL as that variable; it writes a Playwright storage state to \`auth.storageState\`. Load it with \`playwright-cli -s=<session> state-load <that file>\` before navigating. Never hand-drive the login form while this is declared; if the setup fails, report its exact output as the blocker.`
+      : "",
+  ].filter(Boolean).join("\n");
   return `
 Repository QA manifest (trusted controller configuration):
 ${JSON.stringify(manifest, null, 2)}
 Use the named preview, Aspire resource, and argv-based validation metadata that matches the changed surface. The manifest is guidance, not permission to weaken sandboxing or execute shell text.
-`;
+${procedures}${procedures ? "\n" : ""}`;
 }
 
 function dockerInstructions(config: WorkerConfig): string {
