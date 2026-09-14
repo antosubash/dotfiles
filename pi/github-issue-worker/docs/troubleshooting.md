@@ -53,6 +53,7 @@ drwx------ pi-issue-worker
 | Conversation feedback is ignored | comment lacks `/pi` or author association is untrusted | use `/pi ...` from a configured association |
 | Draft PR checks fail with no worker response | old installation, worker stopped, or PR job missing from local state | update/restart, inspect `gh pr checks`, issue labels, and the journal |
 | Chromium reports `Unix sockets are blocked` or `ProcessSingleton` errors | outdated visual sandbox or an overlong temp/socket path | update, then run the browser smoke test below |
+| Playwright gets `net::ERR_ACCESS_DENIED` on a local URL `curl` reaches; evidence or `npm run check` fails with `bwrap: … Operation not permitted` | Ubuntu's `apparmor_restrict_unprivileged_userns` on kernel ≥ 7.0 confines the namespaced units | `journalctl -k | grep 'apparmor="DENIED"'`; see the kernel 7.0 entry under "An issue becomes blocked" |
 | Worker is idle but memory use is high | each profile loads an independent Pi SDK/model runtime | reduce active profiles or run selected profiles |
 
 ## Supervisor and child lifecycle
@@ -395,6 +396,64 @@ bodies run. Host setting, operator decision — the usual developer-box value:
 
 ```bash
 sudo sysctl -w fs.inotify.max_user_instances=1024   # persist in /etc/sysctl.d/
+```
+
+### `net::ERR_ACCESS_DENIED` from Playwright on a local URL `curl` reaches, or `bwrap: … Operation not permitted` / `setting up uid map: Permission denied`
+
+Both are AppArmor verdicts from Ubuntu's `kernel.apparmor_restrict_unprivileged_userns=1`, and both
+appeared on the first boot of a 7.0 kernel (6.17 permitted the same operations). Confirm with the audit
+log and the worker's own label:
+
+```bash
+journalctl -k --since '30 min ago' -o cat | grep 'apparmor="DENIED"' | grep -E 'profile="(chrome|unprivileged_userns)"'
+#  … class="net" info="failed af match" profile="chrome" comm="Chrome_ChildIOT" family="inet" …
+#  … class="cap"  profile="unprivileged_userns" comm="bwrap" capname="net_admin" …
+#  … class="file" info="Failed name lookup - disconnected path" profile="unprivileged_userns" name="proc/…/uid_map" comm="bwrap" …
+cat /proc/$(pgrep -f 'pi-issue-worker-supervisor' | head -1)/attr/apparmor/current   # unprivileged_userns (enforce)
+```
+
+Why the worker is labelled at all: the units use `PrivateTmp`/`ProtectSystem`/`ProtectHome`/
+`ReadWritePaths`. For a `systemd --user` manager those need a mount namespace, which an unprivileged
+user only gets inside a user namespace, so with the sysctl on every worker process — and every agent,
+browser and toolchain it spawns — runs under the `unprivileged_userns` profile. That profile allows
+`network` and files, which is why `curl`, `dotnet` and `pnpm` are fine. Two things are not:
+
+- **Google Chrome.** `playwright-cli` defaults to the `chrome` channel, `/opt/google/chrome/chrome`, the
+  one binary on the host with its own profile (`/etc/apparmor.d/chrome`, `flags=(unconfined)`, shipped
+  only to grant `userns`). Exec'ing it yields the stacked label `chrome//&unprivileged_userns (mixed)`,
+  and from kernel 7.0 on the `chrome` half fails the address-family match (it has no network rules and
+  its `unconfined` flag is not honoured inside a mixed stack): `socket()` → `EACCES` →
+  `net::ERR_ACCESS_DENIED`. The agent's visual run and the verifier both break; the repository's own
+  Playwright tests do not, because they launch Playwright's pinned Chromium, which has no profile.
+- **bwrap.** Evidence publishing re-encodes every attachment (PNG screenshots included) with ffmpeg
+  inside `bwrap --unshare-all`. On 7.0 the `unprivileged_userns` profile denies the `uid_map` write and
+  the `net_admin`/`setpcap` capabilities bwrap needs, so no namespace can be built — from the worker
+  *or* from an unconfined shell (bwrap's own `unshare` triggers the same transition). A PNG that cannot
+  be sanitized fails the run, and `npm run check` fails its nine evidence tests on such a host.
+
+Fix, host level (operator decision). The pre-reboot behaviour is restored in one setting, persisted so a
+later boot keeps it, followed by a supervisor restart so the units are re-spawned without the label:
+
+```bash
+echo 'kernel.apparmor_restrict_unprivileged_userns = 0' | sudo tee /etc/sysctl.d/60-pi-issue-worker-userns.conf
+sudo sysctl -p /etc/sysctl.d/60-pi-issue-worker-userns.conf
+systemctl --user restart pi-issue-worker-supervisor.service
+```
+
+That disables Ubuntu's host-wide user-namespace hardening for every unprivileged process, not just the
+worker. The scoped alternative needs more: `printf 'network,\n' | sudo tee /etc/apparmor.d/local/chrome
+&& sudo apparmor_parser -r /etc/apparmor.d/chrome` cures Chrome, but bwrap under the namespaced units
+stays stacked with `unprivileged_userns`, so the units would also have to drop their mount-namespace
+options and `/usr/bin/bwrap` would need its own `userns` profile.
+
+Verify from a namespaced transient unit — a bare `systemd-run --user` without `PrivateTmp` passes even
+while the worker fails, because only the namespaced unit gets the label:
+
+```bash
+systemd-run --user --collect --wait --pipe -p PrivateTmp=true -E HOME=$HOME -E PATH=$PATH \
+  --working-directory=/tmp playwright-cli -s=probe open http://localhost:<port>/
+systemd-run --user --collect --wait --pipe -p PrivateTmp=true \
+  bwrap --unshare-all --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind /lib64 /lib64 --proc /proc --dev /dev /usr/bin/true
 ```
 
 ### Retrying a blocked base-branch conflict resolution
