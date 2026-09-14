@@ -19,11 +19,12 @@ export async function withAppInstance<T>(
   ctx: WorkerContext,
   worktree: string,
   job: { issueNumber: number },
-  needsInstance: boolean,
+  needsInstance: boolean | (() => Promise<boolean>),
   fn: (instance: AppInstance | null) => Promise<T>,
 ): Promise<T> {
   const manifest = await loadQaManifest(worktree, ctx.config.qaManifestPath);
-  if (!needsInstance || !manifest?.launch) return await fn(null);
+  // The need check inspects the worktree's diff; it is only consulted once a launcher exists to run.
+  if (!manifest?.launch || !(typeof needsInstance === "function" ? await needsInstance() : needsInstance)) return await fn(null);
   const instance = await ctx.appInstances.start(worktree, manifest, { issueNumber: job.issueNumber, runId: randomUUID() });
   try {
     return await fn(instance);

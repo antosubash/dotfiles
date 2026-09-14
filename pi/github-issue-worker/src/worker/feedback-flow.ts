@@ -12,6 +12,7 @@ import {
   visualEvidenceNote,
 } from "./evidence-flow.js";
 import { ensureJobWorktree } from "./job-worktree.js";
+import { stageNeedsInstance, withAppInstance } from "./app-stage.js";
 import { verifyImplementation } from "./verification-flow.js";
 import { mergeConflictEventKey } from "./conflict-context.js";
 import {
@@ -147,7 +148,9 @@ export async function handleFeedback(
   if (visualRequested) ctx.state.requestVisualEvidence(job.issueNumber);
   const gifRequested = visualRequested;
   const dockerRequested = ctx.config.allowDocker;
-  let evidence = visualRequested
+  const manifest = await loadQaManifest(worktree.path, ctx.config.qaManifestPath);
+  // With a manifest launch the controller owns the instance and capture moves to the visual stage.
+  let evidence = visualRequested && !manifest?.launch
     ? await createTrackedEvidence(ctx, worktree.path, job.issueNumber, job.prNumber)
     : null;
   ctx.state.setStatus(job.issueNumber, "addressing_review");
@@ -166,7 +169,7 @@ export async function handleFeedback(
         evidenceDir: evidence?.relativeRunDir ?? null,
         gifRequested,
         dockerAccess: dockerRequested,
-        qaManifest: await loadQaManifest(worktree.path, ctx.config.qaManifestPath),
+        qaManifest: manifest,
       }),
       logFile: join(ctx.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
       visualVerification: evidence !== null,
@@ -177,11 +180,14 @@ export async function handleFeedback(
       await ctx.repository.clearAgentChanges(worktree.path, worktree.branch);
       throw new Error(result.finalText);
     }
-    if (!evidence && containsUiFiles(await ctx.repository.changedFiles(worktree.path))) {
-      evidence = await runUiVerification(ctx, job, worktree.path, job.prNumber!);
-    }
-    if (evidence) await finalizeEvidence(ctx, evidence);
-    result.finalText += await verifyImplementation(ctx, job, worktree.path, issue);
+    const needsInstance = () => stageNeedsInstance(ctx, issue, worktree.path, visualRequested);
+    result.finalText += await withAppInstance(ctx, worktree.path, job, needsInstance, async (instance) => {
+      if (!evidence && (visualRequested || containsUiFiles(await ctx.repository.changedFiles(worktree.path)))) {
+        evidence = await runUiVerification(ctx, job, worktree.path, job.prNumber!, instance);
+      }
+      if (evidence) await finalizeEvidence(ctx, evidence);
+      return await verifyImplementation(ctx, job, worktree.path, issue, instance);
+    });
     const gifCreated = evidence !== null;
     controllerPhase = true;
     const evidenceNote = await visualEvidenceNote(

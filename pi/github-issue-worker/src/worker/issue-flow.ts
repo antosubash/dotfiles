@@ -1,8 +1,6 @@
 import { join } from "node:path";
-import { classifyIssue } from "../classification.js";
 import { findLatestEvidenceRun, removeExpiredEvidence, type EvidenceRun } from "../evidence.js";
 import {
-  buildIssuePrompt,
   commitMessage,
   pullRequestBody,
   pullRequestTitle,
@@ -10,12 +8,13 @@ import {
 import { loadQaManifest } from "../qa-manifest.js";
 import type { GitHubIssue, IssueJob } from "../types.js";
 import {
-  createTrackedEvidence,
   finalizeEvidence,
   publishEvidence,
   runUiVerification,
   visualEvidenceNote,
 } from "./evidence-flow.js";
+import { stageNeedsInstance, withAppInstance } from "./app-stage.js";
+import { runImplementer } from "./issue-implement.js";
 import { ensureJobWorktree } from "./job-worktree.js";
 import { verifyImplementation } from "./verification-flow.js";
 import {
@@ -132,86 +131,39 @@ export async function implementIssue(ctx: WorkerContext, issue: GitHubIssue, job
     looksLikeUiTask(`${issue.title}\n${issue.body}`);
   if (visual) ctx.state.requestVisualEvidence(issue.number);
   let evidence: EvidenceRun | null = null;
-  const sessionDir = join(ctx.config.dataDir, "sessions", `issue-${issue.number}`);
-  const logFile = join(ctx.config.dataDir, "logs", `issue-${issue.number}.log`);
+  const manifest = await loadQaManifest(worktree.path, ctx.config.qaManifestPath);
 
   let finalText = "Recovered an implementation commit after a worker restart.";
   const changedBeforeRun = await ctx.repository.changedFiles(worktree.path);
   const alreadyAhead = await ctx.repository.hasCommitsAhead(worktree.path);
   if (changedBeforeRun.length > 0 || !alreadyAhead) {
-    if (visual) evidence = await createTrackedEvidence(ctx, worktree.path, issue.number, null);
-    let result;
-    try {
-      result = await ctx.agent.run({
-        worktree: worktree.path,
-        sessionDir,
-        sessionFile: job.sessionFile,
-        prompt: buildIssuePrompt({
-          config: ctx.config,
-          issue,
-          evidenceDir: evidence?.relativeRunDir ?? null,
-          qaManifest: await loadQaManifest(worktree.path, ctx.config.qaManifestPath),
-          category: classifyIssue(issue),
-          plan: await ctx.plans.load(issue),
-        }),
-        logFile,
-        visualVerification: evidence !== null,
-        dockerAccess: ctx.config.allowDocker,
-      });
-    } catch (error) {
-      if (evidence) {
-        ctx.state.setEvidenceRunStatus(
-          evidence.issueNumber,
-          evidence.prNumber,
-          evidence.runId,
-          "invalid-terminal",
-          errorText(error),
-        );
-      }
-      await ctx.repository.clearAgentChanges(worktree.path, worktree.branch);
-      throw new Error(
-        `${errorText(error)}${await visualEvidenceNote(evidence?.runDir ?? null, evidence?.relativeRunDir ?? null)}`,
-      );
-    }
-    ctx.state.setSession(issue.number, result.sessionFile);
-    finalText = result.finalText;
-    if (isBlockedFinalOutput(finalText)) {
-      if (evidence) {
-        ctx.state.setEvidenceRunStatus(
-          evidence.issueNumber,
-          evidence.prNumber,
-          evidence.runId,
-          "blocked",
-          finalText,
-        );
-      }
-      await ctx.repository.clearAgentChanges(worktree.path, worktree.branch);
-      throw new Error(
-        `${finalText}${await visualEvidenceNote(evidence?.runDir ?? null, evidence?.relativeRunDir ?? null)}`,
-      );
-    }
-    if (!evidence && containsUiFiles(await ctx.repository.changedFiles(worktree.path))) {
-      evidence = await runUiVerification(ctx, job, worktree.path, null);
-    }
+    const run = await runImplementer(ctx, issue, job, worktree, { visual, manifest });
+    finalText = run.finalText;
+    evidence = run.evidence;
   } else {
     evidence = await findLatestEvidenceRun(worktree.path, issue.number, null);
-    const recoveredUi =
-      typeof ctx.repository.filesAheadOfBase === "function" &&
-      containsUiFiles(await ctx.repository.filesAheadOfBase(worktree.path));
-    if ((visual || recoveredUi) && !evidence) {
-      evidence = await runUiVerification(ctx, job, worktree.path, null);
-    }
   }
 
-  if (evidence) {
-    try {
-      await finalizeEvidence(ctx, evidence);
-    } catch (error) {
-      await ctx.repository.clearAgentChanges(worktree.path, worktree.branch);
-      throw new Error(`Visual evidence finalization failed: ${errorText(error)}`);
+  // Browser stages share one harness-owned instance when the manifest declares a launcher.
+  const needsInstance = () => stageNeedsInstance(ctx, issue, worktree.path, visual);
+  finalText += await withAppInstance(ctx, worktree.path, job, needsInstance, async (instance) => {
+    if (!evidence) {
+      const changedUi = containsUiFiles(await ctx.repository.changedFiles(worktree.path));
+      const recoveredUi =
+        typeof ctx.repository.filesAheadOfBase === "function" &&
+        containsUiFiles(await ctx.repository.filesAheadOfBase(worktree.path));
+      if (visual || changedUi || recoveredUi) evidence = await runUiVerification(ctx, job, worktree.path, null, instance);
     }
-  }
-  finalText += await verifyImplementation(ctx, job, worktree.path, issue);
+    if (evidence) {
+      try {
+        await finalizeEvidence(ctx, evidence);
+      } catch (error) {
+        await ctx.repository.clearAgentChanges(worktree.path, worktree.branch);
+        throw new Error(`Visual evidence finalization failed: ${errorText(error)}`);
+      }
+    }
+    return await verifyImplementation(ctx, job, worktree.path, issue, instance);
+  });
   const changedFiles = await ctx.repository.changedFiles(worktree.path);
   let controllerMutationExpected = false;
   try {

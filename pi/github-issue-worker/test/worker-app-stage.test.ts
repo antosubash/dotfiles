@@ -56,6 +56,11 @@ test("no manifest launch or no need means no instance", async () => {
   try {
     assert.equal(await withAppInstance({ config: config(root), appInstances } as never, join(root, "w"), { issueNumber: 1 }, true, async (instance) => instance), null);
     assert.equal(await withAppInstance({ config: config(withLaunch), appInstances } as never, join(withLaunch, "w"), { issueNumber: 1 }, false, async (instance) => instance), null);
+    assert.equal(await withAppInstance({ config: config(withLaunch), appInstances } as never, join(withLaunch, "w"), { issueNumber: 1 }, async () => false, async (instance) => instance), null);
+    // Without a launcher the need check is never consulted, so a worktree that is not a git repository is fine.
+    let consulted = false;
+    assert.equal(await withAppInstance({ config: config(root), appInstances } as never, join(root, "w"), { issueNumber: 1 }, async () => { consulted = true; return true; }, async (instance) => instance), null);
+    assert.equal(consulted, false);
     assert.equal(starts, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
