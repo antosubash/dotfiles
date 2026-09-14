@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AppInstance } from "../app-instance/index.js";
+import { memoryDirectory, writeMemoryNote } from "../project-memory.js";
 import { loadQaManifest } from "../qa-manifest.js";
 import type { GitHubIssue } from "../types.js";
 import { worktreeUiSurface } from "../ui-surface.js";
@@ -25,7 +26,17 @@ export async function withAppInstance<T>(
   const manifest = await loadQaManifest(worktree, ctx.config.qaManifestPath);
   // The need check inspects the worktree's diff; it is only consulted once a launcher exists to run.
   if (!manifest?.launch || !(typeof needsInstance === "function" ? await needsInstance() : needsInstance)) return await fn(null);
-  const instance = await ctx.appInstances.start(worktree, manifest, { issueNumber: job.issueNumber, runId: randomUUID() });
+  const instance = await ctx.appInstances.start(worktree, manifest, {
+    issueNumber: job.issueNumber,
+    runId: randomUUID(),
+    // The next run's expectations are informed by what this one measured.
+    onStarted: (summary) => writeMemoryNote(
+      memoryDirectory(ctx.config),
+      "instance-timing",
+      "App instance timing (harness-written)",
+      `Last launch ready after ${Math.round(summary.readinessMs / 1000)} s (run ${summary.runId}); auth ${summary.storageState ? "set up" : "not declared"}.`,
+    ).catch(() => undefined),
+  });
   try {
     return await fn(instance);
   } finally {

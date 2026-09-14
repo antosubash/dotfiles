@@ -2,15 +2,17 @@ import type { IssueCategory } from "../classification.js";
 import type { WorkerConfig } from "../config.js";
 import type { IssuePlan } from "../issue-plan.js";
 import type { AppInstanceSummary } from "../app-instance/index.js";
+import type { MemoryIndex } from "../project-memory.js";
 import type { QaManifest } from "../qa-manifest.js";
 import type { GitHubIssue, PullRequestFeedback } from "../types.js";
-import { contentOnlyInstructions, untrustedJson, visualInstructions } from "./shared.js";
+import { contentOnlyInstructions, untrustedJson, memoryInstructions, visualInstructions } from "./shared.js";
 
 export function buildIssuePrompt(options: {
   config: WorkerConfig;
   issue: GitHubIssue;
   evidenceDir: string | null;
   qaManifest?: QaManifest | null;
+  memory?: MemoryIndex | null;
   category?: IssueCategory;
   plan?: IssuePlan | null;
 }): string {
@@ -43,7 +45,7 @@ Workflow:
 5. Review the final diff for unrelated or sensitive changes.
 6. Do not stage, commit, push, open a PR, edit GitHub, or change branches; the controller handles those steps.
 ${contentOnlyInstructions}
-${visualInstructions(options.config, options.evidenceDir, options.evidenceDir !== null, options.qaManifest)}
+${visualInstructions(options.config, options.evidenceDir, options.evidenceDir !== null, options.qaManifest)}${memoryInstructions(options.memory)}
 End with a concise summary containing:
 - implementation summary
 - changed areas
@@ -62,6 +64,7 @@ export function buildFeedbackPrompt(options: {
   gifRequested: boolean;
   dockerAccess?: boolean;
   qaManifest?: QaManifest | null;
+  memory?: MemoryIndex | null;
 }): string {
   return `Address trusted maintainer feedback on pull request #${options.prNumber} for issue #${options.issueNumber}.
 
@@ -82,7 +85,7 @@ Inspect the current branch and existing implementation, make only the changes ne
 and run relevant checks. If feedback conflicts with repository rules or is ambiguous, explain the blocker instead
 of making a speculative change. Do not stage, commit, push, comment, or change branches.
 ${contentOnlyInstructions}
-${visualInstructions(options.config, options.evidenceDir, options.gifRequested, options.qaManifest)}
+${visualInstructions(options.config, options.evidenceDir, options.gifRequested, options.qaManifest)}${memoryInstructions(options.memory)}
 ${options.dockerAccess ? `
 Docker access was explicitly granted by a trusted maintainer and enabled by the machine owner for this run.
 Use it only when repository-native non-Docker checks cannot verify the requested behavior. Never use privileged
@@ -99,13 +102,14 @@ export function buildUiVerificationPrompt(options: {
   prNumber: number | null;
   evidenceDir: string;
   qaManifest?: QaManifest | null;
+  memory?: MemoryIndex | null;
   instance?: AppInstanceSummary | null;
 }): string {
   return `Perform final visual QA for UI work on issue #${options.issueNumber}${options.prNumber ? ` / PR #${options.prNumber}` : ""}.
 
 Do not make speculative product changes. ${options.instance ? "Verify the changed UI behavior on the running application described below" : "Launch the narrowest truthful repository-provided application or source-backed\npreview described below, verify the changed UI behavior"} on desktop and mobile, exercise validation/error states relevant to the change, inspect console and
 failed requests, and record truthful evidence. Do not stage, commit, push, use GitHub CLI, or change branches.
-${visualInstructions(options.config, options.evidenceDir, true, options.qaManifest, options.instance)}
+${visualInstructions(options.config, options.evidenceDir, true, options.qaManifest, options.instance)}${memoryInstructions(options.memory)}
 End with a concise visual result, scenarios checked, and evidence paths. End with BLOCKED if the app cannot be
 launched or the changed UI cannot be verified.`;
 }

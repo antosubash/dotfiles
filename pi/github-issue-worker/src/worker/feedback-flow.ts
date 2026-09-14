@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { removeExpiredEvidence } from "../evidence.js";
 import { isActionableFeedback, parseWorkerCommand } from "../github.js";
+import { memoryDirectory, projectMemoryIndex } from "../project-memory.js";
 import { buildFeedbackPrompt, commitMessage } from "../prompts.js";
 import { loadQaManifest } from "../qa-manifest.js";
 import type { IssueJob, PullRequestFeedback } from "../types.js";
@@ -170,6 +171,7 @@ export async function handleFeedback(
         gifRequested,
         dockerAccess: dockerRequested,
         qaManifest: manifest,
+        memory: await projectMemoryIndex(memoryDirectory(ctx.config)),
       }),
       logFile: join(ctx.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
       visualVerification: evidence !== null,

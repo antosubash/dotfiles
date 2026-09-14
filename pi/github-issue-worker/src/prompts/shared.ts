@@ -1,5 +1,6 @@
 import type { AppInstanceSummary } from "../app-instance/index.js";
 import type { WorkerConfig } from "../config.js";
+import type { MemoryIndex } from "../project-memory.js";
 import type { QaManifest } from "../qa-manifest.js";
 
 export const DESIGN_CHECKS = ["layout", "typography", "colors", "assets", "content", "responsive"] as const;
@@ -16,6 +17,16 @@ Content ownership policy:
 - If the current branch already contains a seed-only change for a runtime-managed content issue, restore the seed content to its base intent before returning that runbook.
 - Edit checked-in content only when repository documentation or production loading code confirms that file is the authoritative production source rather than a seeder.
 `;
+
+/** Notes from earlier runs on this repository: advisory, never evidence; and the rules for saving new ones. */
+export function memoryInstructions(memory: MemoryIndex | null | undefined): string {
+  if (!memory) return "";
+  return `
+Project memory — notes from earlier runs; advisory, verify before relying on them. Directory: ${memory.dir}
+${memory.text || "(empty)"}
+Read a note's file before acting on it. At the end of your run save new durable findings there — one durable fact per file named like \`launcher-timing.md\`, first line \`# title\`, under 4 KB: environment and repository facts (launcher timing, port conventions, seeded roles, flaky tests and why, checks that fail on the base branch, what a previous attempt got wrong). Update an existing file instead of duplicating it. Never issue-specific transient state, never secrets (tokens, passwords, cookies, keys).
+`;
+}
 
 /** The facts about a harness-owned instance, and what the agent must not do to it. */
 export function runningInstanceInstructions(instance: AppInstanceSummary): string {

@@ -197,3 +197,18 @@ test("a running instance replaces launch procedures with endpoints, storage stat
     /Optional protected Playwright storage state/, /Authenticate the way the repository.s own end-to-end tests do/,
   ]) assert.doesNotMatch(text, gone);
 });
+
+test("prompts render the project memory index and the saving rules", () => {
+  const cfg = { appUrl: null, playwrightState: null, sandbox: false } as WorkerConfig;
+  const memory = { dir: "/data/memory", text: "- launcher-timing.md — Launcher takes ~80 s warm\n  Aspire reports Running after 18 s.\n", skipped: [] };
+  const issue: GitHubIssue = {
+    number: 1, title: "Add a thing", body: "Do it", url: "https://example.test/issues/1", updatedAt: "2026-09-14T00:00:00Z", labels: [], author: { login: "maintainer" },
+  };
+  const text = buildIssuePrompt({ config: cfg, issue, evidenceDir: null, memory });
+  assert.match(text, /Project memory — notes from earlier runs; advisory, verify before relying on them\. Directory: \/data\/memory/);
+  assert.match(text, /launcher-timing\.md — Launcher takes ~80 s warm/);
+  assert.match(text, /one durable fact per file/);
+  assert.match(text, /never secrets/i);
+  assert.doesNotMatch(buildIssuePrompt({ config: cfg, issue, evidenceDir: null }), /Project memory/);
+  assert.match(buildUiVerificationPrompt({ config: cfg, issueNumber: 1, prNumber: null, evidenceDir: ".qa/x", memory }), /Project memory/);
+});

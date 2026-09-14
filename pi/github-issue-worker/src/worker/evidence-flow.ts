@@ -9,6 +9,7 @@ import {
   type EvidenceRun,
 } from "../evidence.js";
 import type { MediaType } from "../media.js";
+import { memoryDirectory, projectMemoryIndex } from "../project-memory.js";
 import { buildUiVerificationPrompt } from "../prompts.js";
 import { loadQaManifest } from "../qa-manifest.js";
 import type { IssueJob } from "../types.js";
@@ -84,6 +85,7 @@ export async function runUiVerification(
         evidenceDir: evidence.relativeRunDir,
         qaManifest: await loadQaManifest(worktree, ctx.config.qaManifestPath),
         instance,
+        memory: await projectMemoryIndex(memoryDirectory(ctx.config)),
       }),
       logFile: join(ctx.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
       visualVerification: true,
