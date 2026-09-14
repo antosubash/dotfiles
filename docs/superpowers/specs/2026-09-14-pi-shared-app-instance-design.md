@@ -103,7 +103,7 @@ the manifest nothing changes: the agent launches as today.
    Then require `auth.storageState` (worktree-relative) to exist and copy it to
    `<instanceDir>/storage-state.json` (0600). The copy is what agents get. The repository must
    gitignore `auth.storageState`: the verifier's source fingerprint covers tracked and untracked files,
-   so a state file that git would list invalidates every verdict — the manifest loader rejects a path
+   so a state file that git would list invalidates every verdict — the instance's auth step rejects a path
    `git check-ignore` does not accept.
 6. **Record.** Write `<instanceDir>/instance.json`: endpoints, storage-state path, launch time,
    readiness duration, source fingerprint at launch, cgroup path.
