@@ -207,3 +207,22 @@ export async function publishBlockedEvidence(
     return `\n\nQA evidence upload failed: ${errorText(error)}`;
   }
 }
+
+/**
+ * Publishes PNG/GIF/WebM attachments from any evidence directory — the independent verifier's, in
+ * particular — with the same sanitising and limits as a `.qa` run; there is no evidence-run record for it.
+ */
+export async function publishEvidenceDirectory(
+  ctx: WorkerContext,
+  prNumber: number,
+  worktree: string,
+  directory: string,
+  runId: string,
+): Promise<{ note: string; eventKey: string } | null> {
+  if (typeof ctx.github.publishEvidence !== "function") return null;
+  const { attachments, omitted } = await finalAttachments(directory);
+  if (attachments.length === 0) return null;
+  const eventKey = `evidence:${prNumber}:${runId}`;
+  const note = await ctx.github.publishEvidence(prNumber, await ctx.repository.headRevision(worktree), runId, attachments);
+  return note ? { note: `${note}${omissionNote(omitted)}`, eventKey } : null;
+}
