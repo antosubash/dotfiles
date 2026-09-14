@@ -1,3 +1,5 @@
+import { cgroupController, ownCgroupPath } from "./agent/cgroup.js";
+import { AppInstanceService } from "./app-instance/index.js";
 import { PullRequestWorktreeCleanupService } from "./cleanup.js";
 import type { WorkerConfig } from "./config.js";
 import { FigmaVerificationService } from "./figma-verification.js";
@@ -38,11 +40,14 @@ export class IssueWorker {
       designVerifier?: Pick<FigmaVerificationService, "verify">;
       qaVerifier?: Pick<QaVerificationService, "verify">;
       plans?: Pick<IssuePlanService, "load" | "create">;
+      appInstances?: Pick<AppInstanceService, "start">;
     } = {},
   ) {
     const github = dependencies.github ?? new GitHubClient(config);
     const repository = dependencies.repository ?? new RepositoryManager(config);
-    const agent = dependencies.agent ?? new PiAgentRunner(config);
+    // Bash calls and app instances are fenced under the same cgroup root so a call's cleanup never touches the instance.
+    const cgroups = cgroupController(ownCgroupPath());
+    const agent = dependencies.agent ?? new PiAgentRunner(config, { cgroups });
     this.ctx = {
       config,
       state,
@@ -52,6 +57,7 @@ export class IssueWorker {
       designVerifier: dependencies.designVerifier ?? new FigmaVerificationService(config, agent),
       qaVerifier: dependencies.qaVerifier ?? new QaVerificationService(config, agent),
       plans: dependencies.plans ?? new IssuePlanService(config, agent),
+      appInstances: dependencies.appInstances ?? new AppInstanceService(config, cgroups),
     };
     this.cleanup = new PullRequestWorktreeCleanupService(state, github, repository);
   }

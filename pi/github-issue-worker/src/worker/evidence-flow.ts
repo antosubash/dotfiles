@@ -1,5 +1,6 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
+import type { AppInstance } from "../app-instance/index.js";
 import {
   collectFinalEvidenceAttachments,
   convertWebmToGif,
@@ -65,9 +66,11 @@ export async function runUiVerification(
   job: IssueJob,
   worktree: string,
   prNumber: number | null,
+  instance: AppInstance | null = null,
 ): Promise<EvidenceRun> {
   ctx.state.requestVisualEvidence(job.issueNumber);
   const evidence = await createTrackedEvidence(ctx, worktree, job.issueNumber, prNumber);
+  await instance?.ensureCurrent();
   let result;
   try {
     result = await ctx.agent.run({
@@ -80,10 +83,12 @@ export async function runUiVerification(
         prNumber,
         evidenceDir: evidence.relativeRunDir,
         qaManifest: await loadQaManifest(worktree, ctx.config.qaManifestPath),
+        instance,
       }),
       logFile: join(ctx.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
       visualVerification: true,
       dockerAccess: ctx.config.allowDocker,
+      ...(instance ? { environment: instance.environment() } : {}),
     });
   } catch (error) {
     ctx.state.setEvidenceRunStatus(

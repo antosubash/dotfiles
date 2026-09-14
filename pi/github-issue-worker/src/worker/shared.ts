@@ -1,3 +1,4 @@
+import type { AppInstanceService } from "../app-instance/index.js";
 import type { WorkerConfig } from "../config.js";
 import type { FigmaVerificationService } from "../figma-verification.js";
 import type { GitHubClient } from "../github.js";
@@ -17,6 +18,8 @@ export interface WorkerContext {
   readonly designVerifier: Pick<FigmaVerificationService, "verify">;
   readonly qaVerifier: Pick<QaVerificationService, "verify">;
   readonly plans: Pick<IssuePlanService, "load" | "create">;
+  /** Launches the manifest-declared app once per run; tests replace `start`. */
+  readonly appInstances: Pick<AppInstanceService, "start">;
 }
 
 export function errorText(error: unknown): string {
