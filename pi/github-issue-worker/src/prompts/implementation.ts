@@ -1,6 +1,7 @@
 import type { IssueCategory } from "../classification.js";
 import type { WorkerConfig } from "../config.js";
 import type { IssuePlan } from "../issue-plan.js";
+import type { AppInstanceSummary } from "../app-instance/index.js";
 import type { QaManifest } from "../qa-manifest.js";
 import type { GitHubIssue, PullRequestFeedback } from "../types.js";
 import { contentOnlyInstructions, untrustedJson, visualInstructions } from "./shared.js";
@@ -98,13 +99,13 @@ export function buildUiVerificationPrompt(options: {
   prNumber: number | null;
   evidenceDir: string;
   qaManifest?: QaManifest | null;
+  instance?: AppInstanceSummary | null;
 }): string {
   return `Perform final visual QA for UI work on issue #${options.issueNumber}${options.prNumber ? ` / PR #${options.prNumber}` : ""}.
 
-Do not make speculative product changes. Launch the narrowest truthful repository-provided application or source-backed
-preview described below, verify the changed UI behavior on desktop and mobile, exercise validation/error states relevant to the change, inspect console and
+Do not make speculative product changes. ${options.instance ? "Verify the changed UI behavior on the running application described below" : "Launch the narrowest truthful repository-provided application or source-backed\npreview described below, verify the changed UI behavior"} on desktop and mobile, exercise validation/error states relevant to the change, inspect console and
 failed requests, and record truthful evidence. Do not stage, commit, push, use GitHub CLI, or change branches.
-${visualInstructions(options.config, options.evidenceDir, true, options.qaManifest)}
+${visualInstructions(options.config, options.evidenceDir, true, options.qaManifest, options.instance)}
 End with a concise visual result, scenarios checked, and evidence paths. End with BLOCKED if the app cannot be
 launched or the changed UI cannot be verified.`;
 }

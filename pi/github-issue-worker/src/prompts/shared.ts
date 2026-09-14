@@ -1,3 +1,4 @@
+import type { AppInstanceSummary } from "../app-instance/index.js";
 import type { WorkerConfig } from "../config.js";
 import type { QaManifest } from "../qa-manifest.js";
 
@@ -16,9 +17,19 @@ Content ownership policy:
 - Edit checked-in content only when repository documentation or production loading code confirms that file is the authoritative production source rather than a seeder.
 `;
 
-function qaManifestInstructions(manifest: QaManifest | null | undefined): string {
+/** The facts about a harness-owned instance, and what the agent must not do to it. */
+export function runningInstanceInstructions(instance: AppInstanceSummary): string {
+  const endpoints = Object.entries(instance.endpoints).map(([key, url]) => `${key} \`${url}\``).join(", ");
+  return `- The application is already running for this run (launched by the controller from the repository's QA manifest; ready after ${Math.round(instance.readinessMs / 1000)} s). Endpoints: ${endpoints}. The same values are in the environment as PI_QA_ENDPOINT_<NAME>.
+${instance.storageState ? `- A Playwright storage state for the declared QA role is at \`${instance.storageState}\` (also $PI_QA_STORAGE_STATE): load it with \`playwright-cli -s=<session> state-load ${instance.storageState}\` before navigating instead of driving the login form.\n` : ""}- Do not start, stop or relaunch the stack, do not run the launcher, do not use \`setsid\`, \`nohup\` or \`disown\`; if the instance is unusable, report BLOCKED with the exact observation (URL, status, console/network evidence).
+- Do not run the repository's Playwright e2e or post-deploy suites; check behaviour directly against this instance with playwright-cli.
+- Keep the complete playwright-cli open/interact/capture/close sequence in one bash tool call with a cleanup trap that closes the browser; the application is not yours to start or stop.
+`;
+}
+
+function qaManifestInstructions(manifest: QaManifest | null | undefined, instance?: AppInstanceSummary | null): string {
   if (!manifest) return "";
-  const procedures = [
+  const procedures = instance ? runningInstanceInstructions(instance).trimEnd() : [
     manifest.launch
       ? `- Start the stack with exactly \`launch.argv\` (plus \`launch.env\`); it is the repository's supported launcher, so do not improvise another way of bringing the application up.`
       : "",
@@ -76,8 +87,10 @@ export function visualInstructions(
   evidenceDir: string | null,
   gif: boolean,
   manifest?: QaManifest | null,
+  instance?: AppInstanceSummary | null,
 ): string {
   if (!evidenceDir) return "";
+  if (instance) return visualInstructionsForInstance(config, evidenceDir, gif, manifest, instance);
   return `
 Visual verification is requested. Treat verification as part of completion, but do not fake evidence.
 - Evidence directory: ${evidenceDir} (create this assigned directory inside the worktree before capturing artifacts)
@@ -97,5 +110,32 @@ ${gif ? "- Record a short workflow using `playwright-cli -s=<session> video-star
 - Close the Playwright session even when verification fails.
 - .qa is ignored scratch space. Never stage or commit this evidence.
 If the application cannot be launched or authenticated, record the exact blocker in report.md and in your final response.
+`;
+}
+
+/**
+ * The visual stage against a harness-owned instance: every launch, port and process-lifetime procedure
+ * assumed the agent starts the app; here the facts of the running instance replace them, and the rest
+ * (truthful evidence, preflight, capture, cleanup) stays.
+ */
+function visualInstructionsForInstance(
+  config: WorkerConfig,
+  evidenceDir: string,
+  gif: boolean,
+  manifest: QaManifest | null | undefined,
+  instance: AppInstanceSummary,
+): string {
+  return `
+Visual verification is requested. Treat verification as part of completion, but do not fake evidence.
+- Evidence directory: ${evidenceDir} (create this assigned directory inside the worktree before capturing artifacts)
+${qaManifestInstructions(manifest, instance) || runningInstanceInstructions(instance)}- Before editing UI code, perform a visual preflight: open the running instance's frontend endpoint with Playwright and prove that a small \`preflight.png\` can be captured in the evidence directory. If this capability probe fails, stop before implementation and report the precise blocker. The controller excludes preflight-named media from final evidence; after implementation you must capture separate final desktop/mobile PNG evidence.
+${dockerInstructions(config)}- Prefer the narrowest checked-in route that renders the changed production content through the real production components. Never fabricate an ad-hoc mock page or use a preview that does not exercise the changed source.
+- Final evidence must visibly contain the changed production surface and, for interactive changes, capture the changed interaction and result. An application-shell screenshot, unrelated route, hidden component, or disclosure that the changed behavior was not exercised is invalid evidence. If the changed UI cannot be rendered and exercised truthfully, end with BLOCKED even when screenshots succeed.
+- Use a unique playwright-cli session, take an accessibility snapshot before interaction, and inspect console errors and failed requests.
+- Save desktop and relevant mobile screenshots, snapshot.txt, console.log, requests.txt, and report.md under the evidence directory.
+${gif ? "- Record a short workflow using `playwright-cli -s=<session> video-start <evidence-directory>/workflow.webm`, perform the interaction, then run `playwright-cli -s=<session> video-stop`. The controller converts that exact WebM to workflow.gif." : "- A GIF is not required unless it is the clearest proof."}
+- Close the Playwright session even when verification fails.
+- .qa is ignored scratch space. Never stage or commit this evidence.
+If the changed UI cannot be reached or authenticated on the running instance, record the exact blocker in report.md and in your final response.
 `;
 }

@@ -4,6 +4,7 @@ import { join, relative } from "node:path";
 import type { WorkerConfig } from "./config.js";
 import { assertBrowserExecution, regularFile, sourceFingerprint } from "./figma-verification.js";
 import type { IssuePlan } from "./issue-plan.js";
+import type { AppInstance } from "./app-instance/index.js";
 import type { PiAgentRunner } from "./pi-agent.js";
 import { buildUiVerificationPrompt } from "./prompts.js";
 import { loadQaManifest } from "./qa-manifest.js";
@@ -141,7 +142,8 @@ export class QaVerificationService {
     return null;
   }
 
-  async verify(issue: GitHubIssue, worktree: string, plan: IssuePlan | null): Promise<string> {
+  async verify(issue: GitHubIssue, worktree: string, plan: IssuePlan | null, options: { instance?: AppInstance | null } = {}): Promise<string> {
+    const instance = options.instance ?? null;
     const source = await sourceFingerprint(worktree);
     const reused = await this.passedReport(issue.number, source, plan);
     if (reused) return reused;
@@ -154,6 +156,7 @@ export class QaVerificationService {
     const runOptions = {
       worktree, sessionDir: join(runDir, "sessions"), logFile: join(runDir, "agent.log"),
       visualVerification: ui, dockerAccess: false, verification: { readPaths: [], evidenceDir },
+      ...(instance ? { environment: instance.environment() } : {}),
     };
     // A verdict is always validated against the ORIGINAL run's receipts: the repair turn re-emits JSON, it never adds evidence.
     const validate = async (finalText: string, evidence: VerificationEvidence | undefined): Promise<unknown> => {
@@ -189,9 +192,9 @@ that trips on it has not failed the code — exclude the artifact or re-run the 
 in ${JSON.stringify(evidenceDir)}. If tests cannot run, essential requirements cannot be verified, or a dependency
 is unavailable, return blocked with an exact reason, never skipped/passed. Missing test infrastructure does not
 justify invented tests or a mock UI: use a truthful documented behavior check or report blocked.
-${this.config.sandbox ? "" : "A backend or service that is merely not running is not an unavailable dependency: start it with the repository's documented launcher (isolated instance, run-unique database/cache names), and report blocked only with the exact launch failure.\n"}
+${this.config.sandbox || instance ? "" : "A backend or service that is merely not running is not an unavailable dependency: start it with the repository's documented launcher (isolated instance, run-unique database/cache names), and report blocked only with the exact launch failure.\n"}
 ${ui ? "This task requires browser QA." : "Determine whether the changed surface is UI; if so, browser QA is mandatory."}
-${buildUiVerificationPrompt({ config: this.config, issueNumber: issue.number, prNumber: null, evidenceDir, qaManifest: await loadQaManifest(worktree, this.config.qaManifestPath) })}
+${buildUiVerificationPrompt({ config: this.config, issueNumber: issue.number, prNumber: null, evidenceDir, qaManifest: await loadQaManifest(worktree, this.config.qaManifestPath), instance })}
 The visual instructions apply ONLY to a UI surface. Non-UI issues use repository-native functional checks;
 do not launch a browser for backend, scripts, docs or configuration with no runnable UI. Evidence lives at the
 absolute private directory above, not in tracked source. For UI capture separate fresh desktop and mobile PNGs
