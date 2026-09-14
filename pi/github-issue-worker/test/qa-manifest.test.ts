@@ -11,6 +11,25 @@ async function fixture(): Promise<string> {
   return root;
 }
 
+test("readiness.endpoints declares static loopback URLs and rejects anything else", async () => {
+  const root = await fixture();
+  try {
+    await writeFile(join(root, ".pi-worker/qa.json"), JSON.stringify({
+      version: 1,
+      launch: { argv: ["./run.sh"] },
+      readiness: { endpoints: { frontend: "http://localhost:3000", api: "https://127.0.0.1:8443/api" }, paths: { frontend: "/", api: "/health" } },
+    }));
+    const manifest = await loadQaManifest(root, ".pi-worker/qa.json");
+    assert.deepEqual(manifest?.readiness?.endpoints, { frontend: "http://localhost:3000", api: "https://127.0.0.1:8443/api" });
+    for (const bad of ["http://example.com", "ftp://localhost", "http://localhost:3000/../x", "http://localhost:3000 x"]) {
+      await writeFile(join(root, ".pi-worker/qa.json"), JSON.stringify({ version: 1, readiness: { endpoints: { frontend: bad } } }));
+      await assert.rejects(loadQaManifest(root, ".pi-worker/qa.json"), /readiness\.endpoints/);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("QA manifest loads strict Aspire, preview, and argv command metadata", async () => {
   const root = await fixture();
   try {

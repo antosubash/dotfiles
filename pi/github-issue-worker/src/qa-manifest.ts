@@ -20,9 +20,10 @@ export interface QaLaunch {
   notes?: string;
 }
 
-/** What must answer before a browser opens: Aspire resource names (from `aspire.resources`) and per-resource probe paths. */
+/** What must answer before a browser opens: Aspire resource names, or static loopback `endpoints` for other launchers, plus probe paths. */
 export interface QaReadiness {
   resources?: string[];
+  endpoints?: Record<string, string>;
   paths?: Record<string, string>;
 }
 
@@ -54,6 +55,7 @@ const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const SAFE_RESOURCE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SAFE_ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const SAFE_HTTP_PATH = /^\/[A-Za-z0-9._~!$&'()*+,;=:@/?%-]*$/;
+const SAFE_LOOPBACK_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d{2,5})?(?:\/[A-Za-z0-9._~/-]*)?$/;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 
 function parseArgv(value: unknown, context: string): string[] {
@@ -201,8 +203,17 @@ function parseManifest(raw: unknown): QaManifest {
 
   if (root.readiness !== undefined) {
     const readiness = object(root.readiness, "QA manifest readiness");
-    onlyKeys(readiness, ["resources", "paths"], "QA manifest readiness");
+    onlyKeys(readiness, ["resources", "endpoints", "paths"], "QA manifest readiness");
     manifest.readiness = {};
+    if (readiness.endpoints !== undefined) {
+      manifest.readiness.endpoints = {};
+      for (const [name, url] of Object.entries(object(readiness.endpoints, "QA manifest readiness.endpoints"))) {
+        if (!SAFE_NAME.test(name) || typeof url !== "string" || !SAFE_LOOPBACK_URL.test(url) || url.includes("..")) {
+          throw new Error(`QA manifest readiness.endpoints entry is not a loopback http(s) URL: ${name}`);
+        }
+        manifest.readiness.endpoints[name] = url;
+      }
+    }
     if (readiness.resources !== undefined) {
       if (!Array.isArray(readiness.resources) || readiness.resources.some((name) => typeof name !== "string" || !SAFE_NAME.test(name))) {
         throw new Error("QA manifest readiness resources are invalid");
