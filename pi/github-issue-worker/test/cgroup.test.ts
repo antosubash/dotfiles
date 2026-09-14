@@ -55,8 +55,8 @@ test("a controller rooted at a plain directory creates, lists and removes childr
 test("wrapInCgroup moves the shell into the child before exec", () => {
   const argv = wrapInCgroup("/sys/fs/cgroup/x/bash-1", ["bash", "-c", "echo hi"]);
   assert.equal(argv[0], "sh");
-  assert.match(argv[2], /echo \$\$ > "\$1\/cgroup\.procs"/);
-  assert.match(argv[2], /exec "\$@"/);
+  assert.match(argv[2] ?? "", /echo \$\$ > "\$1\/cgroup\.procs"/);
+  assert.match(argv[2] ?? "", /exec "\$@"/);
   assert.deepEqual(argv.slice(3), ["sh", "/sys/fs/cgroup/x/bash-1", "bash", "-c", "echo hi"]);
 });
 
@@ -70,7 +70,7 @@ test(
     const controller = cgroupController(ownCgroupPath());
     assert.equal(controller.available(), true);
     const child = (await controller.createChild("test-smoke"))!;
-    const [command, ...args] = wrapInCgroup(child, ["bash", "-c", "setsid bash -c 'sleep 300 & sleep 300 & wait' & sleep 300"]);
+    const [command = "sh", ...args] = wrapInCgroup(child, ["bash", "-c", "setsid bash -c 'sleep 300 & sleep 300 & wait' & sleep 300"]);
     const proc = spawn(command, args, { stdio: "ignore", detached: true });
     await new Promise((resolve) => setTimeout(resolve, 500));
     assert.ok((await controller.procs(child)).length >= 3);

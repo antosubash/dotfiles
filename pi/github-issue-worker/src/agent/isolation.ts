@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import type { WorkerConfig } from "../config.js";
+import type { CgroupController } from "./cgroup.js";
 import type { VerificationOptions } from "./policy.js";
 import { createBashOperations, stopTrackedProcessGroup } from "./process-group.js";
 import {
@@ -20,6 +21,10 @@ export interface IsolationOptions {
   dockerAccess: boolean;
   verification?: VerificationOptions;
   shutdownSignal: AbortSignal;
+  /** Child-cgroup fencing for every bash call of this run. */
+  cgroups?: CgroupController;
+  /** Per-run variables for agent bash (a running app instance's endpoints, for example). */
+  environment?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -84,7 +89,11 @@ export async function openIsolation(config: WorkerConfig, options: IsolationOpti
   const bashOperations = createBashOperations(options.processGroupFile, {
     sandbox: sandboxed,
     shutdownSignal: options.shutdownSignal,
-    environmentOverrides: dockerAccess && config.dockerSocket ? { DOCKER_HOST: `unix://${config.dockerSocket}` } : {},
+    environmentOverrides: {
+      ...(dockerAccess && config.dockerSocket ? { DOCKER_HOST: `unix://${config.dockerSocket}` } : {}),
+      ...(options.environment ?? {}),
+    },
+    ...(options.cgroups ? { cgroups: options.cgroups } : {}),
   });
   return { sandboxed, privateTemp, bashOperations, close };
 }

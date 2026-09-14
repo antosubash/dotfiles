@@ -15,6 +15,7 @@ import {
   createAgentSettlementWatchdog,
   extractAssistantText,
 } from "./agent/settlement.js";
+import { cgroupController, ownCgroupPath, type CgroupController } from "./agent/cgroup.js";
 import { openIsolation, type Isolation } from "./agent/isolation.js";
 import { activeCommandProcessGroupPath } from "./agent/process-group.js";
 
@@ -28,14 +29,18 @@ interface AgentRunOptions {
   dockerAccess?: boolean;
   verification?: VerificationOptions;
   planning?: boolean;
+  /** Per-run variables for agent bash, e.g. a running app instance's `PI_QA_*` values. */
+  environment?: NodeJS.ProcessEnv;
 }
 
 const SECRET_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "FIGMA_TOKEN", "FIGMA_TOKEN_FILE"] as const;
 
 export class PiAgentRunner {
   private readonly modelRuntimePromise: Promise<ModelRuntime>;
+  private readonly cgroups: CgroupController;
 
-  constructor(private readonly config: WorkerConfig) {
+  constructor(private readonly config: WorkerConfig, dependencies: { cgroups?: CgroupController } = {}) {
+    this.cgroups = dependencies.cgroups ?? cgroupController(ownCgroupPath());
     this.modelRuntimePromise = ModelRuntime.create({
       authPath: resolve(config.agentDir, "auth.json"),
       modelsPath: resolve(config.agentDir, "models.json"),
@@ -89,6 +94,8 @@ export class PiAgentRunner {
         dockerAccess,
         ...(options.verification ? { verification: options.verification } : {}),
         shutdownSignal: shutdownController.signal,
+        cgroups: this.cgroups,
+        ...(options.environment ? { environment: options.environment } : {}),
       });
       const settingsManager = SettingsManager.create(options.worktree, this.config.agentDir);
       const bashOperations = isolation.bashOperations;
@@ -215,3 +222,4 @@ export { commandBlockReason } from "./agent/policy.js";
 export { awaitAgentPromptCompletion, createAgentSettlementWatchdog } from "./agent/settlement.js";
 export { assertVisualSandboxIsolation, removeStaleSandboxTemps, sandboxConfig, sandboxEnvironment } from "./agent/sandbox.js";
 export { ACTIVE_COMMAND_PROCESS_GROUP_FILE, activeCommandProcessGroupPath, createBashOperations, stopTrackedProcessGroup } from "./agent/process-group.js";
+export { cgroupController, ownCgroupPath, type CgroupController } from "./agent/cgroup.js";
