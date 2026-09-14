@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { cgroupController, ownCgroupPath } from "./agent/cgroup.js";
 import { loadConfig } from "./config.js";
 import { commandExists } from "./exec.js";
 import { WorkerState } from "./state.js";
@@ -19,6 +20,10 @@ async function main(): Promise<void> {
   const config = loadConfig();
   await requireCommands(["git", "gh"]);
   await mkdir(config.dataDir, { recursive: true });
+  // A crash can leave a fenced bash call or app instance behind; their child cgroups are killed and removed here.
+  for (const name of await cgroupController(ownCgroupPath()).sweepChildren(["bash-", "qa-"])) {
+    console.error(`${new Date().toISOString()} removed stale child cgroup ${name}`);
+  }
   const lock = await ProfileLock.acquire(config.dataDir);
   let state: WorkerState | null = null;
   let stopping = false;

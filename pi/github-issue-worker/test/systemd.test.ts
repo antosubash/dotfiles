@@ -35,3 +35,11 @@ test("systemd supervisor signals the complete worker control group", async () =>
   const unit = await readFile(supervisorUnit, "utf8");
   assert.match(unit, /^KillMode=control-group$/m);
 });
+
+// Agent bash calls and launched app instances are fenced in child cgroups of the unit's own cgroup and
+// killed with cgroup.kill; Delegate=yes is the declaration that the service manages that subtree itself.
+test("systemd units delegate their cgroup subtree so the worker can fence and kill agent process trees", async () => {
+  for (const path of [supervisorUnit, profileUnit]) {
+    assert.match(await readFile(path, "utf8"), /^Delegate=yes$/m);
+  }
+});

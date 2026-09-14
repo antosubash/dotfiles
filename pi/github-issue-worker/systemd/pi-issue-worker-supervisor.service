@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 ExecStart=%h/.local/bin/pi-issue-worker-supervisor --config-dir %h/.config/pi-issue-worker
 Restart=on-failure
+Delegate=yes
 RestartSec=15
 TimeoutStopSec=90
 KillMode=control-group

@@ -8,6 +8,7 @@ Type=simple
 EnvironmentFile=%h/.config/pi-issue-worker/%i.env
 ExecStart=%h/.local/bin/pi-issue-worker
 Restart=on-failure
+Delegate=yes
 RestartSec=15
 TimeoutStopSec=90
 UMask=0077
