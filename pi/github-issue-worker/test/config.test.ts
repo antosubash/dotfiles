@@ -160,6 +160,15 @@ test("loadConfig requires repository identity and an explicit base branch", () =
 // Sandboxing is a per-profile switch that is OFF by default for now: the OS sandbox blocks the repository
 // stacks the agents must run (host dev services, toolchain caches under $HOME), so the harness runs agent
 // commands directly until that is solved. Re-enabling is an explicit opt-in that must parse strictly.
+test("app instance limits default to 900 s and 4096 MB and accept overrides", () => {
+  assert.equal(loadConfig(base).appStartTimeoutSeconds, 900);
+  assert.equal(loadConfig(base).appMinAvailableMb, 4096);
+  const custom = loadConfig({ ...base, PI_WORKER_APP_START_TIMEOUT: "120", PI_WORKER_APP_MIN_AVAILABLE_MB: "1024" });
+  assert.equal(custom.appStartTimeoutSeconds, 120);
+  assert.equal(custom.appMinAvailableMb, 1024);
+  assert.throws(() => loadConfig({ ...base, PI_WORKER_APP_START_TIMEOUT: "0" }), /PI_WORKER_APP_START_TIMEOUT/);
+});
+
 test("loadConfig disables OS sandboxing unless PI_WORKER_SANDBOX opts in", () => {
   assert.equal(loadConfig(base).sandbox, false);
   assert.equal(loadConfig({ ...base, PI_WORKER_SANDBOX: "0" }).sandbox, false);

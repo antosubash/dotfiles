@@ -52,6 +52,10 @@ export interface WorkerConfig {
   publishEvidence: boolean;
   evidenceBranch: string;
   qaManifestPath: string;
+  /** Seconds allowed for launch + endpoint resolution + readiness of a harness-owned app instance. */
+  appStartTimeoutSeconds: number;
+  /** Refuse to launch an app instance when MemAvailable is below this many MB: a clear block, not ten minutes of swap. */
+  appMinAvailableMb: number;
 }
 
 function expandPath(value: string, home = homedir()): string {
@@ -254,5 +258,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       env.PI_WORKER_QA_MANIFEST?.trim() || ".pi-worker/qa.json",
       "PI_WORKER_QA_MANIFEST",
     ),
+    appStartTimeoutSeconds: positiveInteger("PI_WORKER_APP_START_TIMEOUT", env.PI_WORKER_APP_START_TIMEOUT || "", 900),
+    appMinAvailableMb: positiveInteger("PI_WORKER_APP_MIN_AVAILABLE_MB", env.PI_WORKER_APP_MIN_AVAILABLE_MB || "", 4096),
   };
 }
