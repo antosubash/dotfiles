@@ -2,13 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { WorkerConfig } from "./config.js";
-import { execFile } from "./exec.js";
 import { assertBrowserExecution, regularFile, sourceFingerprint } from "./figma-verification.js";
 import type { IssuePlan } from "./issue-plan.js";
 import type { PiAgentRunner } from "./pi-agent.js";
 import { buildUiVerificationPrompt } from "./prompts.js";
 import { loadQaManifest } from "./qa-manifest.js";
 import { QaReportingError, assertQaExecution } from "./qa-receipts.js";
+import { worktreeUiSurface } from "./ui-surface.js";
 import type { GitHubIssue, VerificationEvidence } from "./types.js";
 
 // Re-exported so callers keep a single entry point for the QA gate.
@@ -148,9 +148,7 @@ export class QaVerificationService {
     const runDir = join(this.config.dataDir, "verification", `issue-${issue.number}`, randomUUID());
     const evidenceDir = join(runDir, "evidence");
     await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
-    const changed = (await execFile("git", ["diff", "--no-ext-diff", "--no-textconv", "--name-only", `origin/${this.config.baseBranch}`], { cwd: worktree })).stdout;
-    const untracked = (await execFile("git", ["ls-files", "--others", "--exclude-standard"], { cwd: worktree })).stdout;
-    const ui = /\b(?:ui|ux|frontend|front-end|layout|responsive|browser|figma|page|screen|form|button|dialog|modal|component)\b|(?:^|\/)(?:app|frontend|client|views?|routes?|pages?|components?|templates?|static|ui)\/|\.(?:tsx|jsx|vue|svelte|astro|css|scss|sass|less|html)\b/im.test(`${issue.title}\n${issue.body}\n${changed}\n${untracked}`);
+    const ui = await worktreeUiSurface(issue, worktree, this.config.baseBranch);
     const checkIds = [...DEFAULT_QA_CHECKS, ...(plan?.checks.filter((check) => check.kind === "behavioral").map((check) => check.id) ?? [])];
     const reportPath = join(runDir, "result.json");
     const runOptions = {
