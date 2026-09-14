@@ -68,3 +68,16 @@ export async function writeMemoryNote(dir: string, slug: string, title: string, 
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await writeFile(join(dir, `${slug}.md`), `# ${title}\n${body.trim()}\n`, { mode: 0o600 });
 }
+
+const reportedSkips = new Set<string>();
+
+/** The index for prompts; a skipped file is reported once per worker process so it is not silently ignored. */
+export async function loadProjectMemory(config: Pick<WorkerConfig, "dataDir">, log: (line: string) => void = console.error): Promise<MemoryIndex> {
+  const index = await projectMemoryIndex(memoryDirectory(config));
+  for (const name of index.skipped) {
+    if (reportedSkips.has(name)) continue;
+    reportedSkips.add(name);
+    log(`${new Date().toISOString()} memory note skipped (name, size or secret-looking content): ${name}`);
+  }
+  return index;
+}

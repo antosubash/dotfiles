@@ -24,8 +24,10 @@ QA and design-verification sessions evaluate its output before the controller ca
    `Closes #<number>`.
 5. The worker monitors mergeability. When the configured base conflicts with the feature branch, the
    controller merges the freshly fetched base without rebasing, the same Pi session resolves unprotected
-   conflicts and runs focused checks, and the controller validates and pushes the merge commit. Protected
-   or ambiguous conflicts are blocked for human resolution.
+   conflicts and runs focused checks, and the controller validates and **pushes the merge commit at once**.
+   The independent verifier then runs on what was pushed: a pass attaches its browser evidence, a failure
+   is a ⚠️ comment on the PR (CI is the other check) — the resolution is never reverted. Protected or
+   ambiguous conflicts, and anything that fails before the push, are blocked for human resolution.
 6. The worker monitors the draft PR's check rollup. It waits for pending jobs, extracts bounded and
    scrubbed excerpts from completed failed Actions jobs, and sends actionable failures back to the same
    Pi session. The controller commits and pushes a repair, then monitors the new head. Attempts are
@@ -358,11 +360,45 @@ same way every time and one that improvises a different way each run:
 ```
 
 `launch` is the only supported way to bring the stack up; `readiness` names the resources whose URLs must
-resolve and the paths that must answer before a browser opens; `auth.setup` is a repository command that
-logs in through the real flow (its `envFromEndpoints` values are `aspire.resources` keys whose resolved URLs
-the agent supplies as those variables) and writes a Playwright storage state that the agent loads with
-`playwright-cli state-load` — hand-driving the login form is forbidden while `auth` is declared. All argv
-and env values are literals; env names are `[A-Z_][A-Z0-9_]*`; paths are repository-relative.
+resolve (or, for launchers that are not Aspire, static loopback `endpoints`) and the paths that must answer
+before a browser opens; `auth.setup` is a repository command that logs in through the real flow (its
+`envFromEndpoints` values are resource keys whose resolved URLs are supplied as those variables) and writes
+a Playwright storage state, which must be gitignored. All argv and env values are literals; env names are
+`[A-Z_][A-Z0-9_]*`; paths are repository-relative.
+
+### What the worker does with `launch`, `readiness` and `auth`
+
+With `launch` declared, the worker — not the agent — brings the application up **once per job run**: it
+runs `launch.argv` in the worktree inside a child cgroup of its own systemd cgroup, resolves
+`aspire.resources` through `aspire describe` (or takes `readiness.endpoints` as given), waits until every
+`readiness.paths` probe answers, runs `auth.setup` against the resolved endpoints and copies
+`auth.storageState` out of the worktree, then hands the agents `PI_QA_ENDPOINT_<NAME>`,
+`PI_QA_STORAGE_STATE` and `PI_QA_INSTANCE` in their environment and the same facts in their prompt. The
+implementer only implements; the visual stage and the independent verifier share that instance (it is
+relaunched if the tree changed between stages) and are told not to launch, not to `setsid`, and not to run
+the repository's Playwright suites. The instance is stopped when the run ends — `SIGTERM` to the launcher
+so its own exit trap runs, then `cgroup.kill` for whatever remains. Launch and auth logs live under
+`<data-dir>/instances/issue-<n>/<run>/`. Limits: `PI_WORKER_APP_START_TIMEOUT` (900 s for launch +
+endpoints + readiness) and `PI_WORKER_APP_MIN_AVAILABLE_MB` (4096: below that `MemAvailable` the launch
+is refused with a clear block instead of swapping). Repositories without `launch` keep the agent-driven
+behaviour end to end.
+
+Every agent bash call is likewise fenced in its own child cgroup: a process that outlives the call —
+`setsid`, `nohup`, an orchestrator child — is killed with `cgroup.kill` the moment the shell exits and the
+call is rejected. The units carry `Delegate=yes` for that; where no writable cgroup exists (development
+shells) the process-group kill is the fallback.
+
+## Project memory
+
+`<data-dir>/memory/` holds notes that survive from one run to the next on the same repository: one durable
+fact per file (`launcher-timing.md`, `flaky-moderation-test.md`; names match `^[a-z0-9][a-z0-9-]*\.md$`,
+≤ 4 KB, ≤ 40 files), first line `# title`. The implementer, feedback, visual and verifier prompts receive a
+capped index (title and first two body lines of each note, newest first, ≤ 6 KB) with the directory path and
+the saving rules: environment and repository facts only, update instead of duplicate, never issue-specific
+state, never secrets. Files whose content looks like a token, bearer header, password, cookie or private key
+are never rendered and are named in the worker log. Notes are advisory — the verifier reads them like any
+other repository text, as guidance and never as evidence. The instance lifecycle writes `instance-timing.md`
+after each launch.
 
 The controller rejects oversized, malformed, unknown-key, traversal, absolute-path, and symlinked
 manifests. `.pi-worker` is protected from agent writes by default. Component previews may use representative

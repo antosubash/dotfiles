@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { looksLikeSecret, projectMemoryIndex, writeMemoryNote } from "../src/project-memory.js";
+import { loadProjectMemory, looksLikeSecret, projectMemoryIndex, writeMemoryNote } from "../src/project-memory.js";
 
 test("the index lists valid notes newest first with title and two body lines, capped", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-memory-"));
@@ -64,5 +64,22 @@ test("writeMemoryNote creates the directory and a titled note; bad names are ref
     await assert.rejects(writeMemoryNote(dir, "../escape", "x", "y"), /invalid memory note name/);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadProjectMemory reports each skipped file once per process", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-memory-load-"));
+  const dir = join(root, "memory");
+  try {
+    await writeMemoryNote(dir, "ok-note", "Fine", "body");
+    await writeFile(join(dir, "Bad Name.md"), "# nope\n");
+    const lines: string[] = [];
+    const first = await loadProjectMemory({ dataDir: root }, (line) => lines.push(line));
+    const second = await loadProjectMemory({ dataDir: root }, (line) => lines.push(line));
+    assert.match(first.text, /ok-note\.md — Fine/);
+    assert.deepEqual(second.skipped, ["Bad Name.md"]);
+    assert.equal(lines.filter((line) => /memory note skipped .*Bad Name\.md/.test(line)).length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

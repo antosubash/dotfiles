@@ -54,6 +54,10 @@ drwx------ pi-issue-worker
 | Draft PR checks fail with no worker response | old installation, worker stopped, or PR job missing from local state | update/restart, inspect `gh pr checks`, issue labels, and the journal |
 | Chromium reports `Unix sockets are blocked` or `ProcessSingleton` errors | outdated visual sandbox or an overlong temp/socket path | update, then run the browser smoke test below |
 | Playwright gets `net::ERR_ACCESS_DENIED` on a local URL `curl` reaches; evidence or `npm run check` fails with `bwrap: … Operation not permitted` | Ubuntu's `apparmor_restrict_unprivileged_userns` on kernel ≥ 7.0 confines the namespaced units | `journalctl -k | grep 'apparmor="DENIED"'`; see the kernel 7.0 entry under "An issue becomes blocked" |
+| `App instance memory failed: N MB available, 4096 MB required` | the host is short of memory (other stacks, swap in use) | free memory or lower `PI_WORKER_APP_MIN_AVAILABLE_MB`; never let a launch swap for ten minutes |
+| `App instance readiness failed` / `App instance endpoints failed` | the manifest launcher died or a resource never came up | read `<data-dir>/instances/issue-<n>/<run>/launch.log` (tail is in the error); inotify and ports are the usual causes |
+| `App instance auth failed: … must be gitignored` | the repository tracks its QA storage state | gitignore `auth.storageState` in the repository |
+| `⚠️ Post-resolution verification failed` on a PR | the pushed conflict resolution did not pass the independent verifier | read the report path in the comment; the resolution stays pushed, fix forward on the PR |
 | Worker is idle but memory use is high | each profile loads an independent Pi SDK/model runtime | reduce active profiles or run selected profiles |
 
 ## Supervisor and child lifecycle
@@ -455,6 +459,43 @@ systemd-run --user --collect --wait --pipe -p PrivateTmp=true -E HOME=$HOME -E P
 systemd-run --user --collect --wait --pipe -p PrivateTmp=true \
   bwrap --unshare-all --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind /lib64 /lib64 --proc /proc --dev /dev /usr/bin/true
 ```
+
+### `App instance … failed` (a manifest `launch` is declared)
+
+The worker launched the repository's stack itself and gave up in the named phase. Everything it saw is
+under `<data-dir>/instances/issue-<n>/<run>/`: `launch.log` (the launcher's output, its tail is quoted in
+the error), `auth-setup.log`, and `instance.json` once it got that far. In order:
+
+1. `memory` — `MemAvailable` was below `PI_WORKER_APP_MIN_AVAILABLE_MB`. Other stacks on the host
+   (interactive worktrees, leftover orchestrators: `pgrep -fa 'dcp run-controllers'`) are the usual reason.
+2. `endpoints` / `readiness` — the launcher exited, or a resource never reached `Running`/answered its
+   probe within `PI_WORKER_APP_START_TIMEOUT`. On a .NET/Aspire stack a migrator or host that dies at
+   startup while the CLI log shows nothing is very often the per-user inotify limit (each ASP.NET host
+   registers file watchers; test hosts from the verifier's own run count too):
+
+   ```bash
+   sysctl fs.inotify.max_user_instances      # 128 by default; 1024 is the usual developer-box value
+   find /proc/[0-9]*/fd -lname 'anon_inode:inotify' -user "$USER" 2>/dev/null | wc -l
+   ```
+
+3. `auth` — the setup command failed (its output is in `auth-setup.log`), the storage state was not
+   produced at `auth.storageState`, or that path is not gitignored.
+
+The agent never launches while `launch` is declared; if a run still shows the agent starting the stack,
+the manifest did not load (`.pi-worker/qa.json` malformed — the worker logs the reason).
+
+### `⚠️ Post-resolution verification failed` after a conflict resolution
+
+The resolution was pushed before the independent verifier ran; the comment carries the verifier's summary
+and, when there is one, the local report path. Nothing is reverted: fix forward on the PR, or push to it —
+the next push re-enters the normal PR flow. A `⛔` comment, by contrast, means the resolution failed
+*before* the push and was discarded; `/pi retry` re-runs it.
+
+### Project memory looks stale or wrong
+
+Notes live in `<data-dir>/memory/*.md` and are advisory. Delete or edit a wrong note by hand; a file the
+worker skips (bad name, over 4 KB, secret-looking content) is named in the worker's journal line
+`memory note skipped`. `instance-timing.md` is rewritten by the worker after every launch.
 
 ### Retrying a blocked base-branch conflict resolution
 

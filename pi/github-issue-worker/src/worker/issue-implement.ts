@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { classifyIssue } from "../classification.js";
 import type { EvidenceRun } from "../evidence.js";
-import { memoryDirectory, projectMemoryIndex } from "../project-memory.js";
+import { loadProjectMemory } from "../project-memory.js";
 import { buildIssuePrompt } from "../prompts.js";
 import type { QaManifest } from "../qa-manifest.js";
 import type { GitHubIssue, IssueJob } from "../types.js";
@@ -45,7 +45,7 @@ export async function runImplementer(
         qaManifest: options.manifest,
         category: classifyIssue(issue),
         plan: await ctx.plans.load(issue),
-        memory: await projectMemoryIndex(memoryDirectory(ctx.config)),
+        memory: await loadProjectMemory(ctx.config),
       }),
       logFile: join(ctx.config.dataDir, "logs", `issue-${issue.number}.log`),
       visualVerification: evidence !== null,
