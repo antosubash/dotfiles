@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { WorkerConfig } from "./config.js";
 import { assertBrowserExecution, regularFile, sourceFingerprint } from "./figma-verification.js";
@@ -41,6 +41,7 @@ export async function directoryFingerprint(dir: string): Promise<string> {
 }
 
 export const DEFAULT_QA_CHECKS = ["acceptance", "regression", "negative-cases", "diff-review"];
+const PASSED_REPORT_SCAN_LIMIT = 20;
 
 const VERDICT_SCHEMA = `Return ONLY JSON (no fences): {"status":"passed|failed|blocked","surface":"ui|non-ui","summary":"...",
 "checks":[{"id":"one entry for EACH requiredCheckId","status":"passed|failed|blocked","notes":"observed evidence"}],
@@ -132,9 +133,15 @@ export class QaVerificationService {
    */
   private async passedReport(issueNumber: number, source: string, plan: IssuePlan | null): Promise<string | null> {
     const runsDir = join(this.config.dataDir, "verification", `issue-${issueNumber}`);
-    for (const entry of await readdir(runsDir, { withFileTypes: true }).catch(() => [])) {
-      if (!entry.isDirectory()) continue;
-      const path = join(runsDir, entry.name, "result.json");
+    // Only a recent run can match the current tree; the scan is bounded to the newest few so an issue's
+    // long retry history is not re-read and re-parsed on every verification.
+    const runs = await Promise.all(
+      (await readdir(runsDir, { withFileTypes: true }).catch(() => []))
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => ({ name: entry.name, mtime: (await stat(join(runsDir, entry.name)).catch(() => null))?.mtimeMs ?? 0 })),
+    );
+    for (const { name } of runs.sort((a, b) => b.mtime - a.mtime).slice(0, PASSED_REPORT_SCAN_LIMIT)) {
+      const path = join(runsDir, name, "result.json");
       let report: { status?: string; sourceFingerprint?: string; plan?: unknown } | null = null;
       try { report = JSON.parse(await readFile(path, "utf8")); } catch { continue; }
       if (report?.status === "passed" && report.sourceFingerprint === source &&

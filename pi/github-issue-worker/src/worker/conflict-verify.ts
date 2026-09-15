@@ -3,7 +3,7 @@ import type { IssueJob } from "../types.js";
 import { stageNeedsInstance, withAppInstance } from "./app-stage.js";
 import { publishEvidenceDirectory } from "./evidence-flow.js";
 import { errorText, evidenceCommentMarker, isInterruptedRun, markdownSummary, type WorkerContext } from "./shared.js";
-import { verifyImplementation } from "./verification-flow.js";
+import { verifyImplementationDetailed } from "./verification-flow.js";
 
 export const POST_RESOLUTION_PASSED = "✅ Post-resolution verification passed.";
 export const POST_RESOLUTION_FAILED =
@@ -24,16 +24,14 @@ export async function verifyAfterPush(
   try {
     const issue = await ctx.github.getIssue(job.issueNumber);
     const needsInstance = () => stageNeedsInstance(ctx, issue, worktree.path, job.visualRequested);
-    const summary = await withAppInstance(ctx, worktree.path, job, needsInstance, (instance) =>
-      verifyImplementation(ctx, job, worktree.path, issue, instance),
+    const outcome = await withAppInstance(ctx, worktree.path, job, needsInstance, (instance) =>
+      verifyImplementationDetailed(ctx, job, worktree.path, issue, instance),
     );
-    const report = /Local report: `([^`]+)`/.exec(summary)?.[1];
-    const published = report
-      ? await publishEvidenceDirectory(ctx, prNumber, worktree.path, join(dirname(report), "evidence"), basename(dirname(report))).catch(() => null)
-      : null;
+    const runDir = dirname(outcome.qaReport);
+    const published = await publishEvidenceDirectory(ctx, prNumber, worktree.path, join(runDir, "evidence"), basename(runDir)).catch(() => null);
     await ctx.github.commentPullRequest(
       prNumber,
-      `${POST_RESOLUTION_PASSED}${summary}${published ? `\n\n${evidenceCommentMarker(published.eventKey)}\nConflict-resolution QA evidence (independent verifier).${published.note}` : ""}`,
+      `${POST_RESOLUTION_PASSED}${outcome.text}${published ? `\n\n${evidenceCommentMarker(published.eventKey)}\nConflict-resolution QA evidence (independent verifier).${published.note}` : ""}`,
     );
     if (published) ctx.state.markProcessed(job.issueNumber, published.eventKey);
     ctx.state.setStatus(job.issueNumber, "pr_open");
