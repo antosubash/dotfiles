@@ -76,7 +76,9 @@ export async function listEvidenceRuns(
   const entries = await readdir(runsRoot, { withFileTypes: true }).catch(() => []);
   const runs: EvidenceRun[] = [];
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    // Agent-created scratch directories are not controller runs. Keep the same ID contract as
+    // EvidenceStore so malformed names cannot crash recovery and starve the whole worker queue.
+    if (!/^\d{8}T\d{6}Z$/.test(entry.name) || !entry.isDirectory() || entry.isSymbolicLink()) continue;
     const runDir = join(runsRoot, entry.name);
     try {
       await assertCanonicalDirectory(runDir);

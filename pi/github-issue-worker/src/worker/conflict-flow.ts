@@ -75,7 +75,7 @@ export async function handleMergeConflict(
     }
     const localHead = await ctx.repository.headRevision(worktree.path);
     if (localHead !== pullRequestHead) {
-      await ctx.repository.recoverBaseMergePush(
+      const recoveredCurrentBase = await ctx.repository.recoverBaseMergePush(
         worktree.path,
         worktree.branch,
         pullRequestHead,
@@ -86,7 +86,9 @@ export async function handleMergeConflict(
         job.prNumber!,
         "🔀 Recovered and pushed an interrupted base-branch conflict resolution. Verification follows.",
       );
-      ctx.state.completeEvent(job.issueNumber, eventKey, "pr_open");
+      // A trusted merge against B1 can be pushed after base advances to B2, but B2 still needs its own
+      // conflict-resolution attempt. Older repository adapters return void, which means current-base.
+      if (recoveredCurrentBase !== false) ctx.state.completeEvent(job.issueNumber, eventKey, "pr_open");
       await verifyAfterPush(ctx, job, worktree);
       return;
     }
@@ -96,6 +98,10 @@ export async function handleMergeConflict(
       worktree.branch,
       pullRequestHead,
     );
+    if (merge.staleMerge) {
+      await ctx.repository.clearAgentChanges(worktree.path, worktree.branch, { ignored: false });
+      return;
+    }
     if (merge.conflicts.length === 0) {
       let pushed = false;
       if (merge.mergeInProgress) {

@@ -80,9 +80,8 @@ test("a GitHub transport failure before the push keeps the staged merge for the 
   }
 });
 
-// A conflict block is keyed on the PR's head and base OIDs, and GitHub's baseRefOid only moves when the PR
-// syncs — so once processed, the resolution never re-ran and the documented `/pi retry` only knew about CI
-// blocks. Retrying a conflict block must re-queue the resolution (next tick), not send the agent "retry".
+// A conflict block is keyed on the PR's head and live base target, so a base move gets a new event; `/pi retry`
+// still re-queues a resolution for the same target. It must do so on the next tick, not send the agent "retry".
 test("trusted /pi retry on a conflict-blocked PR re-queues the base-branch resolution", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-merge-retry-"));
   const state = new WorkerState(join(root, "state.sqlite"));

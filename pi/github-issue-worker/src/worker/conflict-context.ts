@@ -2,8 +2,8 @@ import { BranchDivergenceError } from "../repository.js";
 import { errorText, RetryableControllerError, type WorkerContext } from "./shared.js";
 
 /**
- * One resolution attempt per (PR, base branch, head, base) — note GitHub's baseRefOid moves only when the
- * PR syncs, so a processed key stays processed until `/pi retry` forgets it or the PR head changes.
+ * One resolution attempt per PR head and current base-branch target. The base SHA is read from the trusted
+ * GitHub branch ref, not the PR's frozen baseRefOid, so a new base revision gets a fresh event key.
  */
 export function mergeConflictEventKey(
   prNumber: number,

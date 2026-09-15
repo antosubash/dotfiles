@@ -329,7 +329,7 @@ hidden marker and are ignored, preventing feedback loops. A trusted `/pi retry` 
 blocked issue is also processed automatically: the controller reclaims the existing worktree/session and
 updates labels without requiring a separate `pi-ready` edit. On a PR blocked by a failed base-branch
 conflict resolution, `/pi retry` re-queues that resolution for the next poll (a conflict block is keyed on
-the PR's head and base commits and would otherwise never re-run); on a PR blocked by CI repair it re-opens
+the PR head and trusted current base target, so a live base move also re-queues it); on a PR blocked by CI repair it re-opens
 the failed head. Commands older than the latest blocked state are ignored.
 
 ## QA manifest
