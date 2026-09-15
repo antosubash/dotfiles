@@ -177,6 +177,7 @@ export class RepositoryManager {
     conflicts: string[];
     alreadyCurrent: boolean;
     mergeInProgress: boolean;
+    staleMerge: boolean;
   }> {
     return beginBaseMerge(this.ctx, worktree, branch, expectedHead);
   }
@@ -207,7 +208,7 @@ export class RepositoryManager {
     branch: string,
     expectedHead: string,
     expectedBase: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     return recoverBaseMergePush(this.ctx, worktree, branch, expectedHead, expectedBase);
   }
 

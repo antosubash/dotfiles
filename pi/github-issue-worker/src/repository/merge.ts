@@ -22,6 +22,7 @@ export async function beginBaseMerge(
   conflicts: string[];
   alreadyCurrent: boolean;
   mergeInProgress: boolean;
+  staleMerge: boolean;
 }> {
   await validateWorktree(ctx, worktree, branch);
   if ((await headRevision(ctx, worktree)) !== expectedHead) {
@@ -47,6 +48,12 @@ export async function beginBaseMerge(
       await abortBaseMerge(ctx, worktree);
       throw new Error(`Existing merge head ${baseSha} is not part of the trusted ${baseRef} history`);
     }
+    if (baseSha !== fetchedBaseSha) {
+      // The resolution was computed against an older trusted base. Abort it; the caller clears its
+      // uncommitted agent edits and leaves the current-base event pending for a fresh attempt.
+      await abortBaseMerge(ctx, worktree);
+      return { baseSha: fetchedBaseSha, conflicts: [], alreadyCurrent: false, mergeInProgress: false, staleMerge: true };
+    }
   } else {
     const changed = await changedFiles(ctx, worktree);
     if (changed.length > 0) {
@@ -57,7 +64,7 @@ export async function beginBaseMerge(
       allowFailure: true,
     });
     if (current.exitCode === 0) {
-      return { baseSha, conflicts: [], alreadyCurrent: true, mergeInProgress: false };
+      return { baseSha, conflicts: [], alreadyCurrent: true, mergeInProgress: false, staleMerge: false };
     }
     const merged = await ctx.run("git", ["merge", "--no-commit", "--no-ff", baseRef], {
       cwd: worktree,
@@ -81,7 +88,7 @@ export async function beginBaseMerge(
     await abortBaseMerge(ctx, worktree);
     throw new Error(`Merge conflicts touch protected paths: ${protectedConflicts.join(", ")}`);
   }
-  return { baseSha, conflicts, alreadyCurrent: false, mergeInProgress };
+  return { baseSha, conflicts, alreadyCurrent: false, mergeInProgress, staleMerge: false };
 }
 
 async function mergeHeadRevision(ctx: RepositoryContext, worktree: string): Promise<string> {
@@ -174,8 +181,18 @@ export async function recoverBaseMergePush(
   branch: string,
   expectedHead: string,
   expectedBase: string,
-): Promise<void> {
+): Promise<boolean> {
   await validateWorktree(ctx, worktree, branch);
+  await fetchBase(ctx);
+  const baseRef = `origin/${ctx.config.baseBranch}`;
+  const expectedBaseTrusted = await ctx.run(
+    "git",
+    ["merge-base", "--is-ancestor", expectedBase, baseRef],
+    { cwd: worktree, allowFailure: true },
+  );
+  if (expectedBaseTrusted.exitCode !== 0) {
+    throw new BranchDivergenceError(`Expected base ${expectedBase} is not part of trusted ${baseRef} history`);
+  }
   const localHead = await headRevision(ctx, worktree);
   const revision = (
     await ctx.run("git", ["rev-list", "--parents", "-n", "1", localHead], { cwd: worktree })
@@ -186,9 +203,14 @@ export async function recoverBaseMergePush(
     );
   }
   const baseParent = revision[2]!;
-  if (baseParent !== expectedBase) {
+  const trustedBaseParent = await ctx.run(
+    "git",
+    ["merge-base", "--is-ancestor", baseParent, expectedBase],
+    { cwd: worktree, allowFailure: true },
+  );
+  if (trustedBaseParent.exitCode !== 0) {
     throw new BranchDivergenceError(
-      `Merge parent ${baseParent} does not match the expected trusted base ${expectedBase}`,
+      `Merge parent ${baseParent} is not an ancestor of the expected trusted base ${expectedBase}`,
     );
   }
   const changed = await ctx.run(
@@ -218,13 +240,14 @@ export async function recoverBaseMergePush(
     }
   }
   const remoteHead = await remoteBranchRevision(ctx, worktree, branch);
-  if (remoteHead === localHead) return;
+  if (remoteHead === localHead) return baseParent === expectedBase;
   if (remoteHead !== expectedHead) {
     throw new BranchDivergenceError(
       `Remote branch moved from expected head ${expectedHead} to ${remoteHead || "missing"}`,
     );
   }
   await pushIfAhead(ctx, worktree, branch);
+  return baseParent === expectedBase;
 }
 
 export async function abortBaseMerge(ctx: RepositoryContext, worktree: string): Promise<void> {
