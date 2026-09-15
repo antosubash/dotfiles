@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AppInstance } from "../app-instance/index.js";
 import { memoryDirectory, writeMemoryNote } from "../project-memory.js";
-import { loadQaManifest } from "../qa-manifest.js";
+import { loadWorkerQaManifest } from "../qa-manifest-source.js";
 import type { GitHubIssue } from "../types.js";
 import { worktreeUiSurface } from "../ui-surface.js";
 import type { WorkerContext } from "./shared.js";
@@ -23,7 +23,7 @@ export async function withAppInstance<T>(
   needsInstance: boolean | (() => Promise<boolean>),
   fn: (instance: AppInstance | null) => Promise<T>,
 ): Promise<T> {
-  const manifest = await loadQaManifest(worktree, ctx.config.qaManifestPath);
+  const manifest = await loadWorkerQaManifest(ctx.config, worktree);
   // The need check inspects the worktree's diff; it is only consulted once a launcher exists to run.
   if (!manifest?.launch || !(typeof needsInstance === "function" ? await needsInstance() : needsInstance)) return await fn(null);
   const instance = await ctx.appInstances.start(worktree, manifest, {

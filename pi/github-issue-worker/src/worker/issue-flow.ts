@@ -5,7 +5,7 @@ import {
   pullRequestBody,
   pullRequestTitle,
 } from "../prompts.js";
-import { loadQaManifest } from "../qa-manifest.js";
+import { loadWorkerQaManifest } from "../qa-manifest-source.js";
 import type { GitHubIssue, IssueJob } from "../types.js";
 import {
   finalizeEvidence,
@@ -131,7 +131,7 @@ export async function implementIssue(ctx: WorkerContext, issue: GitHubIssue, job
     looksLikeUiTask(`${issue.title}\n${issue.body}`);
   if (visual) ctx.state.requestVisualEvidence(issue.number);
   let evidence: EvidenceRun | null = null;
-  const manifest = await loadQaManifest(worktree.path, ctx.config.qaManifestPath);
+  const manifest = await loadWorkerQaManifest(ctx.config, worktree.path);
 
   let finalText = "Recovered an implementation commit after a worker restart.";
   const changedBeforeRun = await ctx.repository.changedFiles(worktree.path);

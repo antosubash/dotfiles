@@ -11,7 +11,7 @@ import {
 import type { MediaType } from "../media.js";
 import { loadProjectMemory } from "../project-memory.js";
 import { buildUiVerificationPrompt } from "../prompts.js";
-import { loadQaManifest } from "../qa-manifest.js";
+import { loadWorkerQaManifest } from "../qa-manifest-source.js";
 import type { IssueJob } from "../types.js";
 import {
   errorText,
@@ -83,7 +83,7 @@ export async function runUiVerification(
         issueNumber: job.issueNumber,
         prNumber,
         evidenceDir: evidence.relativeRunDir,
-        qaManifest: await loadQaManifest(worktree, ctx.config.qaManifestPath),
+        qaManifest: await loadWorkerQaManifest(ctx.config, worktree),
         instance,
         memory: await loadProjectMemory(ctx.config),
       }),

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { buildCiFailurePrompt, commitMessage } from "../prompts.js";
-import { loadQaManifest } from "../qa-manifest.js";
+import { loadWorkerQaManifest } from "../qa-manifest-source.js";
 import type { IssueJob, PullRequestChecks } from "../types.js";
 import {
   createTrackedEvidence,
@@ -98,7 +98,7 @@ export async function handleCiFailure(
         attempt,
         failures: checks.failures,
         evidenceDir: evidence?.relativeRunDir ?? null,
-        qaManifest: await loadQaManifest(worktree.path, ctx.config.qaManifestPath),
+        qaManifest: await loadWorkerQaManifest(ctx.config, worktree.path),
       }),
       logFile: join(ctx.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
       visualVerification: ciVisual,

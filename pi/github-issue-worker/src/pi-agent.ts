@@ -18,6 +18,7 @@ import {
 import { cgroupController, ownCgroupPath, type CgroupController } from "./agent/cgroup.js";
 import { openIsolation, type Isolation } from "./agent/isolation.js";
 import { activeCommandProcessGroupPath } from "./agent/process-group.js";
+import { privateQaManifestPath } from "./qa-manifest-source.js";
 
 interface AgentRunOptions {
   worktree: string;
@@ -113,7 +114,7 @@ export class PiAgentRunner {
           dockerAccess,
           bashOperations,
           sandboxed: isolation.sandboxed,
-          credentialPaths: [this.config.agentDir],
+          credentialPaths: [this.config.agentDir, privateQaManifestPath(this.config)],
           ...(options.verification ? { verification: options.verification } : {}),
         })],
       });

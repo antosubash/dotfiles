@@ -8,7 +8,7 @@ import type { AppInstance } from "./app-instance/index.js";
 import type { PiAgentRunner } from "./pi-agent.js";
 import { buildUiVerificationPrompt } from "./prompts.js";
 import { loadProjectMemory } from "./project-memory.js";
-import { loadQaManifest } from "./qa-manifest.js";
+import { loadWorkerQaManifest } from "./qa-manifest-source.js";
 import { QaReportingError, assertQaExecution } from "./qa-receipts.js";
 import { worktreeUiSurface } from "./ui-surface.js";
 import type { GitHubIssue, VerificationEvidence } from "./types.js";
@@ -195,7 +195,7 @@ is unavailable, return blocked with an exact reason, never skipped/passed. Missi
 justify invented tests or a mock UI: use a truthful documented behavior check or report blocked.
 ${this.config.sandbox || instance ? "" : "A backend or service that is merely not running is not an unavailable dependency: start it with the repository's documented launcher (isolated instance, run-unique database/cache names), and report blocked only with the exact launch failure.\n"}
 ${ui ? "This task requires browser QA." : "Determine whether the changed surface is UI; if so, browser QA is mandatory."}
-${buildUiVerificationPrompt({ config: this.config, issueNumber: issue.number, prNumber: null, evidenceDir, qaManifest: await loadQaManifest(worktree, this.config.qaManifestPath), instance, memory: await loadProjectMemory(this.config) })}
+${buildUiVerificationPrompt({ config: this.config, issueNumber: issue.number, prNumber: null, evidenceDir, qaManifest: await loadWorkerQaManifest(this.config, worktree), instance, memory: await loadProjectMemory(this.config) })}
 The visual instructions apply ONLY to a UI surface. Non-UI issues use repository-native functional checks;
 do not launch a browser for backend, scripts, docs or configuration with no runnable UI. Evidence lives at the
 absolute private directory above, not in tracked source. For UI capture separate fresh desktop and mobile PNGs

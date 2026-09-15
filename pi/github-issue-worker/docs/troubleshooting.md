@@ -482,7 +482,8 @@ the error), `auth-setup.log`, and `instance.json` once it got that far. In order
    produced at `auth.storageState`, or that path is not gitignored.
 
 The agent never launches while `launch` is declared; if a run still shows the agent starting the stack,
-the manifest did not load (`.pi-worker/qa.json` malformed — the worker logs the reason).
+the manifest did not load — `<data-dir>/memory/qa.json` (or the repository's `.pi-worker/qa.json`
+fallback) is malformed, a symlink, or group/world writable; the run's error names the reason.
 
 ### `⚠️ Post-resolution verification failed` after a conflict resolution
 

@@ -3,7 +3,7 @@ import { removeExpiredEvidence } from "../evidence.js";
 import { isActionableFeedback, parseWorkerCommand } from "../github.js";
 import { loadProjectMemory } from "../project-memory.js";
 import { buildFeedbackPrompt, commitMessage } from "../prompts.js";
-import { loadQaManifest } from "../qa-manifest.js";
+import { loadWorkerQaManifest } from "../qa-manifest-source.js";
 import type { IssueJob, PullRequestFeedback } from "../types.js";
 import {
   createTrackedEvidence,
@@ -149,7 +149,7 @@ export async function handleFeedback(
   if (visualRequested) ctx.state.requestVisualEvidence(job.issueNumber);
   const gifRequested = visualRequested;
   const dockerRequested = ctx.config.allowDocker;
-  const manifest = await loadQaManifest(worktree.path, ctx.config.qaManifestPath);
+  const manifest = await loadWorkerQaManifest(ctx.config, worktree.path);
   // With a manifest launch the controller owns the instance and capture moves to the visual stage.
   let evidence = visualRequested && !manifest?.launch
     ? await createTrackedEvidence(ctx, worktree.path, job.issueNumber, job.prNumber)

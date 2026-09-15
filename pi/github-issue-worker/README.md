@@ -332,13 +332,19 @@ conflict resolution, `/pi retry` re-queues that resolution for the next poll (a 
 the PR's head and base commits and would otherwise never re-run); on a PR blocked by CI repair it re-opens
 the failed head. Commands older than the latest blocked state are ignored.
 
-## Repository QA manifest
+## QA manifest
 
-Repositories may provide a strict, read-only `.pi-worker/qa.json` manifest (override with
-`PI_WORKER_QA_MANIFEST`). Version 1 can name the Aspire AppHost/resources, truthful preview routes, and
-validation commands represented as argument arrays rather than shell strings. The worker uses this trusted
-metadata to classify the least expensive truthful workflow, perform a PNG capability preflight before UI
-implementation, resolve Aspire runtime URLs, and avoid rediscovering commands on every issue.
+The QA manifest is operator configuration for one repository, and it stays with the operator: the worker
+reads **`<data-dir>/memory/qa.json`** — private to the profile, mode `0600`, never committed to the
+repository — before it looks for the repository's own `.pi-worker/qa.json` (override with
+`PI_WORKER_QA_MANIFEST`), which remains a fallback for profiles that keep it there. Both are the same
+strict format. Version 1 can name the Aspire AppHost/resources, truthful preview routes, and validation
+commands represented as argument arrays rather than shell strings. The worker uses this trusted metadata to
+classify the least expensive truthful workflow, perform a PNG capability preflight before UI implementation,
+resolve Aspire runtime URLs, and avoid rediscovering commands on every issue. Paths inside the manifest
+(`aspire.apphost`, `launch.argv`, `auth.storageState`) are repository-relative whichever file they come
+from; the private file is refused if it is a symlink, over 64 KiB, or group/world writable, and agent bash
+is policy-blocked from naming its path (the controller executes `launch.argv`).
 
 Three further sections turn the facts agents otherwise rediscover on every run into a declared procedure —
 the difference, on a real .NET/Aspire repository, between a verifier that launches, waits, and logs in the
@@ -390,8 +396,8 @@ shells) the process-group kill is the fallback.
 
 ## Project memory
 
-`<data-dir>/memory/` holds notes that survive from one run to the next on the same repository: one durable
-fact per file (`launcher-timing.md`, `flaky-moderation-test.md`; names match `^[a-z0-9][a-z0-9-]*\.md$`,
+`<data-dir>/memory/` holds notes that survive from one run to the next on the same repository (and, beside
+them, the private `qa.json` above — not a note, never rendered): one durable fact per file (`launcher-timing.md`, `flaky-moderation-test.md`; names match `^[a-z0-9][a-z0-9-]*\.md$`,
 ≤ 4 KB, ≤ 40 files), first line `# title`. The implementer, feedback, visual and verifier prompts receive a
 capped index (title and first two body lines of each note, newest first, ≤ 6 KB) with the directory path and
 the saving rules: environment and repository facts only, update instead of duplicate, never issue-specific
@@ -401,7 +407,7 @@ other repository text, as guidance and never as evidence. The instance lifecycle
 after each launch.
 
 The controller rejects oversized, malformed, unknown-key, traversal, absolute-path, and symlinked
-manifests. `.pi-worker` is protected from agent writes by default. Component previews may use representative
+manifests. `.pi-worker` is protected from agent writes by default, and so is the private manifest. Component previews may use representative
 props only when they import the exact production component, configuration, and styles; preview-only markup,
 CSS, or expected geometry is false evidence.
 

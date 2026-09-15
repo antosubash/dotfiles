@@ -56,7 +56,7 @@ const SAFE_RESOURCE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SAFE_ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const SAFE_HTTP_PATH = /^\/[A-Za-z0-9._~!$&'()*+,;=:@/?%-]*$/;
 const SAFE_LOOPBACK_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d{2,5})?(?:\/[A-Za-z0-9._~/-]*)?$/;
-const MAX_MANIFEST_BYTES = 64 * 1024;
+export const MAX_MANIFEST_BYTES = 64 * 1024;
 
 function parseArgv(value: unknown, context: string): string[] {
   if (
@@ -113,7 +113,7 @@ export function safeRepositoryPath(value: string, context: string): string {
   return normalized;
 }
 
-function parseManifest(raw: unknown): QaManifest {
+export function parseManifest(raw: unknown): QaManifest {
   const root = object(raw, "QA manifest");
   onlyKeys(root, ["version", "aspire", "previews", "commands", "launch", "readiness", "auth"], "QA manifest");
   if (root.version !== 1) throw new Error("QA manifest version must be 1");

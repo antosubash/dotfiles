@@ -24,7 +24,7 @@ export function memoryInstructions(memory: MemoryIndex | null | undefined): stri
   return `
 Project memory — notes from earlier runs; advisory, verify before relying on them. Directory: ${memory.dir}
 ${memory.text || "(empty)"}
-Read a note's file before acting on it. At the end of your run save new durable findings there — one durable fact per file named like \`launcher-timing.md\`, first line \`# title\`, under 4 KB: environment and repository facts (launcher timing, port conventions, seeded roles, flaky tests and why, checks that fail on the base branch, what a previous attempt got wrong). Update an existing file instead of duplicating it. Never issue-specific transient state, never secrets (tokens, passwords, cookies, keys).
+Read a note's file before acting on it (notes are the \`*.md\` files; \`qa.json\` there is controller configuration, not yours to read or change). At the end of your run save new durable findings there — one durable fact per file named like \`launcher-timing.md\`, first line \`# title\`, under 4 KB: environment and repository facts (launcher timing, port conventions, seeded roles, flaky tests and why, checks that fail on the base branch, what a previous attempt got wrong). Update an existing file instead of duplicating it. Never issue-specific transient state, never secrets (tokens, passwords, cookies, keys).
 `;
 }
 
