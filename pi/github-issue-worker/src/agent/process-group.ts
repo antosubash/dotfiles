@@ -125,15 +125,32 @@ export function createBashOperations(
   { sandbox, shutdownSignal, environmentOverrides = {}, cgroups = cgroupController(null) }: BashOperationOptions,
 ): BashOperations {
   let sequence = 0;
+  // The sequence restarts with every agent run, while a child that a previous run could not remove (still
+  // populated past its kill timeout) keeps its name under the same root; its name is skipped rather than
+  // reused, so those leftover processes are never fenced together with this call's.
+  const createChildCgroup = async (): Promise<string | null> => {
+    for (;;) {
+      sequence += 1;
+      try {
+        return await cgroups.createChild(`bash-${sequence}`);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+    }
+  };
   return {
     async exec(command, cwd, { onData, signal, timeout }) {
       const wrappedCommand = sandbox ? await SandboxManager.wrapWithSandbox(command) : command;
-      sequence += 1;
       // The shim moves the shell into the child cgroup before exec, so every descendant — `setsid`,
       // `nohup`, double forks, orchestrator children — inherits it and none can outlive the call.
-      const childCgroup = await cgroups.createChild(`bash-${sequence}`);
+      const childCgroup = await createChildCgroup();
       const [executable = "bash", ...args] = wrapInCgroup(childCgroup, ["bash", "-c", wrappedCommand]);
       return await new Promise((resolveResult, reject) => {
+        // Neither early return below runs the exit/close handlers that otherwise remove `childCgroup`, so
+        // both must clean it up themselves.
+        const discardChildCgroup = () => {
+          if (childCgroup) void cgroups.killAndRemove(childCgroup).catch(() => undefined);
+        };
         const child = spawn(executable, args, {
           cwd,
           detached: true,
@@ -141,6 +158,7 @@ export function createBashOperations(
           stdio: ["ignore", "pipe", "pipe"],
         });
         if (!child.pid) {
+          discardChildCgroup();
           reject(new Error("Failed to start bash process"));
           return;
         }
@@ -148,6 +166,7 @@ export function createBashOperations(
           writeFileSync(processGroupFile, `${child.pid}\n`, "utf8");
         } catch (error) {
           child.kill("SIGKILL");
+          discardChildCgroup();
           reject(error);
           return;
         }
@@ -161,8 +180,12 @@ export function createBashOperations(
           })();
           return stopPromise;
         };
+        // Fire-and-forget trigger: the settling close/exit/error handler awaits stopCurrentProcessGroup()
+        // itself and surfaces its rejection as the call's own error, but killAndRemove can also reject on
+        // its own (a cgroup that will not empty within its timeout) with nothing else awaiting this call —
+        // left as `void`, that would crash the process as an unhandled rejection.
         const abort = () => {
-          void stopCurrentProcessGroup();
+          stopCurrentProcessGroup().catch((error) => console.error("bash process-group cleanup failed", error));
         };
         const cleanupListeners = () => {
           if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -172,7 +195,7 @@ export function createBashOperations(
         if (timeout !== undefined && timeout > 0) {
           timeoutHandle = setTimeout(() => {
             timedOut = true;
-            void stopCurrentProcessGroup();
+            abort();
           }, timeout * 1000);
           timeoutHandle.unref();
         }
@@ -181,7 +204,7 @@ export function createBashOperations(
         signal?.addEventListener("abort", abort, { once: true });
         shutdownSignal?.addEventListener("abort", abort, { once: true });
         if (signal?.aborted || shutdownSignal?.aborted) {
-          void stopCurrentProcessGroup();
+          abort();
         }
         child.on("error", (error) => {
           cleanupListeners();

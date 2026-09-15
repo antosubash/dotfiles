@@ -14,11 +14,13 @@ test("the index lists valid notes newest first with title and two body lines, ca
     await writeFile(join(dir, "Bad Name.md"), "# nope\n");
     await writeFile(join(dir, "leak.md"), "# token\nghp_abcdefghijklmnopqrstuvwxyz0123456789\n");
     await writeFile(join(dir, "huge.md"), `# big\n${"x".repeat(5000)}\n`);
+    await writeFile(join(dir, "qa.json"), "{}\n");
     const index = await projectMemoryIndex(dir);
     assert.match(index.text, /^- flaky-moderation-test\.md — moderation-lifecycle spec is flaky under load\n  Retry once/m);
     assert.ok(index.text.indexOf("flaky-moderation-test.md") < index.text.indexOf("launcher-timing.md"));
     assert.match(index.text, /  Aspire reports Running after 18 s\.\n  Frontend answers after ~60 s more\.\n/);
     assert.doesNotMatch(index.text, /ignored third line|ghp_|nope|big/);
+    // The private QA manifest shares this directory by design; it is neither rendered nor reported as skipped.
     assert.deepEqual(index.skipped.sort(), ["Bad Name.md", "huge.md", "leak.md"]);
   } finally {
     await rm(dir, { recursive: true, force: true });

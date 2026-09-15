@@ -76,7 +76,15 @@ export async function handleFeedback(
   // conflict prefix on lastError is the specific signal. Forgetting the processed event re-queues the
   // resolution for the next tick; the agent is never handed a bare "retry" as feedback.
   if (onlyRetry && job.lastError?.startsWith(CONFLICT_BLOCK_PREFIX)) {
-    const mergeState = await ctx.github.getPullRequestMergeState(job.prNumber!);
+    let mergeState;
+    try {
+      mergeState = await ctx.github.getPullRequestMergeState(job.prNumber!);
+    } catch (error) {
+      // A transient GitHub failure here must not escape and abort every other job's feedback for this
+      // tick; the comment is left unprocessed so this retry is picked up again next tick.
+      ctx.state.setStatus(job.issueNumber, job.status, `Conflict retry pending: ${errorText(error)}`);
+      return;
+    }
     ctx.state.forgetProcessed(mergeConflictEventKey(job.prNumber!, mergeState));
     ctx.state.setStatus(job.issueNumber, "pr_open");
     for (const item of feedback) ctx.state.markProcessed(job.issueNumber, item.eventKey);
@@ -189,7 +197,7 @@ export async function handleFeedback(
       }
       if (evidence) await finalizeEvidence(ctx, evidence);
       return await verifyImplementation(ctx, job, worktree.path, issue, instance);
-    });
+    }, manifest);
     const gifCreated = evidence !== null;
     controllerPhase = true;
     const evidenceNote = await visualEvidenceNote(

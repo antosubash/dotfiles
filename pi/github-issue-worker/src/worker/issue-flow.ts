@@ -163,7 +163,7 @@ export async function implementIssue(ctx: WorkerContext, issue: GitHubIssue, job
       }
     }
     return await verifyImplementation(ctx, job, worktree.path, issue, instance);
-  });
+  }, manifest);
   const changedFiles = await ctx.repository.changedFiles(worktree.path);
   let controllerMutationExpected = false;
   try {

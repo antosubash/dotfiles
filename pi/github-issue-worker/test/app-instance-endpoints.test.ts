@@ -18,6 +18,18 @@ test("endpointsFromAspire maps manifest keys to running resources' first URL", (
   assert.deepEqual(missing, ["api"]);
 });
 
+test("endpointsFromAspire picks the browser binding by name, not by position", () => {
+  const { endpoints } = endpointsFromAspire(
+    [
+      { displayName: "api", state: "Running", urls: [{ name: "internal", url: "tcp://localhost:5000" }, { name: "https", url: "https://localhost:7001" }, { name: "http", url: "http://localhost:5001" }] },
+      { displayName: "web", state: "Running", urls: [{ name: "grpc", url: "tcp://localhost:9000" }, { url: "http://localhost:3000" }] },
+    ],
+    { api: "api", web: "web" },
+    ["api", "web"],
+  );
+  assert.deepEqual(endpoints, { api: "https://localhost:7001", web: "http://localhost:3000" });
+});
+
 test("resolveEndpoints polls describe until every required key is running", async () => {
   let calls = 0;
   const describe = async () => {

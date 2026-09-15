@@ -79,6 +79,21 @@ test("each bash call gets its own child cgroup and it is removed afterwards", as
   }
 });
 
+test("a child cgroup an earlier run could not remove is skipped, never reused", async (context) => {
+  if (platform() === "win32") context.skip("POSIX process groups are not available on Windows");
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-bash-cg-stale-"));
+  try {
+    await mkdir(join(root, "bash-1"));
+    const cgroups = fakeController(root, () => []);
+    const operations = createBashOperations(activeCommandProcessGroupPath(root), { sandbox: false, cgroups });
+    await operations.exec("true", root, { onData: () => undefined, timeout: 30 });
+    assert.deepEqual(cgroups.created, ["bash-2"]);
+    assert.deepEqual((await readdir(root)).filter((name) => name.startsWith("bash-")), ["bash-1"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("processes still alive in the call's cgroup reject the call after a cgroup kill", async (context) => {
   if (platform() === "win32") context.skip("POSIX process groups are not available on Windows");
   const root = await mkdtemp(join(tmpdir(), "pi-worker-bash-cg-left-"));

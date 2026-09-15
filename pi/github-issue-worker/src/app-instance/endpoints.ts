@@ -23,6 +23,20 @@ export const describeAspire: DescribeAspire = async (worktree, apphost) => {
   return Array.isArray(parsed.resources) ? parsed.resources : [];
 };
 
+/**
+ * A resource can expose several named bindings (`https` and `http`, or an internal one first); the
+ * browser-reachable one is chosen by name, not by position, so Aspire's ordering cannot silently point
+ * readiness probes and the agent at the wrong endpoint.
+ */
+export function browserUrl(urls: AspireResource["urls"]): string | undefined {
+  if (!urls || urls.length === 0) return undefined;
+  for (const name of ["https", "http"]) {
+    const named = urls.find((entry) => entry.name?.toLowerCase() === name && entry.url);
+    if (named) return named.url;
+  }
+  return (urls.find((entry) => /^https?:\/\//i.test(entry.url)) ?? urls[0])?.url || undefined;
+}
+
 export function endpointsFromAspire(
   resources: AspireResource[],
   wanted: Record<string, string>,
@@ -32,7 +46,7 @@ export function endpointsFromAspire(
   const missing: string[] = [];
   for (const [key, displayName] of Object.entries(wanted)) {
     const resource = resources.find((entry) => entry.displayName === displayName);
-    const url = resource?.state === "Running" ? resource.urls?.[0]?.url : undefined;
+    const url = resource?.state === "Running" ? browserUrl(resource.urls) : undefined;
     if (url) endpoints[key] = url;
     else if (required.includes(key)) missing.push(key);
   }

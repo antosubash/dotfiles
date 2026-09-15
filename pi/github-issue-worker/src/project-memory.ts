@@ -3,6 +3,8 @@ import { join } from "node:path";
 import type { WorkerConfig } from "./config.js";
 
 export const MEMORY_FILE = /^[a-z0-9][a-z0-9-]{0,63}\.md$/;
+/** The operator's private QA manifest shares the memory directory (see qa-manifest-source.ts); it is not a note. */
+export const PRIVATE_QA_MANIFEST_FILE = "qa.json";
 export const MEMORY_FILE_BYTES = 4096;
 export const MEMORY_FILES = 40;
 export const MEMORY_INDEX_BYTES = 6144;
@@ -32,18 +34,21 @@ export async function projectMemoryIndex(dir: string): Promise<MemoryIndex> {
   const skipped: string[] = [];
   const notes: Array<{ name: string; mtime: number; title: string; lines: string[] }> = [];
   for (const name of await readdir(dir).catch(() => [] as string[])) {
+    if (name === PRIVATE_QA_MANIFEST_FILE) continue;
     if (!MEMORY_FILE.test(name)) {
       skipped.push(name);
       continue;
     }
     const path = join(dir, name);
-    const info = await stat(path);
-    if (!info.isFile() || info.size > MEMORY_FILE_BYTES) {
+    // Another run can delete or rewrite a note between this listing and the read below; treat that race
+    // the same as any other reason to skip rather than let it fail the whole index.
+    const info = await stat(path).catch(() => null);
+    if (!info || !info.isFile() || info.size > MEMORY_FILE_BYTES) {
       skipped.push(name);
       continue;
     }
-    const content = await readFile(path, "utf8");
-    if (looksLikeSecret(content)) {
+    const content = await readFile(path, "utf8").catch(() => null);
+    if (content === null || looksLikeSecret(content)) {
       skipped.push(name);
       continue;
     }

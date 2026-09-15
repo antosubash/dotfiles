@@ -85,8 +85,14 @@ export function cgroupController(root: string | null): CgroupController {
       const removed: string[] = [];
       for (const entry of await readdir(root!, { withFileTypes: true })) {
         if (!entry.isDirectory() || !prefixes.some((prefix) => entry.name.startsWith(prefix))) continue;
-        await killAndRemove(join(root!, entry.name));
-        removed.push(entry.name);
+        // One child stuck past its kill timeout must not abort the sweep — a caller sweeping at startup
+        // would otherwise never get past the stale entry to clean up the rest, or start at all.
+        try {
+          await killAndRemove(join(root!, entry.name));
+          removed.push(entry.name);
+        } catch {
+          // Left for the next sweep; still-live processes there are not this call's problem to solve.
+        }
       }
       return removed;
     },

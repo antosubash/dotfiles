@@ -71,9 +71,11 @@ export async function runUiVerification(
 ): Promise<EvidenceRun> {
   ctx.state.requestVisualEvidence(job.issueNumber);
   const evidence = await createTrackedEvidence(ctx, worktree, job.issueNumber, prNumber);
-  await instance?.ensureCurrent();
   let result;
   try {
+    // A relaunch failure here is as terminal to this run as the agent call below, so it must be recorded
+    // against the same tracked evidence run rather than left "pending" for a later sweep to reconcile.
+    await instance?.ensureCurrent();
     result = await ctx.agent.run({
       worktree,
       sessionDir: join(ctx.config.dataDir, "sessions", `issue-${job.issueNumber}`),

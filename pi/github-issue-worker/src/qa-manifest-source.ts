@@ -1,7 +1,7 @@
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkerConfig } from "./config.js";
-import { memoryDirectory } from "./project-memory.js";
+import { memoryDirectory, PRIVATE_QA_MANIFEST_FILE } from "./project-memory.js";
 import { loadQaManifest, MAX_MANIFEST_BYTES, parseManifest, type QaManifest } from "./qa-manifest.js";
 
 /**
@@ -11,7 +11,7 @@ import { loadQaManifest, MAX_MANIFEST_BYTES, parseManifest, type QaManifest } fr
  * `.pi-worker/qa.json` remains a fallback for profiles that keep it there.
  */
 export function privateQaManifestPath(config: Pick<WorkerConfig, "dataDir">): string {
-  return join(memoryDirectory(config), "qa.json");
+  return join(memoryDirectory(config), PRIVATE_QA_MANIFEST_FILE);
 }
 
 /** Reads and validates the private manifest; null when there is none. A malformed file fails closed. */
