@@ -65,12 +65,17 @@ test("all evidence runs remain recoverable and symlinked ancestors fail closed",
   try {
     const runsRoot = join(worktree, ".qa/issues/4/pr-9/runs");
     await writeFile(join(outside, "proof.png"), "not relevant");
-    await mkdir(join(runsRoot, "run-a"), { recursive: true });
-    await mkdir(join(runsRoot, "run-b"), { recursive: true });
+    await mkdir(join(runsRoot, "20260821T103000Z"), { recursive: true });
+    await mkdir(join(runsRoot, "20260821T103100Z"), { recursive: true });
+    for (const name of ["20260906T173902Z-retry", "scratch", "20260821T103100Z.tmp"]) {
+      await mkdir(join(runsRoot, name));
+    }
     assert.deepEqual(
       (await listEvidenceRuns(worktree, 4, 9)).map((run) => run.runDir.split("/").at(-1)),
-      ["run-a", "run-b"],
+      ["20260821T103000Z", "20260821T103100Z"],
     );
+    assert.equal((await findLatestEvidenceRun(worktree, 4, 9))?.runId, "20260821T103100Z");
+    assert.equal((await stat(join(runsRoot, "20260906T173902Z-retry"))).isDirectory(), true);
     const linked = join(worktree, "linked-run");
     await symlink(outside, linked);
     await assert.rejects(() => collectEvidenceAttachments(linked), /contains a symlink/);

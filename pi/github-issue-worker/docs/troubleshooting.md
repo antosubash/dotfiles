@@ -501,9 +501,10 @@ worker skips (bad name, over 4 KB, secret-looking content) is named in the worke
 ### Retrying a blocked base-branch conflict resolution
 
 Post a trusted `/pi retry` on the PR. The controller forgets the processed
-`merge-conflict:<pr>:<base>:<head>:<base-oid>` event and re-runs the resolution on its next poll; the PR's
-base commit as GitHub reports it (`baseRefOid`) does not move when the base branch does, so without the
-retry the block would persist until the PR head changed.
+`merge-conflict:<pr>:<base>:<head>:<base-oid>` event and re-runs the resolution on its next poll. Its base
+OID is the current trusted GitHub branch-ref target rather than the PR's frozen `baseRefOid`, so a live
+base-branch move automatically gets a fresh event; use `/pi retry` when the same head and base still need
+another attempt.
 
 ## Draft PR CI is failing or unattended
 

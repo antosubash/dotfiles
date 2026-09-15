@@ -229,6 +229,24 @@ export async function getPullRequestLifecycle(
   };
 }
 
+async function getBranchRevision(
+  gh: GhRunner,
+  config: WorkerConfig,
+  branch: string,
+): Promise<string> {
+  const branchPath = branch.split("/").map(encodeURIComponent).join("/");
+  const output = await gh(["api", `/repos/${config.repository}/git/ref/heads/${branchPath}`]);
+  const ref = JSON.parse(output) as { object?: { sha?: unknown; type?: unknown } };
+  if (
+    typeof ref.object?.sha !== "string" ||
+    !/^[0-9a-f]{40,64}$/i.test(ref.object.sha) ||
+    ref.object.type !== "commit"
+  ) {
+    throw new Error(`GitHub returned an invalid target for base branch ${branch}`);
+  }
+  return ref.object.sha;
+}
+
 export async function getPullRequestMergeState(
   gh: GhRunner,
   config: WorkerConfig,
@@ -245,14 +263,14 @@ export async function getPullRequestMergeState(
   ]);
   const state = JSON.parse(output) as {
     baseRefName: string;
-    baseRefOid: string;
     headRefOid: string;
     mergeable: PullRequestMergeState["mergeable"];
     mergeStateStatus: string;
   };
   return {
     headSha: state.headRefOid,
-    baseSha: state.baseRefOid,
+    // GitHub's PR baseRefOid is frozen until the PR updates; resolve the live branch ref independently.
+    baseSha: await getBranchRevision(gh, config, state.baseRefName),
     baseBranch: state.baseRefName,
     mergeable: state.mergeable,
     mergeStateStatus: state.mergeStateStatus,

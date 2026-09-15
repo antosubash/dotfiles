@@ -105,7 +105,16 @@ export function visualInstructions(
   manifest?: QaManifest | null,
   instance?: AppInstanceSummary | null,
 ): string {
-  if (!evidenceDir) return "";
+  if (!evidenceDir) {
+    if (!manifest?.launch) return "";
+    return `
+Controller-owned application lifecycle:
+- This is the implementation/preparation phase, including verification-only feedback. The controller has NOT started the QA application yet; it starts it after you return, then runs final visual checks and independent QA against that shared instance.
+- Perform the requested source work and relevant static/unit checks now. For verification-only feedback, inspect and run appropriate existing checks without changing tracked files.
+- Do not launch the application, look for a controller endpoint, guess ports from old sessions, or reuse historical browser evidence in this phase. Do not return BLOCKED solely because no running application or fresh screenshots are available yet.
+- Report browser checks as pending the controller's next stage, never as passed or waived. Missing requirements, genuine source/test failures, and other real blockers must still be reported. The controller's visual and independent QA gates remain mandatory.
+`;
+  }
   if (instance) return visualInstructionsForInstance(config, evidenceDir, gif, manifest, instance);
   return `
 Visual verification is requested. Treat verification as part of completion, but do not fake evidence.
