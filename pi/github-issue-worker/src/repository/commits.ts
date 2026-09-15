@@ -43,15 +43,21 @@ export async function commitAndPush(
   return { commit, files: stagedFiles };
 }
 
+/**
+ * Discard everything the agent left in the working tree: tracked edits, untracked files and — unless
+ * `ignored: false` — ignored build outputs, with `.qa` evidence always retained. An abandoned merge
+ * resolution keeps its ignored outputs (node_modules, obj/) so the retry does not start from a cold tree.
+ */
 export async function clearAgentChanges(
   ctx: RepositoryContext,
   worktree: string,
   branch: string,
+  options: { ignored?: boolean } = {},
 ): Promise<void> {
   await validateWorktree(ctx, worktree, branch);
   try {
     await ctx.run("git", ["reset", "--hard", "HEAD"], { cwd: worktree });
-    await ctx.run("git", ["clean", "-fdx", "-e", ".qa"], { cwd: worktree });
+    await ctx.run("git", ["clean", options.ignored === false ? "-fd" : "-fdx", "-e", ".qa"], { cwd: worktree });
   } catch (cleanupError) {
     try {
       await ctx.run("git", ["worktree", "remove", "--force", worktree], {

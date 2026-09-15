@@ -39,12 +39,23 @@ export interface WorkerConfig {
   playwrightState: string | null;
   qaRetentionDays: number;
   agentDir: string;
+  /**
+   * Whether agent bash commands run inside the Anthropic Sandbox Runtime (bwrap on Linux). Off by
+   * default for now: the OS sandbox cannot reach host-loopback dev services or toolchain caches under
+   * $HOME, which blocks every repository stack the agents must start. The tool-level policy, secret
+   * environment scrubbing, and the verifier's source fingerprint still apply either way.
+   */
+  sandbox: boolean;
   sandboxAllowedDomains: readonly string[];
   allowDocker: boolean;
   dockerSocket: string | null;
   publishEvidence: boolean;
   evidenceBranch: string;
   qaManifestPath: string;
+  /** Seconds allowed for launch + endpoint resolution + readiness of a harness-owned app instance. */
+  appStartTimeoutSeconds: number;
+  /** Refuse to launch an app instance when MemAvailable is below this many MB: a clear block, not ten minutes of swap. */
+  appMinAvailableMb: number;
 }
 
 function expandPath(value: string, home = homedir()): string {
@@ -234,6 +245,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       14,
     ),
     agentDir: expandPath(env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent", home),
+    sandbox: booleanFlag("PI_WORKER_SANDBOX", env.PI_WORKER_SANDBOX ?? "0"),
     sandboxAllowedDomains: [...new Set(sandboxAllowedDomains)],
     allowDocker,
     dockerSocket,
@@ -246,5 +258,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       env.PI_WORKER_QA_MANIFEST?.trim() || ".pi-worker/qa.json",
       "PI_WORKER_QA_MANIFEST",
     ),
+    appStartTimeoutSeconds: positiveInteger("PI_WORKER_APP_START_TIMEOUT", env.PI_WORKER_APP_START_TIMEOUT || "", 900),
+    appMinAvailableMb: positiveInteger("PI_WORKER_APP_MIN_AVAILABLE_MB", env.PI_WORKER_APP_MIN_AVAILABLE_MB || "", 4096),
   };
 }

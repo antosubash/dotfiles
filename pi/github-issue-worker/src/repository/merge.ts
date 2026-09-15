@@ -84,20 +84,29 @@ export async function beginBaseMerge(
   return { baseSha, conflicts, alreadyCurrent: false, mergeInProgress };
 }
 
-export async function finishBaseMerge(
-  ctx: RepositoryContext,
-  worktree: string,
-  branch: string,
-  issueNumber: number,
-  expectedHead: string,
-): Promise<void> {
-  await validateWorktree(ctx, worktree, branch);
+async function mergeHeadRevision(ctx: RepositoryContext, worktree: string): Promise<string> {
   const mergeHead = await ctx.run("git", ["rev-parse", "--verify", "-q", "MERGE_HEAD"], {
     cwd: worktree,
     allowFailure: true,
   });
   if (mergeHead.exitCode !== 0) throw new Error("No base merge is in progress");
-  const trustedMergeBase = mergeHead.stdout.trim();
+  return mergeHead.stdout.trim();
+}
+
+/**
+ * Stage the agent's working-tree resolution of an in-progress base merge and prove it is complete: no
+ * conflict markers, no unmerged index entries, no protected path changed beyond the trusted base. The
+ * agent cannot run `git add` itself, so until this runs `git status` still shows the merge's `UU` entries
+ * — and the independent verifier, which inspects the task diff, rightly refuses to accept a tree in that
+ * state. Stage first, verify second, commit last.
+ */
+export async function stageBaseMerge(
+  ctx: RepositoryContext,
+  worktree: string,
+  branch: string,
+): Promise<void> {
+  await validateWorktree(ctx, worktree, branch);
+  const trustedMergeBase = await mergeHeadRevision(ctx, worktree);
   const conflicts = await unmergedFiles(ctx, worktree);
   for (const path of conflicts) {
     const content = await readFile(join(worktree, path), "utf8").catch(() => "");
@@ -136,6 +145,21 @@ export async function finishBaseMerge(
       throw new Error(`Protected path differs from the trusted base during merge: ${path}`);
     }
   }
+}
+
+/**
+ * Stage, commit, push. The stage step is repeated here so the commit holds exactly the working tree the
+ * verifiers fingerprinted (the QA verifier rejects any source mutation, so a re-stage after a passing
+ * verification changes nothing), and so a caller that never staged separately still gets every check.
+ */
+export async function finishBaseMerge(
+  ctx: RepositoryContext,
+  worktree: string,
+  branch: string,
+  issueNumber: number,
+  expectedHead: string,
+): Promise<void> {
+  await stageBaseMerge(ctx, worktree, branch);
   await ctx.run("git", ["commit", "-m", `merge: update ${ctx.config.baseBranch} for #${issueNumber}`], {
     cwd: worktree,
     timeoutMs: 5 * 60_000,

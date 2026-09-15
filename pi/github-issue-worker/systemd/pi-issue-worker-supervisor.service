@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 ExecStart=%h/.local/bin/pi-issue-worker-supervisor --config-dir %h/.config/pi-issue-worker
 Restart=on-failure
+Delegate=yes
 RestartSec=15
 TimeoutStopSec=90
 KillMode=control-group
@@ -16,6 +17,9 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=%h/.local/share/pi-issue-worker %h/.cache %h/.pi/agent %t
+# Toolchain homes an unsandboxed agent command must write (PI_WORKER_SANDBOX=0): package caches,
+# CLI state, dev-certs. Extend this line for other toolchains; "-" tolerates a missing directory.
+ReadWritePaths=-%h/.nuget -%h/.aspire -%h/.dcp -%h/.dotnet -%h/.microsoft -%h/.aspnet -%h/.local/share/pnpm -%h/.npm
 
 [Install]
 WantedBy=default.target

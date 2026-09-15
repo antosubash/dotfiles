@@ -8,7 +8,7 @@ import type { IssuePlan } from "./issue-plan.js";
 import type { PiAgentRunner } from "./pi-agent.js";
 import { buildFigmaVerificationPrompt, DESIGN_CHECKS } from "./prompts.js";
 export { DESIGN_CHECKS } from "./prompts.js";
-import { loadQaManifest } from "./qa-manifest.js";
+import { loadWorkerQaManifest } from "./qa-manifest-source.js";
 import type { GitHubIssue, VerificationEvidence } from "./types.js";
 
 export function assertBrowserExecution(paths: string[], evidence: VerificationEvidence | undefined): void {
@@ -186,7 +186,7 @@ export class FigmaVerificationService {
         verification: { readPaths: references.map((item) => item.directory), evidenceDir },
         prompt: buildFigmaVerificationPrompt({
           config: this.config, issue, references, evidenceDir, designChecks,
-          qaManifest: await loadQaManifest(worktree, this.config.qaManifestPath),
+          qaManifest: await loadWorkerQaManifest(this.config, worktree),
         }),
       });
       await writeFile(join(runDir, "verdict.txt"), result.finalText, { mode: 0o600, flag: "wx" });

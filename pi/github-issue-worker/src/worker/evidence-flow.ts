@@ -1,5 +1,6 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
+import type { AppInstance } from "../app-instance/index.js";
 import {
   collectFinalEvidenceAttachments,
   convertWebmToGif,
@@ -8,8 +9,9 @@ import {
   type EvidenceRun,
 } from "../evidence.js";
 import type { MediaType } from "../media.js";
+import { loadProjectMemory } from "../project-memory.js";
 import { buildUiVerificationPrompt } from "../prompts.js";
-import { loadQaManifest } from "../qa-manifest.js";
+import { loadWorkerQaManifest } from "../qa-manifest-source.js";
 import type { IssueJob } from "../types.js";
 import {
   errorText,
@@ -65,11 +67,15 @@ export async function runUiVerification(
   job: IssueJob,
   worktree: string,
   prNumber: number | null,
+  instance: AppInstance | null = null,
 ): Promise<EvidenceRun> {
   ctx.state.requestVisualEvidence(job.issueNumber);
   const evidence = await createTrackedEvidence(ctx, worktree, job.issueNumber, prNumber);
   let result;
   try {
+    // A relaunch failure here is as terminal to this run as the agent call below, so it must be recorded
+    // against the same tracked evidence run rather than left "pending" for a later sweep to reconcile.
+    await instance?.ensureCurrent();
     result = await ctx.agent.run({
       worktree,
       sessionDir: join(ctx.config.dataDir, "sessions", `issue-${job.issueNumber}`),
@@ -79,11 +85,14 @@ export async function runUiVerification(
         issueNumber: job.issueNumber,
         prNumber,
         evidenceDir: evidence.relativeRunDir,
-        qaManifest: await loadQaManifest(worktree, ctx.config.qaManifestPath),
+        qaManifest: await loadWorkerQaManifest(ctx.config, worktree),
+        instance,
+        memory: await loadProjectMemory(ctx.config),
       }),
       logFile: join(ctx.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
       visualVerification: true,
       dockerAccess: ctx.config.allowDocker,
+      ...(instance ? { environment: instance.environment() } : {}),
     });
   } catch (error) {
     ctx.state.setEvidenceRunStatus(
@@ -201,4 +210,23 @@ export async function publishBlockedEvidence(
   } catch (error) {
     return `\n\nQA evidence upload failed: ${errorText(error)}`;
   }
+}
+
+/**
+ * Publishes PNG/GIF/WebM attachments from any evidence directory — the independent verifier's, in
+ * particular — with the same sanitising and limits as a `.qa` run; there is no evidence-run record for it.
+ */
+export async function publishEvidenceDirectory(
+  ctx: WorkerContext,
+  prNumber: number,
+  worktree: string,
+  directory: string,
+  runId: string,
+): Promise<{ note: string; eventKey: string } | null> {
+  if (typeof ctx.github.publishEvidence !== "function") return null;
+  const { attachments, omitted } = await finalAttachments(directory);
+  if (attachments.length === 0) return null;
+  const eventKey = `evidence:${prNumber}:${runId}`;
+  const note = await ctx.github.publishEvidence(prNumber, await ctx.repository.headRevision(worktree), runId, attachments);
+  return note ? { note: `${note}${omissionNote(omitted)}`, eventKey } : null;
 }

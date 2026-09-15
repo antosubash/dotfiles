@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import { removeExpiredEvidence } from "../evidence.js";
 import { isActionableFeedback, parseWorkerCommand } from "../github.js";
+import { loadProjectMemory } from "../project-memory.js";
 import { buildFeedbackPrompt, commitMessage } from "../prompts.js";
-import { loadQaManifest } from "../qa-manifest.js";
+import { loadWorkerQaManifest } from "../qa-manifest-source.js";
 import type { IssueJob, PullRequestFeedback } from "../types.js";
 import {
   createTrackedEvidence,
@@ -12,8 +13,11 @@ import {
   visualEvidenceNote,
 } from "./evidence-flow.js";
 import { ensureJobWorktree } from "./job-worktree.js";
+import { stageNeedsInstance, withAppInstance } from "./app-stage.js";
 import { verifyImplementation } from "./verification-flow.js";
+import { mergeConflictEventKey } from "./conflict-context.js";
 import {
+  CONFLICT_BLOCK_PREFIX,
   containsUiFiles,
   errorText,
   evidenceCommentMarker,
@@ -64,11 +68,35 @@ export async function handleFeedback(
     return;
   }
 
-  const onlyCiRetry =
-    Boolean(job.ciHeadSha && job.lastError) &&
+  const onlyRetry =
     feedback.every((item) => item.source === "conversation") &&
     commands.length > 0 &&
     commands.every((command) => command === "retry");
+  // A conflict block is checked before a CI block: the job may carry an older ciHeadSha as well, and the
+  // conflict prefix on lastError is the specific signal. Forgetting the processed event re-queues the
+  // resolution for the next tick; the agent is never handed a bare "retry" as feedback.
+  if (onlyRetry && job.lastError?.startsWith(CONFLICT_BLOCK_PREFIX)) {
+    let mergeState;
+    try {
+      mergeState = await ctx.github.getPullRequestMergeState(job.prNumber!);
+    } catch (error) {
+      // A transient GitHub failure here must not escape and abort every other job's feedback for this
+      // tick; the comment is left unprocessed so this retry is picked up again next tick.
+      ctx.state.setStatus(job.issueNumber, job.status, `Conflict retry pending: ${errorText(error)}`);
+      return;
+    }
+    ctx.state.forgetProcessed(mergeConflictEventKey(job.prNumber!, mergeState));
+    ctx.state.setStatus(job.issueNumber, "pr_open");
+    for (const item of feedback) ctx.state.markProcessed(job.issueNumber, item.eventKey);
+    await ctx.github.markPullRequestOpen(job.issueNumber);
+    await ctx.github.commentPullRequest(
+      job.prNumber!,
+      "🔄 Base-branch conflict resolution retry queued.",
+    );
+    return;
+  }
+
+  const onlyCiRetry = Boolean(job.ciHeadSha && job.lastError) && onlyRetry;
   if (onlyCiRetry) {
     ctx.state.forgetProcessed(`ci-failure:${job.prNumber}:${job.ciHeadSha}`);
     ctx.state.forgetProcessed(`ci-rerun:${job.prNumber}:${job.ciHeadSha}`);
@@ -129,7 +157,9 @@ export async function handleFeedback(
   if (visualRequested) ctx.state.requestVisualEvidence(job.issueNumber);
   const gifRequested = visualRequested;
   const dockerRequested = ctx.config.allowDocker;
-  let evidence = visualRequested
+  const manifest = await loadWorkerQaManifest(ctx.config, worktree.path);
+  // With a manifest launch the controller owns the instance and capture moves to the visual stage.
+  let evidence = visualRequested && !manifest?.launch
     ? await createTrackedEvidence(ctx, worktree.path, job.issueNumber, job.prNumber)
     : null;
   ctx.state.setStatus(job.issueNumber, "addressing_review");
@@ -148,7 +178,8 @@ export async function handleFeedback(
         evidenceDir: evidence?.relativeRunDir ?? null,
         gifRequested,
         dockerAccess: dockerRequested,
-        qaManifest: await loadQaManifest(worktree.path, ctx.config.qaManifestPath),
+        qaManifest: manifest,
+        memory: await loadProjectMemory(ctx.config),
       }),
       logFile: join(ctx.config.dataDir, "logs", `issue-${job.issueNumber}.log`),
       visualVerification: evidence !== null,
@@ -159,11 +190,14 @@ export async function handleFeedback(
       await ctx.repository.clearAgentChanges(worktree.path, worktree.branch);
       throw new Error(result.finalText);
     }
-    if (!evidence && containsUiFiles(await ctx.repository.changedFiles(worktree.path))) {
-      evidence = await runUiVerification(ctx, job, worktree.path, job.prNumber!);
-    }
-    if (evidence) await finalizeEvidence(ctx, evidence);
-    result.finalText += await verifyImplementation(ctx, job, worktree.path, issue);
+    const needsInstance = () => stageNeedsInstance(ctx, issue, worktree.path, visualRequested);
+    result.finalText += await withAppInstance(ctx, worktree.path, job, needsInstance, async (instance) => {
+      if (!evidence && (visualRequested || containsUiFiles(await ctx.repository.changedFiles(worktree.path)))) {
+        evidence = await runUiVerification(ctx, job, worktree.path, job.prNumber!, instance);
+      }
+      if (evidence) await finalizeEvidence(ctx, evidence);
+      return await verifyImplementation(ctx, job, worktree.path, issue, instance);
+    }, manifest);
     const gifCreated = evidence !== null;
     controllerPhase = true;
     const evidenceNote = await visualEvidenceNote(

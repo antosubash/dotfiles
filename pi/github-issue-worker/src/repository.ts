@@ -28,6 +28,7 @@ import {
   abortBaseMerge,
   beginBaseMerge,
   finishBaseMerge,
+  stageBaseMerge,
   recoverBaseMergePush,
 } from "./repository/merge.js";
 import {
@@ -188,6 +189,10 @@ export class RepositoryManager {
     return unmergedFiles(this.ctx, worktree);
   }
 
+  stageBaseMerge(worktree: string, branch: string): Promise<void> {
+    return stageBaseMerge(this.ctx, worktree, branch);
+  }
+
   finishBaseMerge(
     worktree: string,
     branch: string,
@@ -218,8 +223,8 @@ export class RepositoryManager {
     return commitAndPush(this.ctx, worktree, branch, commitMessage);
   }
 
-  clearAgentChanges(worktree: string, branch: string): Promise<void> {
-    return clearAgentChanges(this.ctx, worktree, branch);
+  clearAgentChanges(worktree: string, branch: string, options: { ignored?: boolean } = {}): Promise<void> {
+    return clearAgentChanges(this.ctx, worktree, branch, options);
   }
 
   hasCommitsAhead(worktree: string): Promise<boolean> {

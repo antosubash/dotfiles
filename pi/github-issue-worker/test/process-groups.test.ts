@@ -9,7 +9,7 @@ import test from "node:test";
 import { loadConfig } from "../src/config.js";
 import {
   activeCommandProcessGroupPath,
-  createSandboxedBashOperations,
+  createBashOperations,
 } from "../src/pi-agent.js";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import {
@@ -54,7 +54,7 @@ test("sandboxed bash abort kills the detached descendant process group", async (
     const previousWrap = sandboxManager.wrapWithSandbox;
     sandboxManager.wrapWithSandbox = async (command) => command;
     try {
-      const operations = createSandboxedBashOperations(activeFile);
+      const operations = createBashOperations(activeFile, { sandbox: true });
       const controller = new AbortController();
       const execution = operations.exec(
         `echo $$ > ${JSON.stringify(pidFile)}; sleep 30`,
@@ -92,7 +92,7 @@ test("sandboxed bash rejects when the leader dies but a descendant survives", as
     const previousWrap = sandboxManager.wrapWithSandbox;
     sandboxManager.wrapWithSandbox = async (command) => command;
     try {
-      const operations = createSandboxedBashOperations(activeFile);
+      const operations = createBashOperations(activeFile, { sandbox: true });
       const execution = operations.exec(
         [
           `echo $$ > ${JSON.stringify(leaderPidFile)}`,

@@ -18,6 +18,8 @@ export class TestIssueWorker extends RuntimeIssueWorker {
   constructor(...args: ConstructorParameters<typeof RuntimeIssueWorker>) {
     super(args[0], args[1], {
       qaVerifier: { verify: async () => "/private/qa/result.json" },
+      // Flows call this only when a manifest declares `launch`; the fixture worktrees declare none.
+      appInstances: { start: async () => { throw new Error("no app instance in controller-flow tests"); } },
       ...args[2],
     });
   }

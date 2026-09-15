@@ -24,8 +24,10 @@ QA and design-verification sessions evaluate its output before the controller ca
    `Closes #<number>`.
 5. The worker monitors mergeability. When the configured base conflicts with the feature branch, the
    controller merges the freshly fetched base without rebasing, the same Pi session resolves unprotected
-   conflicts and runs focused checks, and the controller validates and pushes the merge commit. Protected
-   or ambiguous conflicts are blocked for human resolution.
+   conflicts and runs focused checks, and the controller validates and **pushes the merge commit at once**.
+   The independent verifier then runs on what was pushed: a pass attaches its browser evidence, a failure
+   is a ⚠️ comment on the PR (CI is the other check) — the resolution is never reverted. Protected or
+   ambiguous conflicts, and anything that fails before the push, are blocked for human resolution.
 6. The worker monitors the draft PR's check rollup. It waits for pending jobs, extracts bounded and
    scrubbed excerpts from completed failed Actions jobs, and sends actionable failures back to the same
    Pi session. The controller commits and pushes a repair, then monitors the new head. Attempts are
@@ -63,11 +65,13 @@ flow runs; planning is not an automatic prerequisite. Interactive Pi has the equ
 **No Figma link does not mean no QA.** Every implementation, review/CI fix, merge update, and interrupted
 push recovery passes a fresh independent QA session. Non-UI work runs meaningful repository-native checks
 without requiring a browser. UI work requires actual changed-surface interactions and desktop/mobile PNGs.
-The implementer's claims or existing media never substitute for independent evidence. Verifier source is
-OS-read-only, write/edit tools are restricted to private evidence, and Docker daemon access is disabled for
-verifiers (the implementation worker retains its configured Docker policy). Tests/builds must use documented
-flags to put outputs/caches in private scratch space; if that is impossible, verification blocks with the exact
-requirement rather than relaxing isolation. The controller also hashes HEAD, index, tracked contents, and
+The implementer's claims or existing media never substitute for independent evidence. Verifier write/edit
+tools are restricted to private evidence, and Docker commands are policy-blocked for verifiers (the
+implementation worker retains its configured Docker policy). With OS sandboxing on (see
+[Sandboxing](#sandboxing)) verifier source is additionally OS-read-only and tests/builds must use documented
+flags to put outputs/caches in private scratch space; with it off, build outputs land in their normal ignored
+locations and the verifier is expected to start the repository's documented stack rather than report an
+unstarted backend as a blocker. In both modes the controller hashes HEAD, index, tracked contents, and
 nonignored untracked contents before/after each verifier and rejects mutation. Every QA command claimed must
 be contained in a successful runner-recorded tool execution (whitespace and `;`/newline layout may differ —
 separators inside quotes are data, not statement boundaries — and
@@ -78,7 +82,10 @@ reported status carries that claim. Browser evidence requires screenshot-command
 verdict that describes a passing run but is malformed — invalid JSON, an unmatched command receipt, a
 misnamed log — gets exactly one repair turn in the same verifier session and is re-validated against the
 original run's receipts; evidence files are fingerprinted across the repair turn and any change to them
-rejects the verdict outright, with no further repair. Failed or blocked verdicts are never sent back. These are LLM-assisted
+rejects the verdict outright, with no further repair. Failed or blocked verdicts are never sent back. A passed
+verdict is a statement about one exact tree: when the same fingerprint and plan come back (a merge resumed
+after a GitHub outage, an interrupted push) the passed report is reused instead of re-run; any change to the
+tree is a new fingerprint and a fresh session. These are LLM-assisted
 behavioral/visual assessments, not mathematical proof of design equivalence.
 
 Figma links in issue title/body (including Markdown, bare links, `/file`, `/design`, `/proto`, `/board`, and
@@ -112,7 +119,7 @@ within its bounded fix loop, always followed by fresh verification.
 - Pi authentication in `~/.pi/agent` or `PI_CODING_AGENT_DIR`
 - `playwright-cli` for visual evidence
 - `ffmpeg` for optional GIF conversion
-- Anthropic Sandbox Runtime prerequisites: on Linux, `bubblewrap`, `socat`, and `ripgrep`; macOS requires `ripgrep`. The worker fails closed if the OS sandbox cannot initialize.
+- Only with `PI_WORKER_SANDBOX=1`: Anthropic Sandbox Runtime prerequisites — on Linux, `bubblewrap`, `socat`, and `ripgrep`; macOS requires `ripgrep`. The worker then fails closed if the OS sandbox cannot initialize.
 - A dedicated GitHub App or machine-user identity is strongly recommended
 
 The GitHub identity needs repository contents, issues, and pull-request write access. If the worker uses
@@ -165,7 +172,9 @@ PI_WORKER_BASE_BRANCH=main
 PI_WORKER_DATA_DIR=~/.local/share/pi-issue-worker/acme-widgets
 PI_WORKER_PROTECTED_PATHS=.git,.github/workflows,.pi
 PI_WORKER_APP_URL=http://localhost:3000
-# Optional additional hosts for sandboxed build/browser verification (comma-separated)
+# OS sandboxing of agent bash commands. Off (0) by default for now — see "Sandboxing" below.
+PI_WORKER_SANDBOX=0
+# Optional additional hosts for sandboxed build/browser verification (comma-separated; PI_WORKER_SANDBOX=1 only)
 PI_WORKER_SANDBOX_ALLOWED_DOMAINS=
 PI_WORKER_MODEL=openai-codex/gpt-5.6-terra
 PI_WORKER_THINKING_LEVEL=high
@@ -218,15 +227,47 @@ systemctl --user enable --now pi-issue-worker@widgets.service
 journalctl --user -u pi-issue-worker@widgets.service -f
 ```
 
-The supplied hardened units permit controller writes under `~/.local/share/pi-issue-worker`,
-`~/.cache`, `~/.pi/agent` (the Pi SDK locks and may refresh its auth state), and the private user runtime
-root used for visual browser sockets. Sandboxed agent commands
-still cannot read the Pi agent directory. If a profile sets a different data directory, add that directory
-to `ReadWritePaths` in a systemd override. Pi bash commands also run inside Anthropic Sandbox Runtime:
-reads are denied across the home directory except the issue
-worktree and required Git metadata, writes are limited to the worktree and temporary build space, and
-network access uses an allowlist. Add project-specific browser/build hosts with
-`PI_WORKER_SANDBOX_ALLOWED_DOMAINS`; do not put credentials or broad wildcards there.
+The supplied units permit controller writes under `~/.local/share/pi-issue-worker`,
+`~/.cache`, `~/.pi/agent` (the Pi SDK locks and may refresh its auth state), the private user runtime
+root used for visual browser sockets, and — because agent commands run under the same unit when
+sandboxing is off — the toolchain homes `~/.nuget`, `~/.aspire`, `~/.dotnet`, `~/.dcp` (the Aspire orchestrator's port allocation state), `~/.microsoft` (user secrets), `~/.aspnet` (data-protection keys), `~/.local/share/pnpm`, and
+`~/.npm`. If a profile sets a different data directory, or a repository's toolchain writes elsewhere under
+`$HOME` (`~/.cargo`, `~/go`, …), add that directory to `ReadWritePaths` in a systemd override. With
+`PI_WORKER_SANDBOX=1`, Pi bash commands additionally run inside Anthropic Sandbox Runtime: reads are
+denied across the home directory except the issue worktree and required Git metadata, writes are limited
+to the worktree and temporary build space, and network access uses an allowlist. Add project-specific
+browser/build hosts with `PI_WORKER_SANDBOX_ALLOWED_DOMAINS`; do not put credentials or broad wildcards
+there.
+
+## Sandboxing
+
+`PI_WORKER_SANDBOX` decides whether agent bash commands run inside the Anthropic Sandbox Runtime
+(bubblewrap on Linux). **It is off by default for now.** The OS sandbox isolates every command in its own
+network namespace and hides `$HOME`, which makes the stacks agents must actually run unstartable: host
+dev services (a shared Postgres/Redis/MinIO on loopback) are unreachable without a Docker bridge that
+verifiers may never use, and toolchain caches such as `~/.nuget/packages` are invisible, so a .NET
+backend cannot even be restored. Sandboxing returns as the default once the stack-launch story works
+inside it; until then set `PI_WORKER_SANDBOX=1` per profile to opt back in.
+
+What is enforced in both modes:
+
+- the agent policy: `gh`, git mutation, `sudo`, recursive deletion, secret files, CI workflows, protected
+  paths, Docker without an explicit grant, and any reference to a credential store under `$HOME` (Pi
+  agent directory, worker profiles, SSH/AWS/GPG/netrc/npm/Docker credentials) are blocked at the
+  tool-call level — a textual rule, so treat it as a tripwire rather than a wall;
+- the verifier may write only its private evidence directory, and its source is fingerprinted before and
+  after the run — any mutation invalidates the verdict;
+- credential-looking environment variables (`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, …) are stripped from
+  every agent command, and the worker's own GitHub/Figma tokens are removed from the process for the
+  duration of a run;
+- every bash call is a detached process group that the controller terminates when the call ends, so app
+  servers and browsers must be started, exercised, and stopped within one call.
+
+What is *not* enforced with sandboxing off: `$HOME` is readable, the network is open, and loopback ports
+are shared with the host and with other worker runs. The prompts tell agents to use the repository's
+documented isolated launcher with run-unique instance names (databases, cache prefixes, ports), and that a
+backend which is merely not running is a launch task rather than a blocker. Run the worker under a
+dedicated OS account and treat the host as disposable while sandboxing is off.
 
 ## Run multiple repositories with the supervisor
 
@@ -286,19 +327,87 @@ Formal PR reviews and inline review comments from trusted associations are proce
 Ordinary PR conversation text is ignored unless it starts with `/pi`. To bootstrap a PR that the worker did not create, apply `pi-ready` to that same-repository PR; the label is the explicit adoption authorization, while `/pi` supplies the requested action. Worker-authored comments carry a
 hidden marker and are ignored, preventing feedback loops. A trusted `/pi retry` comment posted on a
 blocked issue is also processed automatically: the controller reclaims the existing worktree/session and
-updates labels without requiring a separate `pi-ready` edit. Commands older than the latest blocked state
-are ignored.
+updates labels without requiring a separate `pi-ready` edit. On a PR blocked by a failed base-branch
+conflict resolution, `/pi retry` re-queues that resolution for the next poll (a conflict block is keyed on
+the PR's head and base commits and would otherwise never re-run); on a PR blocked by CI repair it re-opens
+the failed head. Commands older than the latest blocked state are ignored.
 
-## Repository QA manifest
+## QA manifest
 
-Repositories may provide a strict, read-only `.pi-worker/qa.json` manifest (override with
-`PI_WORKER_QA_MANIFEST`). Version 1 can name the Aspire AppHost/resources, truthful preview routes, and
-validation commands represented as argument arrays rather than shell strings. The worker uses this trusted
-metadata to classify the least expensive truthful workflow, perform a PNG capability preflight before UI
-implementation, resolve Aspire runtime URLs, and avoid rediscovering commands on every issue.
+The QA manifest is operator configuration for one repository, and it stays with the operator: the worker
+reads **`<data-dir>/memory/qa.json`** — private to the profile, mode `0600`, never committed to the
+repository — before it looks for the repository's own `.pi-worker/qa.json` (override with
+`PI_WORKER_QA_MANIFEST`), which remains a fallback for profiles that keep it there. Both are the same
+strict format. Version 1 can name the Aspire AppHost/resources, truthful preview routes, and validation
+commands represented as argument arrays rather than shell strings. The worker uses this trusted metadata to
+classify the least expensive truthful workflow, perform a PNG capability preflight before UI implementation,
+resolve Aspire runtime URLs, and avoid rediscovering commands on every issue. Paths inside the manifest
+(`aspire.apphost`, `launch.argv`, `auth.storageState`) are repository-relative whichever file they come
+from; the private file is refused if it is a symlink, over 64 KiB, or group/world writable, and agent bash
+is policy-blocked from naming its path (the controller executes `launch.argv`).
+
+Three further sections turn the facts agents otherwise rediscover on every run into a declared procedure —
+the difference, on a real .NET/Aspire repository, between a verifier that launches, waits, and logs in the
+same way every time and one that improvises a different way each run:
+
+```jsonc
+{
+  "version": 1,
+  "aspire": { "apphost": "App.AppHost/App.AppHost.csproj", "resources": { "frontend": "app-frontend", "api": "app-api", "auth": "app-auth" } },
+  "launch":    { "argv": ["./scripts/start-apphost.sh"], "env": { "APP_DROP_DATABASES_ON_EXIT": "1" }, "notes": "isolated instance, random ports" },
+  "readiness": { "resources": ["api", "auth", "frontend"], "paths": { "api": "/api/abp/application-configuration" } },
+  "auth": {
+    "setup": { "argv": ["pnpm", "--filter", "app", "exec", "playwright", "test", "e2e/tools/save-auth-state.setup.ts"],
+               "envFromEndpoints": { "BASE_URL": "frontend" }, "env": { "E2E_IGNORE_HTTPS_ERRORS": "1" } },
+    "storageState": "frontend/apps/app/e2e/.auth/qa-state.json",
+    "notes": "creates a run-scoped editor and logs in through the real OIDC flow"
+  }
+}
+```
+
+`launch` is the only supported way to bring the stack up; `readiness` names the resources whose URLs must
+resolve (or, for launchers that are not Aspire, static loopback `endpoints`) and the paths that must answer
+before a browser opens; `auth.setup` is a repository command that logs in through the real flow (its
+`envFromEndpoints` values are resource keys whose resolved URLs are supplied as those variables) and writes
+a Playwright storage state, which must be gitignored. All argv and env values are literals; env names are
+`[A-Z_][A-Z0-9_]*`; paths are repository-relative.
+
+### What the worker does with `launch`, `readiness` and `auth`
+
+With `launch` declared, the worker — not the agent — brings the application up **once per job run**: it
+runs `launch.argv` in the worktree inside a child cgroup of its own systemd cgroup, resolves
+`aspire.resources` through `aspire describe` (or takes `readiness.endpoints` as given), waits until every
+`readiness.paths` probe answers, runs `auth.setup` against the resolved endpoints and copies
+`auth.storageState` out of the worktree, then hands the agents `PI_QA_ENDPOINT_<NAME>`,
+`PI_QA_STORAGE_STATE` and `PI_QA_INSTANCE` in their environment and the same facts in their prompt. The
+implementer only implements; the visual stage and the independent verifier share that instance (it is
+relaunched if the tree changed between stages) and are told not to launch, not to `setsid`, and not to run
+the repository's Playwright suites. The instance is stopped when the run ends — `SIGTERM` to the launcher
+so its own exit trap runs, then `cgroup.kill` for whatever remains. Launch and auth logs live under
+`<data-dir>/instances/issue-<n>/<run>/`. Limits: `PI_WORKER_APP_START_TIMEOUT` (900 s for launch +
+endpoints + readiness) and `PI_WORKER_APP_MIN_AVAILABLE_MB` (4096: below that `MemAvailable` the launch
+is refused with a clear block instead of swapping). Repositories without `launch` keep the agent-driven
+behaviour end to end.
+
+Every agent bash call is likewise fenced in its own child cgroup: a process that outlives the call —
+`setsid`, `nohup`, an orchestrator child — is killed with `cgroup.kill` the moment the shell exits and the
+call is rejected. The units carry `Delegate=yes` for that; where no writable cgroup exists (development
+shells) the process-group kill is the fallback.
+
+## Project memory
+
+`<data-dir>/memory/` holds notes that survive from one run to the next on the same repository (and, beside
+them, the private `qa.json` above — not a note, never rendered): one durable fact per file (`launcher-timing.md`, `flaky-moderation-test.md`; names match `^[a-z0-9][a-z0-9-]*\.md$`,
+≤ 4 KB, ≤ 40 files), first line `# title`. The implementer, feedback, visual and verifier prompts receive a
+capped index (title and first two body lines of each note, newest first, ≤ 6 KB) with the directory path and
+the saving rules: environment and repository facts only, update instead of duplicate, never issue-specific
+state, never secrets. Files whose content looks like a token, bearer header, password, cookie or private key
+are never rendered and are named in the worker log. Notes are advisory — the verifier reads them like any
+other repository text, as guidance and never as evidence. The instance lifecycle writes `instance-timing.md`
+after each launch.
 
 The controller rejects oversized, malformed, unknown-key, traversal, absolute-path, and symlinked
-manifests. `.pi-worker` is protected from agent writes by default. Component previews may use representative
+manifests. `.pi-worker` is protected from agent writes by default, and so is the private manifest. Component previews may use representative
 props only when they import the exact production component, configuration, and styles; preview-only markup,
 CSS, or expected geometry is false evidence.
 
@@ -382,11 +491,12 @@ feature PRs.
 - Applying the ready label is the human approval boundary. Do not grant issue-triage rights broadly.
 - Issue and review text remains untrusted and is delimited as data in prompts.
 - Only configured GitHub author associations can trigger follow-up work.
-- Pi bash commands use Anthropic Sandbox Runtime OS isolation (bubblewrap on Linux, sandbox-exec on
-  macOS, with platform prerequisites installed). Home-directory and credential reads are denied, writes
-  are allow-only, and network access is allowlisted. Initialization failure blocks the run; there is no
-  unsandboxed fallback. Executable user/project Pi extensions are disabled; only the worker-owned policy
-  extension runs in the controller process.
+- With `PI_WORKER_SANDBOX=1`, Pi bash commands use Anthropic Sandbox Runtime OS isolation (bubblewrap on
+  Linux, sandbox-exec on macOS, with platform prerequisites installed). Home-directory and credential reads
+  are denied, writes are allow-only, and network access is allowlisted. Initialization failure blocks the
+  run; there is no silent unsandboxed fallback. **The default is currently `0`** — see
+  [Sandboxing](#sandboxing) for what remains enforced. Executable user/project Pi extensions are disabled
+  in both modes; only the worker-owned policy extension runs in the controller process.
 - The agent policy blocks common GitHub/git mutation, privilege escalation, recursive deletion, secret
   paths, CI workflows, and configured protected paths. The controller checks paths again before commit.
   Explicit `BLOCKED` results are never committed; tracked, untracked, and ignored partial changes are
@@ -400,8 +510,11 @@ feature PRs.
   subtree plus Sandbox Runtime's network bridge. Linux seccomp cannot filter Unix sockets by path, so a dedicated OS account remains
   important defense in depth.
 - Run under a dedicated OS account and dedicated GitHub identity as additional defense in depth.
-- Model credentials are used by the controller/Pi host process and are never exposed to sandboxed bash.
-  Never approve hostile issues.
+- Model credentials are used by the controller/Pi host process and are never exposed to agent bash:
+  credential-looking environment variables are stripped from every command in both modes, and bash
+  commands that reference credential stores (the Pi agent directory, `~/.config/pi-issue-worker`, `~/.ssh`,
+  `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker/config.json`) are policy-blocked. That textual
+  rule is the only guard on those paths while sandboxing is off. Never approve hostile issues.
 - There is no auto-merge, force-push, automatic rebase, or arbitrary attachment upload.
 - Review replies are posted to the PR conversation rather than individual inline threads.
 

@@ -3,7 +3,11 @@ import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
+import { cgroupController, wrapInCgroup, type CgroupController } from "./cgroup.js";
 import { sandboxEnvironment } from "./sandbox.js";
+
+/** Build tooling must not leave helpers behind: nodes die with their call anyway, these flags stop the retries. */
+const BUILD_TOOLING_ENVIRONMENT = { MSBUILDNODEREUSE: "0", DOTNET_CLI_USE_MSBUILD_SERVER: "0" } as const;
 
 export const ACTIVE_COMMAND_PROCESS_GROUP_FILE = "active-command-group.pid";
 
@@ -102,29 +106,67 @@ export async function stopTrackedProcessGroup(processGroupFile: string): Promise
   }
 }
 
-export function createSandboxedBashOperations(
+export interface BashOperationOptions {
+  /**
+   * Wrap every command with the Anthropic Sandbox Runtime. When false the command runs through a plain
+   * `bash -c`: the detached process group and child cgroup, credential scrub, timeout/abort handling and
+   * the leftover background-process check below all still apply — they are the harness's own guarantees,
+   * not bwrap's.
+   */
+  sandbox: boolean;
+  shutdownSignal?: AbortSignal;
+  environmentOverrides?: NodeJS.ProcessEnv;
+  /** Child-cgroup fencing of each call; defaults to an unavailable (no-op) controller. */
+  cgroups?: CgroupController;
+}
+
+export function createBashOperations(
   processGroupFile: string,
-  shutdownSignal?: AbortSignal,
-  environmentOverrides: NodeJS.ProcessEnv = {},
+  { sandbox, shutdownSignal, environmentOverrides = {}, cgroups = cgroupController(null) }: BashOperationOptions,
 ): BashOperations {
+  let sequence = 0;
+  // The sequence restarts with every agent run, while a child that a previous run could not remove (still
+  // populated past its kill timeout) keeps its name under the same root; its name is skipped rather than
+  // reused, so those leftover processes are never fenced together with this call's.
+  const createChildCgroup = async (): Promise<string | null> => {
+    for (;;) {
+      sequence += 1;
+      try {
+        return await cgroups.createChild(`bash-${sequence}`);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+    }
+  };
   return {
     async exec(command, cwd, { onData, signal, timeout }) {
-      const wrappedCommand = await SandboxManager.wrapWithSandbox(command);
+      const wrappedCommand = sandbox ? await SandboxManager.wrapWithSandbox(command) : command;
+      // The shim moves the shell into the child cgroup before exec, so every descendant — `setsid`,
+      // `nohup`, double forks, orchestrator children — inherits it and none can outlive the call.
+      const childCgroup = await createChildCgroup();
+      const [executable = "bash", ...args] = wrapInCgroup(childCgroup, ["bash", "-c", wrappedCommand]);
       return await new Promise((resolveResult, reject) => {
-        const child = spawn("bash", ["-c", wrappedCommand], {
+        // Neither early return below runs the exit/close handlers that otherwise remove `childCgroup`, so
+        // both must clean it up themselves.
+        const discardChildCgroup = () => {
+          if (childCgroup) void cgroups.killAndRemove(childCgroup).catch(() => undefined);
+        };
+        const child = spawn(executable, args, {
           cwd,
           detached: true,
-          env: { ...sandboxEnvironment(), ...environmentOverrides },
+          env: { ...sandboxEnvironment(), ...BUILD_TOOLING_ENVIRONMENT, ...environmentOverrides },
           stdio: ["ignore", "pipe", "pipe"],
         });
         if (!child.pid) {
-          reject(new Error("Failed to start sandboxed bash process"));
+          discardChildCgroup();
+          reject(new Error("Failed to start bash process"));
           return;
         }
         try {
           writeFileSync(processGroupFile, `${child.pid}\n`, "utf8");
         } catch (error) {
           child.kill("SIGKILL");
+          discardChildCgroup();
           reject(error);
           return;
         }
@@ -132,11 +174,18 @@ export function createSandboxedBashOperations(
         let timeoutHandle: NodeJS.Timeout | undefined;
         let stopPromise: Promise<void> | null = null;
         const stopCurrentProcessGroup = () => {
-          stopPromise ??= stopTrackedProcessGroup(processGroupFile);
+          stopPromise ??= (async () => {
+            await stopTrackedProcessGroup(processGroupFile);
+            if (childCgroup) await cgroups.killAndRemove(childCgroup);
+          })();
           return stopPromise;
         };
+        // Fire-and-forget trigger: the settling close/exit/error handler awaits stopCurrentProcessGroup()
+        // itself and surfaces its rejection as the call's own error, but killAndRemove can also reject on
+        // its own (a cgroup that will not empty within its timeout) with nothing else awaiting this call —
+        // left as `void`, that would crash the process as an unhandled rejection.
         const abort = () => {
-          void stopCurrentProcessGroup();
+          stopCurrentProcessGroup().catch((error) => console.error("bash process-group cleanup failed", error));
         };
         const cleanupListeners = () => {
           if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -146,7 +195,7 @@ export function createSandboxedBashOperations(
         if (timeout !== undefined && timeout > 0) {
           timeoutHandle = setTimeout(() => {
             timedOut = true;
-            void stopCurrentProcessGroup();
+            abort();
           }, timeout * 1000);
           timeoutHandle.unref();
         }
@@ -155,7 +204,7 @@ export function createSandboxedBashOperations(
         signal?.addEventListener("abort", abort, { once: true });
         shutdownSignal?.addEventListener("abort", abort, { once: true });
         if (signal?.aborted || shutdownSignal?.aborted) {
-          void stopCurrentProcessGroup();
+          abort();
         }
         child.on("error", (error) => {
           cleanupListeners();
@@ -164,8 +213,24 @@ export function createSandboxedBashOperations(
             reject(error);
           })().catch(reject);
         });
+        let settled = false;
+        // A leftover that inherited the stdout pipe keeps "close" from firing until the tool timeout; the
+        // cgroup shows it the moment the shell exits, so the call is ended and rejected right there.
+        child.on("exit", () => {
+          if (!childCgroup) return;
+          void (async () => {
+            const survivors = (await cgroups.procs(childCgroup).catch(() => [])).filter((pid) => pid !== child.pid);
+            if (survivors.length === 0 || settled) return;
+            settled = true;
+            cleanupListeners();
+            await stopCurrentProcessGroup();
+            reject(new Error("bash command left background processes running"));
+          })().catch(reject);
+        });
         child.on("close", (code, closeSignal) => {
           void (async () => {
+            if (settled) return;
+            settled = true;
             cleanupListeners();
             const timedOutOrAborted = signal?.aborted || shutdownSignal?.aborted || timedOut;
             if (timedOutOrAborted) {
@@ -179,11 +244,15 @@ export function createSandboxedBashOperations(
               return;
             }
             const pid = child.pid;
-            if (pid !== undefined && isProcessGroupAlive(pid)) {
+            const leftover = childCgroup
+              ? (await cgroups.procs(childCgroup).catch(() => [])).length > 0
+              : pid !== undefined && isProcessGroupAlive(pid);
+            if (leftover) {
               await stopCurrentProcessGroup();
-              reject(new Error("sandboxed bash left background processes running"));
+              reject(new Error("bash command left background processes running"));
               return;
             }
+            if (childCgroup) await cgroups.killAndRemove(childCgroup);
             if (pid !== undefined) clearTrackedProcessGroupFile(processGroupFile, pid);
             resolveResult({ exitCode: code });
           })().catch(reject);

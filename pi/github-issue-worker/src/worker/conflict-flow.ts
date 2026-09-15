@@ -1,19 +1,17 @@
 import { join } from "node:path";
-import type { EvidenceRun } from "../evidence.js";
 import { buildMergeConflictPrompt } from "../prompts.js";
 import { BranchDivergenceError } from "../repository.js";
 import type { IssueJob } from "../types.js";
-import { publishEvidence, runUiVerification, visualEvidenceNote } from "./evidence-flow.js";
+import { assertPullRequestMergeContext, mergeConflictEventKey } from "./conflict-context.js";
+import { verifyAfterPush } from "./conflict-verify.js";
 import { ensureJobWorktree } from "./job-worktree.js";
-import { verifyImplementation } from "./verification-flow.js";
 import {
   CONFLICT_BLOCK_PREFIX,
-  containsUiFiles,
   errorText,
-  evidenceCommentMarker,
   isBlockedFinalOutput,
   isInterruptedRun,
   markdownSummary,
+  RetryableControllerError,
   type WorkerContext,
 } from "./shared.js";
 
@@ -43,7 +41,7 @@ export async function processPullRequestConflicts(ctx: WorkerContext): Promise<b
       }
       continue;
     }
-    const eventKey = `merge-conflict:${job.prNumber}:${mergeState.baseBranch}:${mergeState.headSha}:${mergeState.baseSha}`;
+    const eventKey = mergeConflictEventKey(job.prNumber, mergeState);
     if (ctx.state.hasProcessed(eventKey)) continue;
     startedConflictResolution = true;
     await handleMergeConflict(
@@ -67,6 +65,8 @@ export async function handleMergeConflict(
   eventKey: string,
 ): Promise<void> {
   const worktree = await ensureJobWorktree(ctx, job);
+  // Every path below pushes first and verifies afterwards (see conflict-verify.ts); a failure before the
+  // push is what the catch block handles, a failure after it is reported on the PR and never reverted.
   try {
     if (pullRequestBaseBranch !== ctx.config.baseBranch) {
       throw new Error(
@@ -75,24 +75,6 @@ export async function handleMergeConflict(
     }
     const localHead = await ctx.repository.headRevision(worktree.path);
     if (localHead !== pullRequestHead) {
-      let evidence: EvidenceRun | null = null;
-      if (
-        typeof ctx.repository.filesChangedBetween === "function" &&
-        containsUiFiles(
-          await ctx.repository.filesChangedBetween(worktree.path, pullRequestHead, localHead),
-        )
-      ) {
-        try {
-          evidence = await runUiVerification(ctx, job, worktree.path, job.prNumber!);
-        } catch (error) {
-          throw new BranchDivergenceError(`Visual QA failed before push recovery: ${errorText(error)}`);
-        }
-      }
-      try {
-        await verifyImplementation(ctx, job, worktree.path);
-      } catch (error) {
-        throw new BranchDivergenceError(errorText(error));
-      }
       await ctx.repository.recoverBaseMergePush(
         worktree.path,
         worktree.branch,
@@ -102,20 +84,10 @@ export async function handleMergeConflict(
       await ctx.github.markPullRequestOpen(job.issueNumber);
       await ctx.github.commentPullRequest(
         job.prNumber!,
-        `🔀 Recovered and pushed an interrupted base-branch conflict resolution.${await visualEvidenceNote(
-          evidence?.runDir ?? null,
-          evidence?.relativeRunDir ?? null,
-        )}`,
+        "🔀 Recovered and pushed an interrupted base-branch conflict resolution. Verification follows.",
       );
       ctx.state.completeEvent(job.issueNumber, eventKey, "pr_open");
-      const published = await publishEvidence(ctx, job.prNumber!, worktree.path, evidence);
-      if (published) {
-        await ctx.github.commentPullRequest(
-          job.prNumber!,
-          `${evidenceCommentMarker(published.eventKey)}\nRecovered-conflict QA evidence attached automatically.${published.note}`,
-        );
-        ctx.state.markProcessed(job.issueNumber, published.eventKey);
-      }
+      await verifyAfterPush(ctx, job, worktree);
       return;
     }
 
@@ -125,53 +97,28 @@ export async function handleMergeConflict(
       pullRequestHead,
     );
     if (merge.conflicts.length === 0) {
-      let evidence: EvidenceRun | null = null;
+      let pushed = false;
       if (merge.mergeInProgress) {
-        if (
-          typeof ctx.repository.filesChangedBetween === "function" &&
-          containsUiFiles(
-            await ctx.repository.filesChangedBetween(worktree.path, pullRequestHead),
-          )
-        ) {
-          evidence = await runUiVerification(ctx, job, worktree.path, job.prNumber!);
-        }
-        await verifyImplementation(ctx, job, worktree.path);
-        await assertPullRequestMergeContext(
-          ctx,
-          job.prNumber!,
-          pullRequestHead,
-          merge.baseSha,
-        );
-        await ctx.repository.finishBaseMerge(
-          worktree.path,
-          worktree.branch,
-          job.issueNumber,
-          pullRequestHead,
-        );
+        // A resumed merge may hold an agent resolution that was never staged; a fresh clean merge is
+        // already staged and this is a no-op either way.
+        await ctx.repository.stageBaseMerge(worktree.path, worktree.branch);
+        await assertPullRequestMergeContext(ctx, job.prNumber!, pullRequestHead, merge.baseSha);
+        await ctx.repository.finishBaseMerge(worktree.path, worktree.branch, job.issueNumber, pullRequestHead);
+        pushed = true;
       } else if (
         !merge.alreadyCurrent &&
         (await ctx.repository.hasUnpushedCommits(worktree.path, worktree.branch))
       ) {
-        await verifyImplementation(ctx, job, worktree.path);
         await ctx.repository.pushIfAhead(worktree.path, worktree.branch);
+        pushed = true;
       }
       await ctx.github.markPullRequestOpen(job.issueNumber);
       await ctx.github.commentPullRequest(
         job.prNumber!,
-        `🔀 Updated the feature branch from \`${ctx.config.baseBranch}\` without rebasing. No manual conflict resolution was required.${await visualEvidenceNote(
-          evidence?.runDir ?? null,
-          evidence?.relativeRunDir ?? null,
-        )}`,
+        `🔀 Updated the feature branch from \`${ctx.config.baseBranch}\` without rebasing. No manual conflict resolution was required.${pushed ? " Verification follows." : ""}`,
       );
       ctx.state.completeEvent(job.issueNumber, eventKey, "pr_open");
-      const published = await publishEvidence(ctx, job.prNumber!, worktree.path, evidence);
-      if (published) {
-        await ctx.github.commentPullRequest(
-          job.prNumber!,
-          `${evidenceCommentMarker(published.eventKey)}\nBase-update QA evidence attached automatically.${published.note}`,
-        );
-        ctx.state.markProcessed(job.issueNumber, published.eventKey);
-      }
+      if (pushed) await verifyAfterPush(ctx, job, worktree);
       return;
     }
 
@@ -193,47 +140,25 @@ export async function handleMergeConflict(
     });
     ctx.state.setSession(job.issueNumber, result.sessionFile);
     if (isBlockedFinalOutput(result.finalText)) throw new Error(result.finalText);
-    const evidence =
-      typeof ctx.repository.filesChangedBetween === "function" &&
-      containsUiFiles(await ctx.repository.filesChangedBetween(worktree.path, pullRequestHead))
-        ? await runUiVerification(ctx, job, worktree.path, job.prNumber!)
-        : null;
-    result.finalText += await verifyImplementation(ctx, job, worktree.path);
-    await assertPullRequestMergeContext(
-      ctx,
-      job.prNumber!,
-      pullRequestHead,
-      merge.baseSha,
-    );
-    await ctx.repository.finishBaseMerge(
-      worktree.path,
-      worktree.branch,
-      job.issueNumber,
-      pullRequestHead,
-    );
+    // The agent can only edit the working tree; stage its resolution so the commit below is exactly that tree.
+    await ctx.repository.stageBaseMerge(worktree.path, worktree.branch);
+    await assertPullRequestMergeContext(ctx, job.prNumber!, pullRequestHead, merge.baseSha);
+    await ctx.repository.finishBaseMerge(worktree.path, worktree.branch, job.issueNumber, pullRequestHead);
     await ctx.github.markPullRequestOpen(job.issueNumber);
     await ctx.github.commentPullRequest(
       job.prNumber!,
-      `🔀 Base-branch conflicts resolved and pushed without rebasing. I will monitor the new checks automatically.\n\n${markdownSummary(result.finalText)}${await visualEvidenceNote(
-        evidence?.runDir ?? null,
-        evidence?.relativeRunDir ?? null,
-      )}`,
+      `🔀 Base-branch conflicts resolved and pushed. Verification follows.\n\n${markdownSummary(result.finalText)}`,
     );
     ctx.state.completeEvent(job.issueNumber, eventKey, "pr_open");
-    try {
-      const publishedEvidence = await publishEvidence(ctx, job.prNumber!, worktree.path, evidence);
-      if (publishedEvidence) {
-        await ctx.github.commentPullRequest(
-          job.prNumber!,
-          `${evidenceCommentMarker(publishedEvidence.eventKey)}\nConflict-resolution QA evidence attached automatically.${publishedEvidence.note}`,
-        );
-        ctx.state.markProcessed(job.issueNumber, publishedEvidence.eventKey);
-      }
-    } catch (error) {
-      ctx.state.setStatus(job.issueNumber, "pr_open", `QA evidence publication pending: ${errorText(error)}`);
-    }
+    await verifyAfterPush(ctx, job, worktree);
   } catch (error) {
     if (isInterruptedRun(error)) throw error;
+    // GitHub being unreachable says nothing about the resolution. Leave the staged merge exactly where it is:
+    // the next tick sees MERGE_HEAD, resumes it and pushes.
+    if (error instanceof RetryableControllerError) {
+      ctx.state.setStatus(job.issueNumber, "pr_open", errorText(error));
+      throw error;
+    }
     const localHead = await ctx.repository.headRevision(worktree.path).catch(() => null);
     if (
       !(error instanceof BranchDivergenceError) &&
@@ -244,30 +169,17 @@ export async function handleMergeConflict(
       throw error;
     }
     await ctx.repository.abortBaseMerge(worktree.path).catch(() => undefined);
-    const message = `${CONFLICT_BLOCK_PREFIX} ${errorText(error)}`;
+    // `merge --abort` keeps unstaged agent edits to auto-merged files, and beginBaseMerge refuses a dirty
+    // worktree, so an abandoned resolution must be discarded outright or no retry can ever merge again.
+    const discardFailure = await ctx.repository
+      .clearAgentChanges(worktree.path, worktree.branch, { ignored: false })
+      .then(() => "", (discardError: unknown) => ` Worktree cleanup also failed: ${errorText(discardError)}`);
+    const message = `${CONFLICT_BLOCK_PREFIX} ${errorText(error)}${discardFailure}`;
     await ctx.github.markBlocked(job.issueNumber, message).catch(() => undefined);
     await ctx.github.commentPullRequest(
       job.prNumber!,
       `⛔ I could not safely resolve the base-branch conflict. Human resolution is required.\n\n${markdownSummary(message)}`,
     );
     ctx.state.completeEvent(job.issueNumber, eventKey, "pr_open", message);
-  }
-}
-
-export async function assertPullRequestMergeContext(
-  ctx: WorkerContext,
-  prNumber: number,
-  expectedHead: string,
-  expectedBase: string,
-): Promise<void> {
-  const current = await ctx.github.getPullRequestMergeState(prNumber);
-  if (
-    current.baseBranch !== ctx.config.baseBranch ||
-    current.headSha !== expectedHead ||
-    current.baseSha !== expectedBase
-  ) {
-    throw new BranchDivergenceError(
-      `Pull request merge context moved while resolving conflicts (base ${current.baseBranch}@${current.baseSha}, head ${current.headSha})`,
-    );
   }
 }

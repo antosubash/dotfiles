@@ -6,7 +6,7 @@ import test from "node:test";
 import { loadConfig } from "../src/config.js";
 import { execFile } from "../src/exec.js";
 import type { PiAgentRunner } from "../src/pi-agent.js";
-import { DEFAULT_QA_CHECKS, QaVerificationService, assertQaExecution, validateQaResult } from "../src/qa-verification.js";
+import { DEFAULT_QA_CHECKS, QaVerificationService, assertQaExecution, validateQaResult, verifierSourcePolicy } from "../src/qa-verification.js";
 import type { GitHubIssue, VerificationEvidence } from "../src/types.js";
 
 // Shapes taken from iiasa/IIASA.GeoWiki#555: the runner recorded a multi-line
@@ -249,5 +249,49 @@ test("a repair turn that changes evidence is rejected without a further repair",
       return true;
     });
     assert.equal(calls.length, 2);
+  } finally { await f.cleanup(); }
+});
+
+// A verdict is a statement about one exact tree (the source fingerprint covers HEAD, index, tracked and
+// untracked content). When the same tree comes back — a GitHub outage after a pass, an interrupted push —
+// re-running a 45-minute verification adds nothing; the passed report is the answer. Anything that changes
+// the tree changes the fingerprint and gets a fresh run.
+test("a passed verdict is reused for an identical source fingerprint and never across a change", async () => {
+  const f = await worktreeFixture();
+  try {
+    const { agent, calls } = scriptedAgent([{ finalText: verdictJson(), recorded: ["pnpm test"] }, { finalText: verdictJson(), recorded: ["pnpm test"] }]);
+    const service = new QaVerificationService(f.config, agent);
+    const first = await service.verify(issue, f.worktree, null);
+    assert.equal(await service.verify(issue, f.worktree, null), first);
+    assert.equal(calls.length, 1);
+    // The scripted second turn is deliberately incomplete; what matters is that a changed tree runs again.
+    await writeFile(join(f.worktree, "source.txt"), "changed\n");
+    await service.verify(issue, f.worktree, null).catch(() => undefined);
+    assert.equal(calls.length, 2);
+  } finally { await f.cleanup(); }
+});
+
+// The verifier's prompt must describe the guard that is actually in force. Claiming an OS-read-only source
+// when there is none would send the verifier redirecting every build output for no reason — and, worse,
+// still reporting BLOCKED for a backend it is now perfectly able to start.
+test("the verifier prompt describes fingerprinting, not a read-only mount, when the sandbox is off", async () => {
+  assert.match(verifierSourcePolicy({ sandbox: true }), /OS-read-only/);
+  assert.match(verifierSourcePolicy({ sandbox: false }), /fingerprinted before and after/);
+  assert.match(verifierSourcePolicy({ sandbox: false }), /normal ignored locations/);
+  assert.doesNotMatch(verifierSourcePolicy({ sandbox: false }), /OS-read-only/);
+  const f = await worktreeFixture();
+  try {
+    const { agent, calls } = scriptedAgent([{ finalText: verdictJson(), recorded: ["pnpm test"] }]);
+    await new QaVerificationService({ ...f.config, sandbox: false }, agent).verify(issue, f.worktree, null);
+    assert.match(calls[0]!.prompt, /merely not running is not an unavailable dependency/);
+    assert.match(calls[0]!.prompt, /report blocked only with the exact launch failure/);
+    // Attempt 5 on #501: the verifier built with --no-restore and a stale node_modules after a base merge and
+    // reported 44 missing-assets errors as a code failure. Restore first; untouched-file failures are notes.
+    assert.match(calls[0]!.prompt, /Restore and install dependencies first, exactly as the repository's CI does/);
+    assert.match(calls[0]!.prompt, /Never pass `--no-restore`\/`--no-build` unless this session restored\/built that exact project/);
+    assert.match(calls[0]!.prompt, /fails only in files the task diff does not touch, after a fresh restore\/install, is a\npre-existing base-branch condition/);
+    // Attempt 8: Biome tripped on the Playwright auth state the verifier's own e2e run had just written.
+    assert.match(calls[0]!.prompt, /A file\nyour own run created .* is never a code failure/);
+    assert.doesNotMatch(calls[0]!.prompt, /OS-read-only/);
   } finally { await f.cleanup(); }
 });

@@ -53,6 +53,11 @@ drwx------ pi-issue-worker
 | Conversation feedback is ignored | comment lacks `/pi` or author association is untrusted | use `/pi ...` from a configured association |
 | Draft PR checks fail with no worker response | old installation, worker stopped, or PR job missing from local state | update/restart, inspect `gh pr checks`, issue labels, and the journal |
 | Chromium reports `Unix sockets are blocked` or `ProcessSingleton` errors | outdated visual sandbox or an overlong temp/socket path | update, then run the browser smoke test below |
+| Playwright gets `net::ERR_ACCESS_DENIED` on a local URL `curl` reaches; evidence or `npm run check` fails with `bwrap: … Operation not permitted` | Ubuntu's `apparmor_restrict_unprivileged_userns` on kernel ≥ 7.0 confines the namespaced units | `journalctl -k | grep 'apparmor="DENIED"'`; see the kernel 7.0 entry under "An issue becomes blocked" |
+| `App instance memory failed: N MB available, 4096 MB required` | the host is short of memory (other stacks, swap in use) | free memory or lower `PI_WORKER_APP_MIN_AVAILABLE_MB`; never let a launch swap for ten minutes |
+| `App instance readiness failed` / `App instance endpoints failed` | the manifest launcher died or a resource never came up | read `<data-dir>/instances/issue-<n>/<run>/launch.log` (tail is in the error); inotify and ports are the usual causes |
+| `App instance auth failed: … must be gitignored` | the repository tracks its QA storage state | gitignore `auth.storageState` in the repository |
+| `⚠️ Post-resolution verification failed` on a PR | the pushed conflict resolution did not pass the independent verifier | read the report path in the comment; the resolution stays pushed, fix forward on the PR |
 | Worker is idle but memory use is high | each profile loads an independent Pi SDK/model runtime | reduce active profiles or run selected profiles |
 
 ## Supervisor and child lifecycle
@@ -104,6 +109,10 @@ KillMode=control-group
 If an older unit uses `KillMode=mixed`, rerun the installer and reload systemd.
 
 ## Sandbox failures
+
+Everything in this section applies only with `PI_WORKER_SANDBOX=1`. The switch is **off by default for
+now** (see the README's "Sandboxing" section), in which case agent commands run directly under the
+worker's own systemd unit and none of the bwrap/socat/seccomp material below is in play.
 
 ### Missing Linux commands
 
@@ -216,7 +225,7 @@ Symptom:
 EROFS: read-only file system, mkdir '~/.pi/agent/auth.json.lock'
 ```
 
-Current units permit trusted controller writes to `~/.pi/agent` because the Pi SDK locks and may refresh auth state. Sandboxed agent commands still cannot read that directory.
+Current units permit trusted controller writes to `~/.pi/agent` because the Pi SDK locks and may refresh auth state. With sandboxing on, agent commands cannot read that directory; with it off, bash commands that reference it are policy-blocked instead.
 
 Verify:
 
@@ -228,6 +237,7 @@ Expected paths include:
 
 ```text
 %h/.local/share/pi-issue-worker %h/.cache %h/.pi/agent %t
+-%h/.nuget -%h/.aspire -%h/.dcp -%h/.dotnet -%h/.microsoft -%h/.aspnet -%h/.local/share/pnpm -%h/.npm
 ```
 
 Rerun the installer when the path is missing.
@@ -285,7 +295,12 @@ systemctl --user edit pi-issue-worker-supervisor.service
 ```ini
 [Service]
 Environment="PATH=/home/USERNAME/.local/bin:/home/USERNAME/.local/share/pnpm:/home/USERNAME/.dotnet:/usr/local/bin:/usr/bin:/bin"
+Environment="DOTNET_ROOT=/home/USERNAME/.dotnet"
 ```
+
+`DOTNET_ROOT` matters as soon as agents run unsandboxed: a user-local .NET install found only through
+`PATH` is invisible to tools that launch the runtime host themselves (Aspire's AppHost, `dotnet test`
+hosts), which then fail with a missing-runtime error or need the variable set by hand in every command.
 
 Reload and restart after editing.
 
@@ -348,6 +363,147 @@ Typical causes:
 - tests failed and Pi could not safely repair them.
 
 After correcting the cause, use the documented retry command on the PR when one exists, or reapply the ready label to a blocked initial issue.
+
+### `Independent QA BLOCKED: … backend/… unavailable` or `preflight failed … waits on unavailable backend`
+
+The verifier or the visual run found nothing listening on the application's documented ports and gave
+up instead of launching the stack. Check, in order:
+
+1. `PI_WORKER_SANDBOX` — with it on, the run cannot reach host-loopback services (shared Postgres,
+   Redis, MinIO) or toolchain caches under `$HOME` at all; that is the known gap sandboxing is currently
+   off for. Set it to `0` for the profile and restart.
+2. The unit's `ReadWritePaths` — with sandboxing off, `ProtectHome=read-only` still applies to agent
+   commands, so `dotnet restore`, `aspire`, dev-certs or a package store failing with `EROFS`/"read-only
+   file system" means the toolchain home is missing from the second `ReadWritePaths` line in
+   `systemd/*.service`. Add it and `systemctl --user daemon-reload && systemctl --user restart …`.
+3. The host services themselves — `ss -ltn | grep -E ':(5432|6379|9000)\b'`. The agent is told to start
+   the *application* from the repository's documented isolated launcher, not the shared infrastructure.
+4. The verifier's `evidence/report.md` in the run directory named in the error: an agent that did try to
+   launch records the exact failure there, and that failure is the real bug.
+
+### `diff-review … Unresolved index entries exist` during a base-branch conflict resolution
+
+Fixed: the controller now stages the agent's resolution before the QA gate. If it recurs, the agent left
+real conflict markers or unresolved paths, and the same message names them.
+
+### `Cannot update from origin/<base> with existing worktree changes` on a conflict retry
+
+Fixed: an abandoned resolution is now discarded from the worktree (`reset --hard` + `clean -fd`, ignored
+build outputs and `.qa` kept) when the controller blocks. A worktree left dirty by an older worker still
+needs one manual `git checkout -- <path>` in `<data-dir>/worktrees/pr-<n>`, then `/pi retry` on the PR.
+
+### `.NET test hosts fail with "user limit (128) on the number of inotify instances"`
+
+ABP/ASP.NET test hosts each register file watchers; a parallel `dotnet test` run exhausts the Linux
+default of 128 inotify instances per user and the affected tests fail inside host creation before their
+bodies run. Host setting, operator decision — the usual developer-box value:
+
+```bash
+sudo sysctl -w fs.inotify.max_user_instances=1024   # persist in /etc/sysctl.d/
+```
+
+### `net::ERR_ACCESS_DENIED` from Playwright on a local URL `curl` reaches, or `bwrap: … Operation not permitted` / `setting up uid map: Permission denied`
+
+Both are AppArmor verdicts from Ubuntu's `kernel.apparmor_restrict_unprivileged_userns=1`, and both
+appeared on the first boot of a 7.0 kernel (6.17 permitted the same operations). Confirm with the audit
+log and the worker's own label:
+
+```bash
+journalctl -k --since '30 min ago' -o cat | grep 'apparmor="DENIED"' | grep -E 'profile="(chrome|unprivileged_userns)"'
+#  … class="net" info="failed af match" profile="chrome" comm="Chrome_ChildIOT" family="inet" …
+#  … class="cap"  profile="unprivileged_userns" comm="bwrap" capname="net_admin" …
+#  … class="file" info="Failed name lookup - disconnected path" profile="unprivileged_userns" name="proc/…/uid_map" comm="bwrap" …
+cat /proc/$(pgrep -f 'pi-issue-worker-supervisor' | head -1)/attr/apparmor/current   # unprivileged_userns (enforce)
+```
+
+Why the worker is labelled at all: the units use `PrivateTmp`/`ProtectSystem`/`ProtectHome`/
+`ReadWritePaths`. For a `systemd --user` manager those need a mount namespace, which an unprivileged
+user only gets inside a user namespace, so with the sysctl on every worker process — and every agent,
+browser and toolchain it spawns — runs under the `unprivileged_userns` profile. That profile allows
+`network` and files, which is why `curl`, `dotnet` and `pnpm` are fine. Two things are not:
+
+- **Google Chrome.** `playwright-cli` defaults to the `chrome` channel, `/opt/google/chrome/chrome`, the
+  one binary on the host with its own profile (`/etc/apparmor.d/chrome`, `flags=(unconfined)`, shipped
+  only to grant `userns`). Exec'ing it yields the stacked label `chrome//&unprivileged_userns (mixed)`,
+  and from kernel 7.0 on the `chrome` half fails the address-family match (it has no network rules and
+  its `unconfined` flag is not honoured inside a mixed stack): `socket()` → `EACCES` →
+  `net::ERR_ACCESS_DENIED`. The agent's visual run and the verifier both break; the repository's own
+  Playwright tests do not, because they launch Playwright's pinned Chromium, which has no profile.
+- **bwrap.** Evidence publishing re-encodes every attachment (PNG screenshots included) with ffmpeg
+  inside `bwrap --unshare-all`. On 7.0 the `unprivileged_userns` profile denies the `uid_map` write and
+  the `net_admin`/`setpcap` capabilities bwrap needs, so no namespace can be built — from the worker
+  *or* from an unconfined shell (bwrap's own `unshare` triggers the same transition). A PNG that cannot
+  be sanitized fails the run, and `npm run check` fails its nine evidence tests on such a host.
+
+Fix, host level (operator decision). The pre-reboot behaviour is restored in one setting, persisted so a
+later boot keeps it, followed by a supervisor restart so the units are re-spawned without the label:
+
+```bash
+echo 'kernel.apparmor_restrict_unprivileged_userns = 0' | sudo tee /etc/sysctl.d/60-pi-issue-worker-userns.conf
+sudo sysctl -p /etc/sysctl.d/60-pi-issue-worker-userns.conf
+systemctl --user restart pi-issue-worker-supervisor.service
+```
+
+That disables Ubuntu's host-wide user-namespace hardening for every unprivileged process, not just the
+worker. The scoped alternative needs more: `printf 'network,\n' | sudo tee /etc/apparmor.d/local/chrome
+&& sudo apparmor_parser -r /etc/apparmor.d/chrome` cures Chrome, but bwrap under the namespaced units
+stays stacked with `unprivileged_userns`, so the units would also have to drop their mount-namespace
+options and `/usr/bin/bwrap` would need its own `userns` profile.
+
+Verify from a namespaced transient unit — a bare `systemd-run --user` without `PrivateTmp` passes even
+while the worker fails, because only the namespaced unit gets the label:
+
+```bash
+systemd-run --user --collect --wait --pipe -p PrivateTmp=true -E HOME=$HOME -E PATH=$PATH \
+  --working-directory=/tmp playwright-cli -s=probe open http://localhost:<port>/
+systemd-run --user --collect --wait --pipe -p PrivateTmp=true \
+  bwrap --unshare-all --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind /lib64 /lib64 --proc /proc --dev /dev /usr/bin/true
+```
+
+### `App instance … failed` (a manifest `launch` is declared)
+
+The worker launched the repository's stack itself and gave up in the named phase. Everything it saw is
+under `<data-dir>/instances/issue-<n>/<run>/`: `launch.log` (the launcher's output, its tail is quoted in
+the error), `auth-setup.log`, and `instance.json` once it got that far. In order:
+
+1. `memory` — `MemAvailable` was below `PI_WORKER_APP_MIN_AVAILABLE_MB`. Other stacks on the host
+   (interactive worktrees, leftover orchestrators: `pgrep -fa 'dcp run-controllers'`) are the usual reason.
+2. `endpoints` / `readiness` — the launcher exited, or a resource never reached `Running`/answered its
+   probe within `PI_WORKER_APP_START_TIMEOUT`. On a .NET/Aspire stack a migrator or host that dies at
+   startup while the CLI log shows nothing is very often the per-user inotify limit (each ASP.NET host
+   registers file watchers; test hosts from the verifier's own run count too):
+
+   ```bash
+   sysctl fs.inotify.max_user_instances      # 128 by default; 1024 is the usual developer-box value
+   find /proc/[0-9]*/fd -lname 'anon_inode:inotify' -user "$USER" 2>/dev/null | wc -l
+   ```
+
+3. `auth` — the setup command failed (its output is in `auth-setup.log`), the storage state was not
+   produced at `auth.storageState`, or that path is not gitignored.
+
+The agent never launches while `launch` is declared; if a run still shows the agent starting the stack,
+the manifest did not load — `<data-dir>/memory/qa.json` (or the repository's `.pi-worker/qa.json`
+fallback) is malformed, a symlink, or group/world writable; the run's error names the reason.
+
+### `⚠️ Post-resolution verification failed` after a conflict resolution
+
+The resolution was pushed before the independent verifier ran; the comment carries the verifier's summary
+and, when there is one, the local report path. Nothing is reverted: fix forward on the PR, or push to it —
+the next push re-enters the normal PR flow. A `⛔` comment, by contrast, means the resolution failed
+*before* the push and was discarded; `/pi retry` re-runs it.
+
+### Project memory looks stale or wrong
+
+Notes live in `<data-dir>/memory/*.md` and are advisory. Delete or edit a wrong note by hand; a file the
+worker skips (bad name, over 4 KB, secret-looking content) is named in the worker's journal line
+`memory note skipped`. `instance-timing.md` is rewritten by the worker after every launch.
+
+### Retrying a blocked base-branch conflict resolution
+
+Post a trusted `/pi retry` on the PR. The controller forgets the processed
+`merge-conflict:<pr>:<base>:<head>:<base-oid>` event and re-runs the resolution on its next poll; the PR's
+base commit as GitHub reports it (`baseRefOid`) does not move when the base branch does, so without the
+retry the block would persist until the PR head changed.
 
 ## Draft PR CI is failing or unattended
 

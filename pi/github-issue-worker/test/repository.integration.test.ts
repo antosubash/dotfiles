@@ -197,8 +197,15 @@ test("repository manager merges a fresh base and commits an agent-resolved confl
     const featureHead = await manager.headRevision(worktree.path);
     const merge = await manager.beginBaseMerge(worktree.path, worktree.branch, featureHead);
     assert.deepEqual(merge.conflicts, ["shared.txt"]);
+    // The agent may only edit the working tree — `git add` is policy-blocked — so the controller stages
+    // the resolution itself, and does so BEFORE the QA gate: a verifier that sees `UU` entries in `git
+    // status` rightly fails its diff review, which is exactly how iiasa/IIASA.GeoWiki#501 was blocked.
     await writeFile(join(worktree.path, "shared.txt"), "base and feature\n");
-    await execFile("git", ["add", "shared.txt"], { cwd: worktree.path });
+    await manager.stageBaseMerge(worktree.path, worktree.branch);
+    const status = (await execFile("git", ["status", "--porcelain"], { cwd: worktree.path })).stdout;
+    assert.doesNotMatch(status, /^(?:UU|AA|DU|UD|AU|UA|DD) /m);
+    assert.match(status, /^M {2}shared\.txt$/m);
+    assert.equal(await manager.hasMergeInProgress(worktree.path), true);
     const resumed = await manager.beginBaseMerge(worktree.path, worktree.branch, featureHead);
     assert.equal(resumed.mergeInProgress, true);
     assert.deepEqual(resumed.conflicts, []);

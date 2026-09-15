@@ -123,6 +123,8 @@ test("QA is a fresh independent run and follows optional plan checks; source mut
     const report = await service.verify(issue, f.worktree, null);
     assert.equal(JSON.parse(await readFile(report, "utf8")).status, "passed");
     await service.verify(issue, f.worktree, plan);
+    // An identical tree and plan would reuse the passed verdict above; change the tree so this run is real.
+    await writeFile(join(f.worktree, "source.txt"), "second revision\n");
     mutate = true;
     await assert.rejects(service.verify(issue, f.worktree, plan), /changed source/);
   } finally { await f.cleanup(); }
