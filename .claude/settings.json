@@ -55,6 +55,7 @@
   },
   "tui": "fullscreen",
   "skipDangerousModePermissionPrompt": true,
+  "theme": "dark",
   "autoCompactEnabled": true,
   "remoteControlAtStartup": true,
   "agentPushNotifEnabled": true,
@@ -91,5 +92,6 @@
       "**Org-specific CLIs**: None configured",
       "routine under `~/dotfiles/` prefix: local install/setup scripts (install.sh, install.ps1, scripts/setup-*.sh) are this repo's own tooling"
     ]
-  }
+  },
+  "hooks": {"SessionStart":[{"matcher":"^(startup|resume|clear|compact|fork)$","hooks":[{"type":"command","command":"bash '/home/anto/.claude/hooks/herdr-agent-state.sh' session","timeout":10}]}]}
 }
