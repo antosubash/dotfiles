@@ -16,7 +16,9 @@ PROJECT="$TMP/project"
 PI_HOME="$TMP/pi-home"
 MARKER="$TMP/runtime-marker"
 mkdir -p "$PROJECT/.pi/agents" "$PI_HOME"
-cp "$ROOT/pi/agent/agents/scout.md" "$PROJECT/.pi/agents/scout.md"
+for agent in scout planner worker reviewer reviewer-fast browser-qa design-verifier issue-verifier; do
+    cp "$ROOT/pi/agent/agents/$agent.md" "$PROJECT/.pi/agents/$agent.md"
+done
 cat > "$PROJECT/.pi/agents/runtime-fable.md" <<'EOF'
 ---
 name: runtime-fable
@@ -46,22 +48,49 @@ import subagentExtension, { buildChildPiArgs, MAX_CHAIN_STEPS, runSingleAgent } 
 import approvalExtension, { destructiveCommandRisks } from "${ROOT}/pi/agent/extensions/destructive-command-approval.ts";
 
 export default async function () {
+  const tiers = {
+    haiku: "openai-codex/gpt-6-luna",
+    sonnet: "openai-codex/gpt-6-sol",
+    opus: "openai-codex/gpt-6.1-sol",
+    fable: "openai-codex/gpt-6-astra",
+  };
+  const fixtures = Object.entries(tiers).flatMap(([tier, model]) =>
+    [tier, "claude-" + tier + "-fixture"].map((alias) => ({ alias, model })),
+  );
+  fixtures.push({ alias: "openai-codex/gpt-6.1-sol", model: "openai-codex/gpt-6.1-sol" });
+  fixtures.forEach(({ alias }, index) => {
+    const name = "model-fixture-" + index;
+    fs.writeFileSync(".pi/agents/" + name + ".md", [
+      "---", "name: " + name, "description: Model fixture", "model: " + alias, "---", "Fixture.",
+    ].join("\n"));
+  });
   const found = discoverAgents(process.cwd(), "project").agents.find((agent) => agent.name === "runtime-alias");
-  if (!found || found.model !== "openai-codex/gpt-5.6-luna" || found.tools?.join(",") !== "read,grep") {
+  if (!found || found.model !== "openai-codex/gpt-6-luna" || found.tools?.join(",") !== "read,grep") {
     throw new Error("agent alias/tool discovery failed");
   }
 
   const agents = discoverAgents(process.cwd(), "project").agents;
-  if (agents.find((agent) => agent.name === "scout")?.model !== "openai-codex/gpt-5.3-codex-spark") {
-    throw new Error("scout must use Spark");
+  fixtures.forEach(({ model }, index) => {
+    assert.equal(agents.find((agent) => agent.name === "model-fixture-" + index)?.model, model);
+  });
+  for (const name of ["planner", "worker", "reviewer", "browser-qa", "design-verifier", "issue-verifier"]) {
+    assert.equal(agents.find((agent) => agent.name === name)?.model, tiers.sonnet, name);
   }
+  assert.equal(agents.find((agent) => agent.name === "reviewer-fast")?.model, tiers.haiku);
+  assert.equal(agents.find((agent) => agent.name === "scout")?.model, tiers.haiku, "scout must use Luna");
   if (agents.find((agent) => agent.name === "runtime-fable")?.model !== "openai-codex/gpt-6-astra") {
     throw new Error("Fable must retain GPT-6 Astra");
   }
   const settings = JSON.parse(fs.readFileSync("${ROOT}/pi/agent/settings.json", "utf8"));
-  if (settings.defaultModel !== "gpt-6-astra" || !settings.enabledModels.includes("openai-codex/gpt-5.3-codex-spark:medium")) {
-    throw new Error("Spark enablement or GPT-6 default regressed");
-  }
+  assert.equal(settings.defaultProvider, "openai-codex");
+  assert.equal(settings.defaultModel, "gpt-6-astra");
+  assert.equal(settings.defaultThinkingLevel, "high");
+  assert.deepEqual(settings.enabledModels, [
+    "openai-codex/gpt-6-astra:high",
+    "openai-codex/gpt-6.1-sol:high",
+    "openai-codex/gpt-6-sol:high",
+    "openai-codex/gpt-6-luna:medium",
+  ]);
 
   if (destructiveCommandRisks("rm -f /tmp/stale-log").length !== 0) {
     throw new Error("routine forced cleanup should not prompt");

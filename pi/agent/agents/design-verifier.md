@@ -1,7 +1,7 @@
 ---
 name: design-verifier
 description: Independent Figma-to-implementation visual verification; reports mismatches without changing source
-model: openai-codex/gpt-5.6-terra
+model: openai-codex/gpt-6-sol
 tools: read, write, bash
 ---
 

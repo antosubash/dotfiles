@@ -58,7 +58,7 @@ test("does not substitute review or unrelated model-specific limits", () => {
 
 test("selects Spark's own allowance only for the Spark model", () => {
 	assert.equal(usageScope(SPARK_MODEL), "spark");
-	for (const model of [undefined, "gpt-6-astra", "gpt-5.6-terra", "my-spark-proxy"]) {
+	for (const model of [undefined, "gpt-6-astra", "gpt-6-sol", "my-spark-proxy"]) {
 		assert.equal(usageScope(model), "codex");
 	}
 	const spark = parseUsage(withSpark, NOW, "spark");

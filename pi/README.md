@@ -43,25 +43,27 @@ The extension maps Claude model tiers when loading shared agents:
 
 | Claude tier | Pi model |
 |---|---|
-| Haiku | `openai-codex/gpt-5.6-luna` |
-| Sonnet | `openai-codex/gpt-5.6-terra` |
-| Opus | `openai-codex/gpt-5.6-sol` |
+| Haiku | `openai-codex/gpt-6-luna` |
+| Sonnet | `openai-codex/gpt-6-sol` |
+| Opus | `openai-codex/gpt-6.1-sol` |
 | Fable | `openai-codex/gpt-6-astra` |
 
-Pi-specific `scout`, `planner`, `worker`, `reviewer`, `reviewer-fast`, and `browser-qa` agents live beside the shared specialists. `/ship` uses the full Terra reviewer once, then the Luna reviewer only for known findings and fix/QA deltas. P2/P3 advisories are reported without extending the blocking loop.
+Pi-specific `scout`, `planner`, `worker`, `reviewer`, `reviewer-fast`, and `browser-qa` agents live beside the shared specialists. `/ship` uses the full GPT-6 Sol reviewer once, then the GPT-6 Luna reviewer only for known findings and fix/QA deltas. P2/P3 advisories are reported without extending the blocking loop.
 
-### Spark for fast reconnaissance
+Refresh the local catalog with `pi update --models` and inspect OpenAI choices with `pi --list-models openai`. Select the GPT-6 Luna, GPT-6 Sol, or GPT-6.1 Sol tiers with `/model openai-codex/<model>`; their configured thinking levels are preserved in `enabledModels`.
+
+### Luna for fast reconnaissance
 
 The default interactive model remains GPT-6 Astra. The read-only `scout` agent uses
-`openai-codex/gpt-5.3-codex-spark` for focused repository reconnaissance. Planner,
-worker, reviewer, and browser QA remain on Terra; `reviewer-fast` and Haiku aliases
-remain on Luna. Spark is text-only with a 128K context window: keep screenshot QA
-and broad implementation/review work on the existing models.
+`openai-codex/gpt-6-luna` for focused repository reconnaissance. Planner,
+worker, reviewer, and browser QA run on GPT-6 Sol; `reviewer-fast` and Haiku aliases
+also run on GPT-6 Luna.
 
-Spark is also in `enabledModels` with medium thinking for model cycling. To try it
-interactively, use `/model openai-codex/gpt-5.3-codex-spark`. Scout's explicit model
-pin does not change the parent session's model. No headless issue-worker profile
-is changed by this configuration.
+Luna is in `enabledModels` with medium thinking for model cycling; Spark is no longer
+in the configured model list. To use Luna interactively, run
+`/model openai-codex/gpt-6-luna`. Scout's explicit model pin does not change the
+parent session's model. The headless issue worker defaults to GPT-6 Sol;
+explicit `PI_WORKER_MODEL` environment overrides remain preserved.
 
 ## Subscription usage footer
 
@@ -75,7 +77,8 @@ Codex used · 5h ██░░░ 35% ↻2h15m · wk █░░░░ 11% ↻1d20h
 Percentages are **used**, not remaining. Bars turn yellow at 70% and red at 90%.
 The extension reads ChatGPT's usage endpoint with Pi's resolved Codex login. It shows
 `Codex used` for the main allowance, or `Spark used` with the separate Spark 5-hour
-and weekly allowances when `gpt-5.3-codex-spark` is selected. Switching models clears
+and weekly allowances for older sessions or manual selection of `gpt-5.3-codex-spark`.
+Spark is not in the configured model cycle. Switching models clears
 the old reading and fetches the correct allowance; it never falls back to main
 quota when Spark data is absent. It polls once a minute and updates reset countdowns every
 15 seconds; `/usage-refresh` requests an immediate refresh. It never stores tokens or
@@ -99,12 +102,11 @@ and before new prompts. It waits for any in-progress policy compaction before
 accepting a new prompt, and honors `compaction.enabled` in global/trusted project
 settings. `/context-policy` shows the current window and trigger threshold.
 
-Current Codex catalog values:
+Current configured models' Codex catalog values:
 
 | Model | Registered window | 80% threshold |
 |---|---:|---:|
-| GPT-6 Astra / GPT-5.6 Sol, Terra, Luna | 272,000 | 217,600 |
-| Codex Spark | 128,000 | 102,400 |
+| GPT-6 Astra / GPT-6.1 Sol, GPT-6 Sol, GPT-6 Luna | 272,000 | 217,600 |
 
 **Safe-boundary limitation:** Pi's public `ctx.compact()` aborts active agent runs;
 it is not an automatic between-tool-turn compaction request. This extension never
