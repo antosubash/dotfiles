@@ -288,16 +288,8 @@ if [ -n "$ZSH_PATH" ]; then
     fi
 fi
 
-# Install Oh My Zsh and plugins
-if [ ! -d "$HOME/.oh-my-zsh" ]; then
-    echo "Installing Oh My Zsh..."
-    RUNZSH=no sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-    git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
-    git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
-    sed -i 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting)/' ~/.zshrc
-else
-    echo "Oh My Zsh is already installed."
-fi
+# Install Oh My Zsh, plugins, and Powerlevel10k (repairs a custom/-only partial install)
+bash "$(dirname "${BASH_SOURCE[0]}")/setup-oh-my-zsh.sh"
 
 # Install tmux plugin manager (tpm) — required for .tmux.conf plugins.
 echo "Installing tmux plugin manager..."

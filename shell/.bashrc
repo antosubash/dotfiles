@@ -54,19 +54,18 @@ if [ -f "$HOME/.update_aliases" ]; then
     source "$HOME/.update_aliases"
 fi
 
-# Update command aliases
-if [ -f "$HOME/.update_aliases" ]; then
-    source "$HOME/.update_aliases"
-fi
+# Rust / cargo
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
-# Update command aliases
-if [ -f "$HOME/.update_aliases" ]; then
-    source "$HOME/.update_aliases"
-fi
-. "$HOME/.cargo/env"
+# .NET
+export DOTNET_ROOT="$HOME/.dotnet"
+export PATH="$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools"
+
+# Go toolchain
+export PATH="$PATH:/usr/local/go/bin"
 
 # pnpm
-export PNPM_HOME="/root/.local/share/pnpm"
+export PNPM_HOME="$HOME/.local/share/pnpm"
 case ":$PATH:" in
   *":$PNPM_HOME/bin:"*) ;;
   *) export PATH="$PNPM_HOME/bin:$PATH" ;;
@@ -87,14 +86,4 @@ if command -v atuin > /dev/null 2>&1; then
     fi
     [ -f "$HOME/.bash-preexec.sh" ] && . "$HOME/.bash-preexec.sh"
     eval "$(atuin init bash)"
-fi
-export DOTNET_ROOT=$HOME/.dotnet
-export PATH=$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools
-export PATH=$PATH:/usr/local/go/bin
-source ~/.cargo/env
-export PATH=$PATH:~/go/bin
-
-# Update command aliases
-if [ -f "$HOME/.update_aliases" ]; then
-    source "$HOME/.update_aliases"
 fi

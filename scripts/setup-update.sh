@@ -122,31 +122,12 @@ EOF
 update_shell_configs() {
     info "Updating shell configurations..."
     
-    # Update .zshrc
-    if [[ -f "$HOME/dotfiles/shell/.zshrc" ]]; then
-        if ! grep -q "update command aliases" "$HOME/dotfiles/shell/.zshrc"; then
-            cat >> "$HOME/dotfiles/shell/.zshrc" << 'EOF'
+    # .zshrc needs nothing: shell/aliases.zsh already sources ~/.update_aliases
+    # and defines the update aliases with a fallback to the repo scripts.
 
-# Update command aliases
-if [ -f "$HOME/.update_aliases" ]; then
-    source "$HOME/.update_aliases"
-fi
-
-# Update commands
-alias update='~/.local/bin/update'
-alias update-quick='~/.local/bin/update-quick'
-alias upd='update-quick'
-alias upf='update'
-EOF
-            log "Updated .zshrc with update aliases"
-        else
-            log ".zshrc already has update aliases"
-        fi
-    fi
-    
     # Update .bashrc if it exists
     if [[ -f "$HOME/dotfiles/shell/.bashrc" ]]; then
-        if ! grep -q "update command aliases" "$HOME/dotfiles/shell/.bashrc"; then
+        if ! grep -qF '.update_aliases' "$HOME/dotfiles/shell/.bashrc"; then
             cat >> "$HOME/dotfiles/shell/.bashrc" << 'EOF'
 
 # Update command aliases

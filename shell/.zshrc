@@ -130,8 +130,12 @@ fi
 # aliases.zsh and would clobber that fallback, breaking `update` whenever the
 # binary isn't installed.
 
-# pnpm
+# pnpm (11+ keeps its binaries in $PNPM_HOME/bin; older versions in $PNPM_HOME)
 export PNPM_HOME="$HOME/.local/share/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME/bin:"*) ;;
+  *) export PATH="$PNPM_HOME/bin:$PATH" ;;
+esac
 case ":$PATH:" in
   *":$PNPM_HOME:"*) ;;
   *) export PATH="$PNPM_HOME:$PATH" ;;
