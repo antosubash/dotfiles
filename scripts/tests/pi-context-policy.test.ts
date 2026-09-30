@@ -13,7 +13,7 @@ function harness() {
 	let queued = false;
 	let leaf = "entry-1";
 	let usage: any = { tokens: 200_000, contextWindow: 272_000 };
-	const model = { id: "gpt-6-astra", provider: "openai-codex", contextWindow: 272_000 };
+	const model = { id: "gpt-6-astra", provider: "openai", contextWindow: 272_000 };
 	const ctx: any = {
 		model, hasUI: true,
 		getContextUsage: () => usage,

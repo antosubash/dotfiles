@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.99.1",
   "defaultProvider": "openai",
-  "defaultModel": "gpt-5.5",
+  "defaultModel": "gpt-6-astra",
   "defaultThinkingLevel": "high",
   "compaction": {
     "enabled": true,
@@ -13,10 +13,10 @@
   "collapseChangelog": true,
   "treeFilterMode": "no-tools",
   "enabledModels": [
-    "openai-codex/gpt-6-astra:high",
-    "openai-codex/gpt-6.1-sol:high",
-    "openai-codex/gpt-6-sol:high",
-    "openai-codex/gpt-6-luna:medium"
+    "openai/gpt-6-astra:high",
+    "openai/gpt-6.1-sol:high",
+    "openai/gpt-6-sol:high",
+    "openai/gpt-6-luna:medium"
   ],
   "showCacheMissNotices": true,
   "deviceId": "4ccc7739-e8b1-4f66-a9e6-34aac10383c2"
