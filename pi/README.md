@@ -43,25 +43,25 @@ The extension maps Claude model tiers when loading shared agents:
 
 | Claude tier | Pi model |
 |---|---|
-| Haiku | `openai-codex/gpt-6-luna` |
-| Sonnet | `openai-codex/gpt-6-sol` |
-| Opus | `openai-codex/gpt-6.1-sol` |
-| Fable | `openai-codex/gpt-6-astra` |
+| Haiku | `openai/gpt-6-luna` |
+| Sonnet | `openai/gpt-6-sol` |
+| Opus | `openai/gpt-6.1-sol` |
+| Fable | `openai/gpt-6-astra` |
 
 Pi-specific `scout`, `planner`, `worker`, `reviewer`, `reviewer-fast`, and `browser-qa` agents live beside the shared specialists. `/ship` uses the full GPT-6 Sol reviewer once, then the GPT-6 Luna reviewer only for known findings and fix/QA deltas. P2/P3 advisories are reported without extending the blocking loop.
 
-Refresh the local catalog with `pi update --models` and inspect OpenAI choices with `pi --list-models openai`. Select the GPT-6 Luna, GPT-6 Sol, or GPT-6.1 Sol tiers with `/model openai-codex/<model>`; their configured thinking levels are preserved in `enabledModels`.
+Refresh the local catalog with `pi update --models` and inspect OpenAI choices with `pi --list-models openai`. Select the GPT-6 Astra, GPT-6 Luna, GPT-6 Sol, or GPT-6.1 Sol tiers with `/model openai/<model>`; their configured thinking levels are preserved in `enabledModels`.
 
-### Luna for fast reconnaissance
+### Astra default and Luna reconnaissance
 
-The default interactive model remains GPT-6 Astra. The read-only `scout` agent uses
-`openai-codex/gpt-6-luna` for focused repository reconnaissance. Planner,
+The default interactive model is `openai/gpt-6-astra` with high thinking. The read-only
+`scout` agent uses `openai/gpt-6-luna` for focused repository reconnaissance. Planner,
 worker, reviewer, and browser QA run on GPT-6 Sol; `reviewer-fast` and Haiku aliases
 also run on GPT-6 Luna.
 
-Luna is in `enabledModels` with medium thinking for model cycling; Spark is no longer
-in the configured model list. To use Luna interactively, run
-`/model openai-codex/gpt-6-luna`. Scout's explicit model pin does not change the
+Astra is the default, and Luna remains in `enabledModels` with medium thinking for model
+cycling; Spark is no longer in the configured model list. To use Luna interactively, run
+`/model openai/gpt-6-luna`. Scout's explicit model pin does not change the
 parent session's model. The headless issue worker defaults to GPT-6 Sol;
 explicit `PI_WORKER_MODEL` environment overrides remain preserved.
 
@@ -102,7 +102,7 @@ and before new prompts. It waits for any in-progress policy compaction before
 accepting a new prompt, and honors `compaction.enabled` in global/trusted project
 settings. `/context-policy` shows the current window and trigger threshold.
 
-Current configured models' Codex catalog values:
+Current configured GPT-6 models' OpenAI catalog values:
 
 | Model | Registered window | 80% threshold |
 |---|---:|---:|
@@ -118,8 +118,8 @@ and resume within a long run. The extension does not monkey-patch Pi internals.
 The model's registered window is never reduced to implement the 80% trigger.
 Thresholds automatically follow model switches and supported catalog/`models.json`
 window changes. No speculative large-window override is installed: the 1.05M
-window documented for direct OpenAI API models is not verified for this Codex
-backend. A catalog default is not necessarily the provider's maximum possible
+window documented for some OpenAI API models is not verified for these configured
+models. A catalog default is not necessarily the provider's maximum possible
 window; only raise it after confirming backend support (and long-context costs).
 
 Run `scripts/tests/test-pi-context-policy.sh` for offline lifecycle checks.

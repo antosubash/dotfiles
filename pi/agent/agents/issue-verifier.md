@@ -1,7 +1,7 @@
 ---
 name: issue-verifier
 description: Independently verify implemented GitHub issues against saved pi-plan checks or ordinary acceptance/regression QA
-model: openai-codex/gpt-6-sol
+model: openai/gpt-6-sol
 tools: read, write, bash
 ---
 

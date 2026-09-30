@@ -24,7 +24,7 @@ test("loadConfig uses a hashed default when no legacy directory exists", () => {
     assert.equal(config.baseBranch, "develop");
     assert.equal(config.maxCiFixAttempts, 3);
     assert.equal(config.agentTimeoutMinutes, 60);
-    assert.equal(config.model, "openai-codex/gpt-6-sol");
+    assert.equal(config.model, "openai/gpt-6-sol");
     assert.deepEqual(config.protectedPaths, [".git", ".github/workflows", ".pi", ".pi-worker"]);
     assert.equal(config.qaManifestPath, ".pi-worker/qa.json");
     assert.equal(config.allowDocker, config.dockerSocket !== null);
@@ -81,8 +81,12 @@ test("loadConfig supports one instance profile per repository", () => {
 
 test("loadConfig validates and overrides the Pi model", () => {
   assert.equal(
-    loadConfig({ ...base, PI_WORKER_MODEL: "openai-codex/gpt-6.1-sol" }).model,
-    "openai-codex/gpt-6.1-sol",
+    loadConfig({ ...base, PI_WORKER_MODEL: "openai/gpt-6.1-sol" }).model,
+    "openai/gpt-6.1-sol",
+  );
+  assert.equal(
+    loadConfig({ ...base, PI_WORKER_MODEL: "custom-provider/custom-model" }).model,
+    "custom-provider/custom-model",
   );
   assert.throws(() => loadConfig({ ...base, PI_WORKER_MODEL: "gpt-6-luna" }), /provider\/model/);
 });

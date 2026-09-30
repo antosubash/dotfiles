@@ -189,7 +189,7 @@ Included workflows:
 - `/ship` — worktree-gated review ↔ QA convergence followed by exactly one PR
 - `/repos-sync` — safe workspace synchronization
 
-Write-capable Pi workflows create or reuse linked Git worktrees by default and preserve them for resume/audit. Every new worktree starts from the freshly fetched origin default branch, never the caller's current `HEAD` or local default branch. A dirty primary checkout is never moved or auto-stashed; `--no-worktree` is required to opt out explicitly. Claude specialist agents under `.claude/agents/` are shared with Pi. Claude model tiers are mapped to the configured Codex models. Recognizable destructive shell commands trigger a best-effort interactive approval guard and are blocked in non-interactive runs; this is not a sandbox.
+Write-capable Pi workflows create or reuse linked Git worktrees by default and preserve them for resume/audit. Every new worktree starts from the freshly fetched origin default branch, never the caller's current `HEAD` or local default branch. A dirty primary checkout is never moved or auto-stashed; `--no-worktree` is required to opt out explicitly. Claude specialist agents under `.claude/agents/` are shared with Pi. Claude model tiers are mapped to the configured OpenAI GPT-6 models. Recognizable destructive shell commands trigger a best-effort interactive approval guard and are blocked in non-interactive runs; this is not a sandbox.
 
 Every implemented issue gets independent `issue-verifier` QA before completion/shipping. A saved `/pi-plan`
 checklist is followed when explicitly requested; otherwise the usual acceptance/regression QA runs without
