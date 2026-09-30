@@ -10,7 +10,7 @@ sudo apt update
 
 # Install basic system tools
 echo "Installing basic system tools..."
-if ! command -v git &> /dev/null || ! command -v curl &> /dev/null || ! command -v wget &> /dev/null; then
+if ! command -v git &> /dev/null || ! command -v curl &> /dev/null || ! command -v wget &> /dev/null || ! command -v fastfetch &> /dev/null; then
     sudo apt install -y curl wget htop fastfetch vim nano build-essential net-tools openssl git
 else
     echo "Basic system tools are already installed."
@@ -35,7 +35,7 @@ if ! command -v go &> /dev/null; then
     wget https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
     sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
     rm go1.21.5.linux-amd64.tar.gz
-    if ! grep -q 'export PATH=$PATH:/usr/local/go/bin' ~/.zshrc 2>/dev/null; then
+    if ! grep -q '/usr/local/go/bin' ~/.zshrc 2>/dev/null; then
         echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.zshrc
     fi
     export PATH=$PATH:/usr/local/go/bin
@@ -43,10 +43,11 @@ else
     echo "Go is already installed."
 fi
 if ! command -v rustc &> /dev/null; then
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    # --no-modify-path: rustup would otherwise append to the symlinked ~/.profile and ~/.bashrc.
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
     # shellcheck source=/dev/null
     source ~/.cargo/env
-    if ! grep -q 'source ~/.cargo/env' ~/.zshrc 2>/dev/null; then
+    if ! grep -q '\.cargo/env' ~/.zshrc 2>/dev/null; then
         echo 'source ~/.cargo/env' >> ~/.zshrc
     fi
 else
@@ -100,7 +101,7 @@ fi
 if ! command -v curlie &> /dev/null; then
     if command -v go &> /dev/null; then
         go install github.com/rs/curlie@v1.6.0
-        if ! grep -q 'export PATH=$PATH:~/go/bin' ~/.zshrc 2>/dev/null; then
+        if ! grep -qE '(~|\$HOME)/go/bin' ~/.zshrc 2>/dev/null; then
             echo 'export PATH=$PATH:~/go/bin' >> ~/.zshrc
         fi
         export PATH=$PATH:~/go/bin
@@ -137,6 +138,17 @@ else
     echo "UFW is already installed."
 fi
 
+# Install and enable the SSH server
+echo "Installing SSH server..."
+if [ ! -x /usr/sbin/sshd ]; then
+    sudo apt install -y openssh-server
+else
+    echo "OpenSSH server is already installed."
+fi
+sudo systemctl enable --now ssh
+# Pre-allow SSH so enabling UFW later can't lock out remote sessions.
+sudo ufw allow OpenSSH
+
 # Install VPN tools
 echo "Installing VPN tools..."
 if ! command -v tailscale &> /dev/null; then
@@ -157,25 +169,24 @@ if ! command -v tmux &> /dev/null || ! command -v fzf &> /dev/null || ! command 
 else
     echo "Productivity tools are already installed."
 fi
+# Ubuntu ships fd as `fdfind`; the shell config and tools expect `fd`.
+if ! command -v fd &> /dev/null && command -v fdfind &> /dev/null; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
+fi
 if ! command -v zsh &> /dev/null; then
     sudo apt install -y zsh
 else
     echo "ZSH is already installed."
 fi
-
-# Install Oh My Zsh and plugins
-if [ ! -d "$HOME/.oh-my-zsh" ]; then
-    echo "Installing Oh My Zsh..."
-    RUNZSH=no sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-    # Install zsh-autosuggestions
-    git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
-    # Install zsh-syntax-highlighting
-    git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
-    # Update .zshrc to include plugins
-    sed -i 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting)/' ~/.zshrc
-else
-    echo "Oh My Zsh is already installed."
+ZSH_PATH="$(command -v zsh)"
+if [ "$(getent passwd "$USER" | cut -d: -f7)" != "$ZSH_PATH" ]; then
+    echo "Making zsh the default login shell..."
+    sudo chsh -s "$ZSH_PATH" "$USER"
 fi
+
+# Install Oh My Zsh, plugins, and Powerlevel10k (repairs a custom/-only partial install)
+bash "$(dirname "${BASH_SOURCE[0]}")/setup-oh-my-zsh.sh"
 
 # Install Lazygit
 echo "Installing Lazygit..."
@@ -237,17 +248,40 @@ fi
 # Install pnpm
 echo "Installing pnpm..."
 if ! command -v pnpm &> /dev/null; then
+    # The installer's `pnpm setup` rewrites the rc file of $SHELL, replacing the
+    # dotfiles symlink with a regular file. The dotfiles rc files already set
+    # PNPM_HOME, so put any clobbered symlinks back afterwards.
+    rc_links=()
+    for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+        [ -L "$rc" ] && rc_links+=("$rc" "$(readlink "$rc")")
+    done
     curl -fsSL https://get.pnpm.io/install.sh | sh -
-    # Add to PATH for current session
+    for ((i = 0; i < ${#rc_links[@]}; i += 2)); do
+        rc="${rc_links[i]}"
+        if [ ! -L "$rc" ]; then
+            mv "$rc" "$HOME/.dotfiles_backup/$(basename "$rc").pnpm-setup"
+            ln -s "${rc_links[i + 1]}" "$rc"
+            echo "Restored dotfiles symlink $rc (pnpm setup had replaced it)"
+        fi
+    done
+    # Add to PATH for current session (pnpm 11+ puts its binaries in $PNPM_HOME/bin)
     export PNPM_HOME="$HOME/.local/share/pnpm"
-    export PATH="$PNPM_HOME:$PATH"
+    export PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
     # Add to .zshrc for persistence
     if ! grep -q 'PNPM_HOME' ~/.zshrc 2>/dev/null; then
         echo 'export PNPM_HOME="$HOME/.local/share/pnpm"' >> ~/.zshrc
-        echo 'export PATH="$PNPM_HOME:$PATH"' >> ~/.zshrc
+        echo 'export PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"' >> ~/.zshrc
     fi
 else
     echo "pnpm is already installed."
+fi
+
+# Install Pi coding agent (config is linked by install.sh via setup-pi.sh)
+echo "Installing Pi coding agent..."
+if ! command -v pi &> /dev/null; then
+    sudo npm install -g @earendil-works/pi-coding-agent
+else
+    echo "Pi is already installed."
 fi
 
 # Install Python tools
@@ -261,13 +295,10 @@ fi
 # Install uv (Python package manager)
 echo "Installing uv..."
 if ! command -v uv &> /dev/null; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    # Add to PATH for current session (ZSH)
-    export PATH="$HOME/.cargo/bin:$PATH"
-    # Add to .zshrc for persistence
-    if ! grep -q 'export PATH="$HOME/.cargo/bin:$PATH"' ~/.zshrc 2>/dev/null; then
-        echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
-    fi
+    # uv installs to ~/.local/bin, which the dotfiles rc files already put on
+    # PATH, so stop the installer appending to them.
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
+    export PATH="$HOME/.local/bin:$PATH"
 else
     echo "uv is already installed."
 fi

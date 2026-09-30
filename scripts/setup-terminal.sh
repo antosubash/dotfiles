@@ -8,12 +8,8 @@ set -e
 # Constants
 readonly DOTFILES_DIR="${DOTFILES_DIR:-$HOME/dotfiles}"
 readonly ZSH_DIR="$HOME/.oh-my-zsh"
-readonly ZSH_CUSTOM_DIR="$ZSH_DIR/custom"
-readonly P10K_DIR="$ZSH_CUSTOM_DIR/themes/powerlevel10k"
 readonly ALACRITTY_CONFIG_DIR="$HOME/.config/alacritty"
 readonly FONT_MESLO="MesloLGS NF"
-readonly OH_MY_ZSH_URL="https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
-readonly P10K_URL="https://github.com/romkatv/powerlevel10k.git"
 
 # Colors for output
 readonly GREEN='\033[0;32m'
@@ -48,7 +44,11 @@ backup_and_symlink() {
     mkdir -p "$backup_dir"
     mkdir -p "$dest_dir"
     
-    if [ -f "$dest" ] || [ -d "$dest" ] || [ -L "$dest" ]; then
+    # Replace existing symlinks outright: moving them into the backup dir on a
+    # re-run would overwrite the real backup of the original file.
+    if [ -L "$dest" ]; then
+        rm "$dest"
+    elif [ -e "$dest" ]; then
         print_info "Backing up $dest to $backup_dir"
         mv "$dest" "$backup_dir/" 2>/dev/null || true
     fi
@@ -83,39 +83,12 @@ check_dependencies() {
         print_status "Zsh already installed"
     fi
     
-    if [[ ! -d "$ZSH_DIR" ]]; then
-        print_warning "Oh My Zsh not found. Installing..."
-        if sh -c "$(curl -fsSL $OH_MY_ZSH_URL)" "" --unattended; then
-            print_status "Oh My Zsh installed"
-        else
-            print_error "Failed to install Oh My Zsh"
-            return 1
-        fi
+    # Oh My Zsh, plugins, and Powerlevel10k (repairs a custom/-only partial install)
+    if bash "$(dirname "${BASH_SOURCE[0]}")/setup-oh-my-zsh.sh"; then
+        print_status "Oh My Zsh, plugins, and Powerlevel10k installed"
     else
-        print_status "Oh My Zsh already installed"
-    fi
-    
-    # Install zsh plugins if missing
-    if [[ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions" ]]; then
-        print_info "Installing zsh-autosuggestions..."
-        git clone https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM_DIR/plugins/zsh-autosuggestions" 2>/dev/null || print_warning "Failed to install zsh-autosuggestions"
-    fi
-    
-    if [[ ! -d "$ZSH_CUSTOM_DIR/plugins/zsh-syntax-highlighting" ]]; then
-        print_info "Installing zsh-syntax-highlighting..."
-        git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUSTOM_DIR/plugins/zsh-syntax-highlighting" 2>/dev/null || print_warning "Failed to install zsh-syntax-highlighting"
-    fi
-    
-    # Install Powerlevel10k theme
-    if [[ ! -d "$P10K_DIR" ]]; then
-        print_info "Installing Powerlevel10k theme..."
-        if git clone --depth=1 "$P10K_URL" "$P10K_DIR" 2>/dev/null; then
-            print_status "Powerlevel10k installed"
-        else
-            print_warning "Failed to install Powerlevel10k"
-        fi
-    else
-        print_status "Powerlevel10k already installed"
+        print_error "Failed to install Oh My Zsh"
+        return 1
     fi
     
     print_status "Dependencies checked"
@@ -287,7 +260,7 @@ verify_installation() {
         ((errors++))
     fi
     
-    if [[ ! -d "$ZSH_DIR" ]]; then
+    if [[ ! -f "$ZSH_DIR/oh-my-zsh.sh" ]]; then
         print_error "Oh My Zsh is not installed"
         ((errors++))
     fi

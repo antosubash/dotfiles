@@ -103,6 +103,7 @@ dotfiles/
 │   ├── setup-windows.ps1   # Windows development setup (winget + scoop)
 │   ├── setup-windows-terminal.ps1 # Windows Terminal + oh-my-posh + Alacritty
 │   ├── update-windows.ps1  # Update winget + scoop + modules + WSL distros
+│   ├── setup-oh-my-zsh.sh  # Oh My Zsh + plugins + Powerlevel10k (shared by the setup scripts)
 │   ├── setup-agnoster.sh   # Agnoster theme installer
 │   ├── setup-terminal.sh    # Terminal theme configuration
 │   ├── setup-pi-issue-worker.sh # Install the generic headless Pi GitHub worker
