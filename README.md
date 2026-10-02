@@ -224,7 +224,21 @@ The installer does not enable a repository or mutate GitHub. See the
 [worker overview](pi/github-issue-worker/README.md), [installation guide](pi/github-issue-worker/docs/installation.md),
 and [troubleshooting guide](pi/github-issue-worker/docs/troubleshooting.md).
 
-### 4. Shell Theme Setup
+### 4. Claude Code Workflow
+
+`scripts/setup-claude.sh` (run by `install.sh`) links `.claude/settings.json`, `.claude/CLAUDE.md`, agents and commands into `~/.claude/`. The global `CLAUDE.md` tells Claude to work autonomously: do in-scope follow-ups instead of offering them, run and watch things itself, batch questions, and ask for one design approval instead of one per section.
+
+Global commands:
+
+- `/feature` — idea or GitHub issue → one batch of questions → one design approval → plan → subagent implementation in a worktree → `/ship`
+- `/ship` — clean-tree checkpoint → `/optimize` → code-review ↔ QA convergence → `/vf` → exactly one PR
+- `/optimize` — shrink and dedupe the branch's code without changing behavior, one verified commit per batch
+- `/qa` — parallel Playwright browser QA with auto-fix
+- `/vf` — browser check, local CI, then PR
+- `/runbook` — write the repo's `running-the-stack` skill so every session can start the app without asking
+- `/repos-sync` — sync every repo under `~/Repos`
+
+### 5. Shell Theme Setup
 
 #### Agnoster Theme (Recommended)
 
@@ -243,7 +257,7 @@ and [troubleshooting guide](pi/github-issue-worker/docs/troubleshooting.md).
 ./scripts/setup-terminal.sh
 ```
 
-### 5. Update System Setup
+### 6. Update System Setup
 
 ```bash
 # Install update commands

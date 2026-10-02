@@ -16,11 +16,23 @@
       "WebFetch",
       "WebSearch",
       "Bash(grep:*)",
-      "Bash(/tmp/detailed_inconsistencies.txt:*)",
-      "Bash(/tmp/comprehensive_map_report.txt:*)",
       "Skill(superpowers:brainstorming)"
     ],
     "defaultMode": "auto"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "^(startup|resume|clear|compact|fork)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/home/anto/.claude/hooks/herdr-agent-state.sh' session",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   },
   "statusLine": {
     "type": "command",
@@ -43,7 +55,8 @@
     "security-guidance@claude-plugins-official": true,
     "pr-review-toolkit@claude-plugins-official": true,
     "figma@claude-plugins-official": true,
-    "grafana-mcp@claude-plugins-official": true
+    "grafana-mcp@claude-plugins-official": true,
+    "cc-plugin-you-should-know@builtin": true
   },
   "effortLevel": "xhigh",
   "pluginConfigs": {
@@ -92,6 +105,5 @@
       "**Org-specific CLIs**: None configured",
       "routine under `~/dotfiles/` prefix: local install/setup scripts (install.sh, install.ps1, scripts/setup-*.sh) are this repo's own tooling"
     ]
-  },
-  "hooks": {"SessionStart":[{"matcher":"^(startup|resume|clear|compact|fork)$","hooks":[{"type":"command","command":"bash '/home/anto/.claude/hooks/herdr-agent-state.sh' session","timeout":10}]}]}
+  }
 }
