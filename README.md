@@ -242,24 +242,25 @@ Global commands:
 
 Niche plugins (figma, grafana-mcp, pydantic-ai, chrome-devtools-mcp, …) are off globally to keep every session's context small. Turn them on for one repo with `scripts/claude-plugins.sh enable <plugin>` (writes the repo's untracked `.claude/settings.local.json`). Long command detail lives in `.claude/workflow-refs/` and is read only when a step needs it.
 
-### 5. Shell Theme Setup
-
-#### Agnoster Theme (Recommended)
+### 5. Terminal (Alacritty)
 
 ```bash
-# Install Agnoster theme with fonts
-./scripts/setup-agnoster.sh
-
-# Set terminal font to "Meslo LG Nerd Font"
-# Restart terminal
+./scripts/setup-terminal.sh   # also run by install.sh
 ```
 
-#### Custom Terminal Themes
+Installs the MesloLGS NF font, Powerlevel10k and Alacritty, links `config/alacritty.toml` to `~/.config/alacritty/alacritty.toml`, and on Linux makes Alacritty the default terminal (Ctrl+Alt+T, "Open in Terminal").
 
-```bash
-# Configure terminal colors
-./scripts/setup-terminal.sh
-```
+The config uses Catppuccin Mocha with copy-on-select and 50k lines of scrollback, and live-reloads on save. Keys on top of Alacritty's defaults:
+
+| Keys | Action |
+|---|---|
+| Shift+Enter | Newline in Claude Code / Pi without submitting |
+| Ctrl+Shift+N | New window in the current directory |
+| Ctrl+Shift+K | Clear scrollback |
+| Ctrl+Shift+F / Ctrl+Shift+Space | Search / vi mode (built in) |
+| Ctrl+= / Ctrl+- / Ctrl+0 | Font size (built in) |
+
+Per-machine tweaks (font size on a HiDPI screen, opacity) go in an untracked `~/.config/alacritty/local.toml`, e.g. `[font]` / `size = 14.0`. For terminals other than Alacritty, apply the colors in `config/terminal-colors.md`.
 
 ### 6. Update System Setup
 
