@@ -158,6 +158,15 @@ Choose your platform:
 ./scripts/setup-ubuntu.sh
 ```
 
+#### GIS workstation (Ubuntu, optional)
+
+```bash
+./scripts/setup-gis.sh                       # QGIS LTR
+QGIS_CHANNEL=latest ./scripts/setup-gis.sh   # QGIS latest release
+```
+
+Run after `setup-ubuntu.sh`. Adds the official QGIS apt repository and installs QGIS with GRASS and SAGA, plus tippecanoe, pmtiles, osmium, DuckDB (with the spatial extension), mapshaper, rio-cogeo and pystac-client. Safe to re-run.
+
 **What gets installed:**
 - 📦 Package managers (Homebrew / apt / winget + scoop)
 - 💻 Languages (Node.js, Python, Java, Go, Rust, .NET)
