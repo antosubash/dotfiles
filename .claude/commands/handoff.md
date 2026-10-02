@@ -17,7 +17,14 @@ User invoked with: `$ARGUMENTS`
 
 ## Steps
 
-1. **Check the repo is served.** Resolve the repo; confirm a profile exists: `grep -l "PI_WORKER_REPOSITORY=<owner/repo>$" ~/.config/pi-issue-worker/*.env`. If none, stop and say so — give the one-line fix (copy an existing profile, change `PI_WORKER_REPOSITORY`/`_URL`, `chmod 600`, then `systemctl --user restart pi-issue-worker-supervisor`). Also check `systemctl --user is-active pi-issue-worker-supervisor`; if inactive, say the issue will wait until it's started.
+1. **Make sure pi is serving the repo — set it up if not.** Run `~/dotfiles/scripts/pi-worker-ensure.sh <owner/repo>` (timeout 300000). Add `--app-url http://localhost:<port>` if the repo's `running-the-stack` skill or CLAUDE.md names the app's port. The script is idempotent:
+   - installs the worker if needed;
+   - creates the repo's profile in `~/.config/pi-issue-worker/` if it's missing (sandbox off);
+   - checks GitHub access, the clone and the pi login;
+   - starts or restarts the supervisor (in-flight jobs resume);
+   - waits until the worker has created its `pi-*` labels on the repo.
+
+   It ends with `✓ pi worker is serving …`. If it fails, fix what it reports when you can. Common causes: pi login expired (run any `pi -p` call to refresh it), or `gh` can't access the repo. Then rerun it. Don't create the issue until it passes. If it needs something only the user can do (sudo, `pi` login), give the exact `!` command and stop.
 2. **Write a self-contained issue.** Pi starts with zero context, so the body must stand alone:
    - **Goal** — one or two sentences.
    - **Context** — relevant files/modules (paths), existing patterns to follow, links to the design/plan doc on the branch if there is one (or paste its key decisions).
@@ -25,5 +32,5 @@ User invoked with: `$ARGUMENTS`
    - **Out of scope** — what not to touch.
    - **How to verify** — commands to run; for UI, the route and what to see.
    No secrets, no local-only paths outside the repo.
-3. **Create it:** `gh issue create --repo <repo> --title "<imperative title>" --body-file <tmp> --label pi-ready` (or `pi-plan`; add `pi-visual` if requested). The labels exist once the worker has polled the repo once; if `gh` reports a missing label, create the issue without it and add the label right after the next poll, or tell the user.
+3. **Create it:** `gh issue create --repo <repo> --title "<imperative title>" --body-file <tmp> --label pi-ready` (or `pi-plan`; add `pi-visual` if requested). The labels are guaranteed to exist after step 1.
 4. **Report** the issue URL and what happens next: pi claims it (`pi-working`), opens a draft PR (`pi-pr-open`), or asks for help (`pi-blocked`). On the PR, steer it with comments starting `/pi` — e.g. `/pi fix <what>`, `/pi retry`, `/pi verify visual`, `/pi stop`. When the draft PR is ready, `/ship` on its branch (or a normal review) takes it to merge-ready.

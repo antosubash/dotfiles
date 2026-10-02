@@ -236,6 +236,7 @@ Global commands:
 - `/qa` — parallel Playwright browser QA with auto-fix
 - `/vf` — browser check, local CI, then PR
 - `/handoff` — turn a decided task or approved design into a `pi-ready` GitHub issue for the background pi issue worker, which opens a draft PR
+- `/pi-setup` — put the background pi issue worker on any repo (install, profile, checks, service), or `--status` to see what it serves
 - `/runbook` — write the repo's `running-the-stack` skill so every session can start the app without asking
 - `/repos-sync` — sync every repo under `~/Repos`
 
