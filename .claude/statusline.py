@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Claude Code status line.
 
-Shows: model · context-window bar · 5-hour limit (+reset) · weekly limit (+reset).
+Shows: model · context-window bar · 5-hour limit (+reset) · weekly limit (+reset)
+       · CPU % · RAM used/total · disk used/total.
 
 - Context %: prefers `context_window.used_percentage`; falls back to computing the
   current fill from the session transcript (latest assistant turn).
 - 5h / weekly: from the `rate_limits` field —
     rate_limits.five_hour / .seven_day, each {used_percentage, resets_at}
   where resets_at is a Unix timestamp (seconds). Reset is rendered as a countdown.
+- CPU: delta of /proc/stat since the previous render (cached in the runtime dir);
+  falls back to load average / core count. RAM: /proc/meminfo (MemAvailable).
+  Disk: the filesystem holding the session's working directory. On non-Linux
+  systems psutil is used when installed; otherwise CPU/RAM are omitted.
 """
-import sys, json, os, time
+import sys, json, os, time, shutil
 
 CYAN = "\033[0;36m"; DIM = "\033[2m"; RST = "\033[0m"
 GREEN = "\033[0;32m"; YELLOW = "\033[0;33m"; RED = "\033[0;31m"
@@ -131,6 +136,87 @@ def countdown(ts):
     return f"{m}m"
 
 
+CPU_CACHE = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache"),
+    "claude-statusline-cpu")
+
+
+def size(n):
+    """Human size with its own unit: 12.3G, 60G, 2.0T."""
+    g = n / 1024 ** 3
+    if g >= 1024:
+        return f"{g / 1024:.1f}T"
+    return f"{g:.0f}G" if g >= 100 else f"{g:.1f}G"
+
+
+def cpu_pct():
+    try:
+        with open("/proc/stat") as fh:
+            vals = [int(v) for v in fh.readline().split()[1:]]
+    except OSError:
+        try:
+            import psutil
+            return psutil.cpu_percent(interval=0.1)
+        except Exception:
+            return None
+    idle, total = vals[3] + vals[4], sum(vals)  # idle + iowait
+    prev = None
+    try:
+        with open(CPU_CACHE) as fh:
+            prev = [int(v) for v in fh.read().split()]
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(CPU_CACHE, "w") as fh:
+            fh.write(f"{idle} {total}")
+    except OSError:
+        pass
+    if prev and len(prev) == 2 and total > prev[1]:
+        return 100.0 * (1 - (idle - prev[0]) / (total - prev[1]))
+    try:
+        return min(100.0, os.getloadavg()[0] / (os.cpu_count() or 1) * 100)
+    except OSError:
+        return None
+
+
+def ram():
+    """Return (used_bytes, total_bytes) or None."""
+    try:
+        info = {}
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                k, v = line.split(":", 1)
+                info[k] = int(v.split()[0]) * 1024
+        return info["MemTotal"] - info["MemAvailable"], info["MemTotal"]
+    except (OSError, KeyError, ValueError):
+        try:
+            import psutil
+            vm = psutil.virtual_memory()
+            return vm.total - vm.available, vm.total
+        except Exception:
+            return None
+
+
+def system_parts(data):
+    parts = []
+    cpu = cpu_pct()
+    if cpu is not None:
+        parts.append(f"{DIM}cpu{RST} {color(cpu)}{cpu:.0f}%{RST}")
+    mem = ram()
+    if mem:
+        used, total = mem
+        parts.append(f"{DIM}ram{RST} {color(used / total * 100)}{size(used)}/{size(total)}{RST}")
+    path = ((data.get("workspace") or {}).get("current_dir")
+            or data.get("cwd") or os.getcwd())
+    try:
+        du = shutil.disk_usage(path)
+        parts.append(f"{DIM}disk{RST} {color(du.used / du.total * 100)}"
+                     f"{size(du.used)}/{size(du.total)}{RST}")
+    except OSError:
+        pass
+    return parts
+
+
 def main():
     try:
         data = json.loads(sys.stdin.read())
@@ -157,6 +243,8 @@ def main():
         if cd:
             seg += f" {DIM}({cd}){RST}"
         parts.append(seg)
+
+    parts.extend(system_parts(data))
 
     sys.stdout.write(SEP.join(parts))
 
