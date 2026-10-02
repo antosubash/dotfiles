@@ -1,136 +1,141 @@
 # Alacritty Terminal Configuration
-# Modern GPU-accelerated terminal emulator
+# GPU-accelerated terminal, shared by Linux, macOS and Windows.
+# Clipboard, font-size and search keys use Alacritty's built-in defaults
+# (Ctrl+Shift+C/V, Ctrl+=/-/0, Ctrl+Shift+F on Linux and Windows; Cmd on macOS).
+
+[general]
+# Machine-specific overrides (font size on a HiDPI screen, opacity, ...) go in
+# local.toml next to this file. It is optional and not tracked in dotfiles.
+import = ["~/.config/alacritty/local.toml"]
+live_config_reload = true
 
 [window]
-# Window dimensions
 dimensions = { columns = 120, lines = 30 }
-
-# Window padding
 padding = { x = 10, y = 10 }
-
-# Window decorations
+# Spread leftover pixels evenly instead of leaving a gap at the bottom/right.
+dynamic_padding = true
 decorations = "full"
-
-# Window opacity
 opacity = 0.95
+# macOS: make Option act as Alt so zsh/tmux/nvim Alt bindings work.
+option_as_alt = "Both"
 
 [scrolling]
-# Maximum number of lines in scrollback buffer
-history = 10000
-
-# Number of lines scrolled for every input scroll increment
+history = 50000
 multiplier = 3
 
 [font]
-# Font configuration - MesloLGS Nerd Font for Powerlevel10k
-normal = { family = "MesloLGS Nerd Font", style = "Regular" }
-bold = { family = "MesloLGS Nerd Font", style = "Bold" }
-italic = { family = "MesloLGS Nerd Font", style = "Italic" }
-bold_italic = { family = "MesloLGS Nerd Font", style = "Bold Italic" }
-
-# Font size
+# MesloLGS NF is the Powerlevel10k font installed by scripts/setup-terminal.sh.
+normal = { family = "MesloLGS NF", style = "Regular" }
+bold = { family = "MesloLGS NF", style = "Bold" }
+italic = { family = "MesloLGS NF", style = "Italic" }
+bold_italic = { family = "MesloLGS NF", style = "Bold Italic" }
 size = 18.0
-
-# Extra spacing
-offset = { x = 0, y = 0 }
-glyph_offset = { x = 0, y = 0 }
-
-# Font rendering options
 builtin_box_drawing = true
 
-[colors]
-# Catppuccin Mocha Theme - Dark variant
-[colors.primary]
-background = '#1E1E2E'
-foreground = '#CDD6F4'
-
-[colors.cursor]
-text = '#1E1E2E'
-cursor = '#F5E0DC'
-
-[colors.selection]
-text = '#CDD6F4'
-background = '#585B70'
-
-[colors.normal]
-black = '#45475A'
-red = '#F38BA8'
-green = '#A6E3A1'
-yellow = '#F9E2AF'
-blue = '#89B4FA'
-magenta = '#F5C2E7'
-cyan = '#94E2D5'
-white = '#BAC2DE'
-
-[colors.bright]
-black = '#585B70'
-red = '#F38BA8'
-green = '#A6E3A1'
-yellow = '#F9E2AF'
-blue = '#89B4FA'
-magenta = '#F5C2E7'
-cyan = '#94E2D5'
-white = '#A6ADC8'
-
-[bell]
-# Visual bell configuration
-animation = "EaseOutExpo"
-duration = 0
+[selection]
+# Copy on select, like most Linux terminals.
+save_to_clipboard = true
 
 [cursor]
-# Cursor style
 style = { shape = "Block", blinking = "On" }
+vi_mode_style = { shape = "Block", blinking = "Off" }
 blink_interval = 750
 unfocused_hollow = true
 
 [mouse]
-# Mouse bindings
 hide_when_typing = true
 
+[bell]
+animation = "EaseOutExpo"
+duration = 0
+
 [keyboard]
-# Keyboard bindings
-
-[[keyboard.bindings]]
-key = "V"
-mods = "Command"
-action = "Paste"
-
-[[keyboard.bindings]]
-key = "C"
-mods = "Command"
-action = "Copy"
-
-[[keyboard.bindings]]
-key = "Q"
-mods = "Command"
-action = "Quit"
-
-[[keyboard.bindings]]
-key = "N"
-mods = "Command"
-action = "SpawnNewInstance"
-
-[[keyboard.bindings]]
-key = "Plus"
-mods = "Command"
-action = "IncreaseFontSize"
-
-[[keyboard.bindings]]
-key = "Minus"
-mods = "Command"
-action = "DecreaseFontSize"
-
-[[keyboard.bindings]]
-key = "Key0"
-mods = "Command"
-action = "ResetFontSize"
-
-[[keyboard.bindings]]
-key = "K"
-mods = "Command"
-action = "ClearHistory"
+bindings = [
+    # Shift+Enter inserts a newline in Claude Code, Pi and other TUIs instead of submitting.
+    { key = "Enter", mods = "Shift", chars = "\u001b\r" },
+    # New window in the current directory.
+    { key = "N", mods = "Control|Shift", action = "SpawnNewInstance" },
+    # Clear scrollback.
+    { key = "K", mods = "Control|Shift", action = "ClearHistory" },
+]
 
 [env]
-# Environment variables
+# Widely known TERM so SSH sessions to hosts without alacritty terminfo still work.
 TERM = "xterm-256color"
 
+# Catppuccin Mocha (https://github.com/catppuccin/alacritty)
+[colors.primary]
+background = "#1E1E2E"
+foreground = "#CDD6F4"
+dim_foreground = "#7F849C"
+bright_foreground = "#CDD6F4"
+
+[colors.cursor]
+text = "#1E1E2E"
+cursor = "#F5E0DC"
+
+[colors.vi_mode_cursor]
+text = "#1E1E2E"
+cursor = "#B4BEFE"
+
+[colors.search.matches]
+foreground = "#1E1E2E"
+background = "#A6ADC8"
+
+[colors.search.focused_match]
+foreground = "#1E1E2E"
+background = "#A6E3A1"
+
+[colors.footer_bar]
+foreground = "#1E1E2E"
+background = "#A6ADC8"
+
+[colors.hints.start]
+foreground = "#1E1E2E"
+background = "#F9E2AF"
+
+[colors.hints.end]
+foreground = "#1E1E2E"
+background = "#A6ADC8"
+
+[colors.selection]
+text = "#CDD6F4"
+background = "#585B70"
+
+[colors.normal]
+black = "#45475A"
+red = "#F38BA8"
+green = "#A6E3A1"
+yellow = "#F9E2AF"
+blue = "#89B4FA"
+magenta = "#F5C2E7"
+cyan = "#94E2D5"
+white = "#BAC2DE"
+
+[colors.bright]
+black = "#585B70"
+red = "#F38BA8"
+green = "#A6E3A1"
+yellow = "#F9E2AF"
+blue = "#89B4FA"
+magenta = "#F5C2E7"
+cyan = "#94E2D5"
+white = "#A6ADC8"
+
+[colors.dim]
+black = "#45475A"
+red = "#F38BA8"
+green = "#A6E3A1"
+yellow = "#F9E2AF"
+blue = "#89B4FA"
+magenta = "#F5C2E7"
+cyan = "#94E2D5"
+white = "#BAC2DE"
+
+[[colors.indexed_colors]]
+index = 16
+color = "#FAB387"
+
+[[colors.indexed_colors]]
+index = 17
+color = "#F5E0DC"

@@ -217,6 +217,30 @@ configure_alacritty() {
     fi
 }
 
+# Make Alacritty the default terminal on Linux desktops (Ctrl+Alt+T, "Open in
+# Terminal"): xdg-terminal-exec for GNOME 46+, x-terminal-emulator for the rest.
+set_default_terminal() {
+    if [[ "$OSTYPE" != "linux"* ]] || ! command -v alacritty &> /dev/null; then
+        return 0
+    fi
+    print_info "Setting Alacritty as the default terminal..."
+
+    local terminals_list="${XDG_CONFIG_HOME:-$HOME/.config}/xdg-terminals.list"
+    if [[ "$(head -n 1 "$terminals_list" 2>/dev/null)" != "Alacritty.desktop" ]]; then
+        mkdir -p "$(dirname "$terminals_list")"
+        { echo "Alacritty.desktop"; grep -vx "Alacritty.desktop" "$terminals_list" 2>/dev/null || true; } > "$terminals_list.tmp"
+        mv "$terminals_list.tmp" "$terminals_list"
+    fi
+
+    local alacritty_bin
+    alacritty_bin="$(command -v alacritty)"
+    if update-alternatives --list x-terminal-emulator 2>/dev/null | grep -qx "$alacritty_bin" &&
+        [[ "$(readlink -f /etc/alternatives/x-terminal-emulator)" != "$alacritty_bin" ]]; then
+        sudo update-alternatives --set x-terminal-emulator "$alacritty_bin"
+    fi
+    print_status "Alacritty is the default terminal"
+}
+
 # Install essential CLI tools
 install_essential_tools() {
     print_info "Installing essential CLI tools..."
@@ -294,6 +318,7 @@ main() {
     configure_zsh
     install_alacritty
     configure_alacritty
+    set_default_terminal
     install_essential_tools
     
     echo ""
@@ -302,7 +327,7 @@ main() {
         echo ""
         print_info "📋 Next steps:"
         echo "   1. If using iTerm2/Terminal: Set font to '$FONT_MESLO' (Regular, size 12-14)"
-        echo "   2. If using Alacritty: Launch it - it's already configured with font & theme!"
+        echo "   2. Alacritty is configured (font, theme) and set as the default terminal"
         echo "   3. Restart your terminal or run: source ~/.zshrc"
         echo "   4. Run 'p10k configure' to customize your prompt (or use the default)"
         echo "   5. For non-Alacritty terminals: Apply colors from config/terminal-colors.md"
