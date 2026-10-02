@@ -36,6 +36,9 @@ backup_and_symlink "$DOTFILES_DIR/.claude/settings.json" "$CLAUDE_DIR/settings.j
 # Global instructions
 backup_and_symlink "$DOTFILES_DIR/.claude/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
 
+# Reference files loaded on demand by the workflow commands
+backup_and_symlink "$DOTFILES_DIR/.claude/workflow-refs" "$CLAUDE_DIR/workflow-refs"
+
 # Agents
 backup_and_symlink "$DOTFILES_DIR/.claude/agents" "$CLAUDE_DIR/agents"
 

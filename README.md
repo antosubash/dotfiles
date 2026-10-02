@@ -235,8 +235,11 @@ Global commands:
 - `/optimize` — shrink and dedupe the branch's code without changing behavior, one verified commit per batch
 - `/qa` — parallel Playwright browser QA with auto-fix
 - `/vf` — browser check, local CI, then PR
+- `/handoff` — turn a decided task or approved design into a `pi-ready` GitHub issue for the background pi issue worker, which opens a draft PR
 - `/runbook` — write the repo's `running-the-stack` skill so every session can start the app without asking
 - `/repos-sync` — sync every repo under `~/Repos`
+
+Niche plugins (figma, grafana-mcp, pydantic-ai, chrome-devtools-mcp, …) are off globally to keep every session's context small. Turn them on for one repo with `scripts/claude-plugins.sh enable <plugin>` (writes the repo's untracked `.claude/settings.local.json`). Long command detail lives in `.claude/workflow-refs/` and is read only when a step needs it.
 
 ### 5. Shell Theme Setup
 

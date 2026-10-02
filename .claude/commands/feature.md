@@ -1,6 +1,6 @@
 ---
 description: Take a feature from idea (free text or a GitHub issue) to a merge-ready PR with a single human checkpoint — one batch of questions, one design approval, then plan → subagent implementation in a worktree → /ship, without stopping in between.
-argument-hint: <feature description | issue URL | #issue> [--base BRANCH] [--yes] [--no-ship] [--no-pr] [--skip-browser] [--ship-args "..."]
+argument-hint: <feature description | issue URL | #issue> [--base BRANCH] [--yes] [--pi] [--no-ship] [--no-pr] [--skip-browser] [--ship-args "..."]
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Agent, Skill, AskUserQuestion, TaskCreate, TaskUpdate, TaskList, EnterWorktree, Monitor
 ---
 
@@ -24,6 +24,7 @@ User invoked with: `$ARGUMENTS`
 - **Feature** — free text, a GitHub issue URL, or `#123` (read it with `gh issue view <n> --comments`; include linked images/designs in your understanding).
 - `--base BRANCH` — base branch (default `main`, else `master`).
 - `--yes` — skip the design approval gate (small, low-risk features). Questions are still asked if genuinely needed.
+- `--pi` — after the design is approved and committed, hand implementation to the background pi issue worker via `/handoff` (Stage 4 plan is still written so pi gets it), instead of Stages 5–6. Pi opens a draft PR; run `/ship` on it later.
 - `--no-ship` — stop after implementation (branch committed, tests passing), don't run `/ship`.
 - `--no-pr`, `--skip-browser` — passed through to `/ship`.
 - `--ship-args "..."` — any extra flags for `/ship` (e.g. `--depth deep --a11y`).
@@ -82,6 +83,9 @@ Then post **one message**: a tight summary of the design (not the whole file) wi
 Write the implementation plan with the `superpowers:writing-plans` skill (if available) to `docs/superpowers/plans/<YYYY-MM-DD>-<slug>.md`: small, ordered, independently testable tasks, each with the files to touch, the test to write first, and the done-check. Mark which tasks are independent (parallelizable) and which are hard (cross-cutting, tricky logic). **Do not ask for plan approval** — the design approval covers it. Commit the plan.
 
 ## Stage 5 — Implement (no user interaction)
+
+With `--pi`: push the branch (design + plan committed), run `Skill(skill="handoff", args="<plan path>")` so the issue links the design and plan on the branch, report the issue URL, and stop here.
+
 
 Execute the plan with `superpowers:subagent-driven-development` (if available), otherwise dispatch implementer agents yourself:
 

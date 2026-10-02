@@ -57,10 +57,7 @@ Rules for subagents:
 ## Stage 0 — Clean Tree, Scope & Checkpoint
 
 1. Confirm a git repo: `git rev-parse --show-toplevel`. Resolve base branch (`--base`, else `main`, else `master`). Refuse to run on the base branch itself.
-2. **Require a clean working tree.** `git status --porcelain` must be empty (untracked files included). If it isn't:
-   - Called from `/ship` → this can't happen (`/ship` guarantees a clean tree); if it does, STOP.
-   - Standalone → show the dirty files and ask the user **once**: commit them now as `wip: snapshot before /optimize` (refusing if any `.env*`/`*.pem`/`credentials*` would be staged), or abort. Never stash, never discard, never commit without that answer.
-   Also refuse if a merge/rebase/cherry-pick is in progress (`.git/MERGE_HEAD`, `.git/rebase-*`, `.git/CHERRY_PICK_HEAD`).
+2. **Require a clean working tree.** Refuse if a merge/rebase/cherry-pick is in progress (`.git/MERGE_HEAD`, `.git/rebase-*`, `.git/CHERRY_PICK_HEAD`). `git status --porcelain` must be empty (untracked included). If not: from `/ship` → STOP (it guarantees a clean tree); standalone → show the dirty files and ask **once**: commit them as `wip: snapshot before /optimize` (secret-path guard applies), or abort. Never stash, discard, or commit without that answer.
 3. **Checkpoint:** `git update-ref refs/optimize/checkpoint HEAD` and record the SHA in `$(git rev-parse --absolute-git-dir)/optimize/checkpoint.txt`. Print it with the undo command so the user has it before anything changes:
    `Checkpoint <sha> — undo everything: git reset --hard refs/optimize/checkpoint`
 4. Resolve scope:
@@ -98,7 +95,7 @@ Filter output to in-scope files (plus anything in-scope code made unused elsewhe
 
 ### 2b. Fan out review agents
 
-Launch all five finders as **parallel `Agent` calls in a single message**, using the agent type and model from the routing table. Each gets the scope file list, the base branch, and the tool output from 2a, and returns findings as a list of: `file:line`, category, what to change, evidence (grep results showing no/duplicate references), estimated lines removed, risk (`safe` | `needs-care`).
+Launch all five finders in parallel (agent type + model per the routing table). Each gets the scope file list, the base branch, and the tool output from 2a, and returns findings as a list of: `file:line`, category, what to change, evidence (grep results showing no/duplicate references), estimated lines removed, risk (`safe` | `needs-care`).
 
 1. **Leftovers** (`haiku`) — commented-out code, debug logs/prints, stale TODOs, unused imports/variables, restating comments.
 2. **Dead code** (`sonnet`) — unused functions/classes/exports/params/types/CSS classes/feature flags/config keys/dependencies; unreachable branches; files nothing imports.
@@ -130,8 +127,8 @@ Estimated total: -N lines
 
 Apply in this order, one batch per category: **leftovers → dead code → duplication → over-engineering → efficiency.** Cheapest, safest first.
 
-For each batch (sequentially — never two apply agents at once):
-1. Dispatch an **apply agent** (`sonnet`; `opus` for duplication/over-engineering batches) with the batch's findings. It makes the edits (match surrounding style; update every call site), runs the formatter if the project has one, and returns the list of files it touched.
+For each batch, sequentially:
+1. Dispatch an **apply agent** (model per the routing table) with the batch's findings. It makes the edits (match surrounding style; update every call site), runs the formatter if the project has one, and returns the list of files it touched.
 2. Dispatch the **check-runner agent (`haiku`)** with the Stage 1 commands and `baseline.txt`; it runs lint + typecheck + tests (tests skipped if `--no-tests`) and returns only *new* failures.
 3. Orchestrator compares against baseline. The tree was clean before the batch, so `HEAD` is always the last good state:
    - No new failures → commit the batch: `git add -A && git commit -m "refactor(optimize): <category> — <short summary>"` (secret-path guard first). Mark findings applied.
@@ -140,7 +137,7 @@ For each batch (sequentially — never two apply agents at once):
 
 ## Stage 5 — Report
 
-1. Final full run of lint + typecheck + tests + build (if the project has one) via the check-runner agent (`haiku`) — must match baseline. If not, `git reset --hard` to the last batch commit that passed, re-run, and say so.
+1. Final full run of lint + typecheck + tests + build (if any) via the check-runner agent — must match baseline. If not, `git reset --hard` to the last batch commit that passed, re-run, and say so.
 2. Measure: `git diff --shortstat refs/optimize/checkpoint HEAD` → net lines removed. `git status --porcelain` must be empty at the end.
 3. Print:
 

@@ -27,3 +27,4 @@ I start work and then leave it alone. Every time you stop to ask something you c
 
 - If a repo has a `running-the-stack` skill (or a launch section in its CLAUDE.md), use it to start the app. If it doesn't and you've just worked out how to run the app, run `/runbook` so the next session doesn't have to work it out again.
 - For a new feature from idea to PR, `/feature` is the end-to-end path. To finish a branch, use `/ship`.
+- Well-defined work (clear bug, scoped change, approved design) can go to the background pi issue worker with `/handoff` (or `/feature --pi`); it comes back as a draft PR. Don't hand off open-ended or design work.
