@@ -25,12 +25,13 @@ User invoked with: `$ARGUMENTS`
    - waits until the worker has created its `pi-*` labels on the repo.
 
    It ends with `✓ pi worker is serving …`. If it fails, fix what it reports when you can. Common causes: pi login expired (run any `pi -p` call to refresh it), or `gh` can't access the repo. Then rerun it. Don't create the issue until it passes. If it needs something only the user can do (sudo, `pi` login), give the exact `!` command and stop.
-2. **Write a self-contained issue.** Pi starts with zero context, so the body must stand alone:
+2. **Check the task against current code first.** Fetch and read the code on `origin/<base>`, not old issue text or memory. Trace the real path end to end, including both sides of a cross-module flow, and confirm the bug still exists, or that the change is still needed. Old issues are often already fixed or describe flows that have since changed. If it's already fixed or obsolete, say so and don't create the issue.
+3. **Write a self-contained issue.** Pi starts with zero context, so the body must stand alone:
    - **Goal** — one or two sentences.
    - **Context** — relevant files/modules (paths), existing patterns to follow, links to the design/plan doc on the branch if there is one (or paste its key decisions).
    - **Acceptance criteria** — a checklist pi can verify (behavior, tests to add, routes/screens).
    - **Out of scope** — what not to touch.
    - **How to verify** — commands to run; for UI, the route and what to see.
    No secrets, no local-only paths outside the repo.
-3. **Create it:** `gh issue create --repo <repo> --title "<imperative title>" --body-file <tmp> --label pi-ready` (or `pi-plan`; add `pi-visual` if requested). The labels are guaranteed to exist after step 1.
-4. **Report** the issue URL and what happens next: pi claims it (`pi-working`), opens a draft PR (`pi-pr-open`), or asks for help (`pi-blocked`). On the PR, steer it with comments starting `/pi` — e.g. `/pi fix <what>`, `/pi retry`, `/pi verify visual`, `/pi stop`. When the draft PR is ready, `/ship` on its branch (or a normal review) takes it to merge-ready.
+4. **Create it:** `gh issue create --repo <repo> --title "<imperative title>" --body-file <tmp> --label pi-ready` (or `pi-plan`; add `pi-visual` if requested). The labels are guaranteed to exist after step 1.
+5. **Report** the issue URL and what happens next: pi claims it (`pi-working`), opens a draft PR (`pi-pr-open`), or asks for help (`pi-blocked`). On the PR, steer it with comments starting `/pi` — e.g. `/pi fix <what>`, `/pi retry`, `/pi verify visual`, `/pi stop`. When the draft PR is ready, `/ship` on its branch (or a normal review) takes it to merge-ready.
