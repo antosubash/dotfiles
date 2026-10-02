@@ -33,6 +33,12 @@ backup_and_symlink() {
 # Settings
 backup_and_symlink "$DOTFILES_DIR/.claude/settings.json" "$CLAUDE_DIR/settings.json"
 
+# Global instructions
+backup_and_symlink "$DOTFILES_DIR/.claude/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
+
+# Reference files loaded on demand by the workflow commands
+backup_and_symlink "$DOTFILES_DIR/.claude/workflow-refs" "$CLAUDE_DIR/workflow-refs"
+
 # Agents
 backup_and_symlink "$DOTFILES_DIR/.claude/agents" "$CLAUDE_DIR/agents"
 
@@ -46,6 +52,7 @@ backup_and_symlink "$DOTFILES_DIR/.claude/cc-sessions.py" "$CLAUDE_DIR/cc-sessio
 echo ""
 echo "Claude Code setup complete!"
 echo "  Settings:  ~/.claude/settings.json"
+echo "  CLAUDE.md: ~/.claude/CLAUDE.md"
 echo "  Agents:    ~/.claude/agents/"
 echo "  Commands:  ~/.claude/commands/"
 echo "  Statusline: ~/.claude/statusline.py"

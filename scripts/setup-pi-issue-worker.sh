@@ -29,7 +29,11 @@ cd "$PACKAGE_DIR"
 npm ci
 npm run check
 if [ "$(uname -s)" = "Linux" ] && command -v playwright-cli >/dev/null 2>&1; then
-    PI_WORKER_BROWSER_SMOKE=1 npx tsx --test test/browser-sandbox.integration.test.ts
+    # Exercises the opt-in OS sandbox (PI_WORKER_SANDBOX=1). The sandbox is off by default,
+    # so a failure here only affects profiles that opt in — warn instead of aborting the install.
+    if ! PI_WORKER_BROWSER_SMOKE=1 npx tsx --test test/browser-sandbox.integration.test.ts; then
+        printf '%s\n' "Warning: sandboxed browser smoke test failed; profiles with PI_WORKER_SANDBOX=1 can't run visual verification until it passes." >&2
+    fi
 fi
 
 PACK_DIR="$(mktemp -d)"
@@ -39,6 +43,23 @@ cleanup() {
 trap cleanup EXIT
 TARBALL="$(npm pack --pack-destination "$PACK_DIR" --silent)"
 npm install --global --prefix "$PREFIX" "$PACK_DIR/$TARBALL"
+
+# Run the worker on the globally installed pi instead of its own bundled copy, so `pi update`
+# keeps the CLI and the worker on one version (a stale bundled SDK can't read newer auth/models).
+GLOBAL_PI="$(npm root -g)/@earendil-works/pi-coding-agent"
+WORKER_PI="$PREFIX/lib/node_modules/@pi-tools/github-issue-worker/node_modules/@earendil-works/pi-coding-agent"
+if [ -f "$GLOBAL_PI/package.json" ]; then
+    rm -rf -- "$WORKER_PI"
+    ln -s "$GLOBAL_PI" "$WORKER_PI"
+    tested="$(node -p 'require("./package.json").dependencies["@earendil-works/pi-coding-agent"]')"
+    global="$(node -p "require('$GLOBAL_PI/package.json').version")"
+    printf 'Worker uses global pi %s (tested against %s)\n' "$global" "$tested"
+    if [ "$global" != "$tested" ]; then
+        printf '%s\n' "Warning: global pi differs from the version the worker was tested with; run 'pi-issue-worker-supervisor --check' and bump the worker's dependency if it fails." >&2
+    fi
+else
+    printf '%s\n' "Global pi not found under $(npm root -g); the worker keeps its bundled pi SDK." >&2
+fi
 
 mkdir -p "$CONFIG_DIR" "$DATA_DIR"
 chmod 700 "$CONFIG_DIR" "$DATA_DIR"

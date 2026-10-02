@@ -10,7 +10,7 @@ import { buildUiVerificationPrompt } from "./prompts.js";
 import { loadProjectMemory } from "./project-memory.js";
 import { loadWorkerQaManifest } from "./qa-manifest-source.js";
 import { QaReportingError, assertQaExecution } from "./qa-receipts.js";
-import { worktreeUiSurface } from "./ui-surface.js";
+import { worktreeDiffTouchesUi, worktreeUiSurface } from "./ui-surface.js";
 import type { GitHubIssue, VerificationEvidence } from "./types.js";
 
 // Re-exported so callers keep a single entry point for the QA gate.
@@ -158,12 +158,15 @@ export class QaVerificationService {
     const runDir = join(this.config.dataDir, "verification", `issue-${issue.number}`, randomUUID());
     const evidenceDir = join(runDir, "evidence");
     await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
-    const ui = await worktreeUiSurface(issue, worktree, this.config.baseBranch);
+    // Issue wording may offer the verifier a browser; only a diff that touches UI files (or a verifier
+    // that reports a UI surface) makes desktop + mobile screenshots mandatory.
+    const offerBrowser = await worktreeUiSurface(issue, worktree, this.config.baseBranch);
+    const ui = await worktreeDiffTouchesUi(worktree, this.config.baseBranch);
     const checkIds = [...DEFAULT_QA_CHECKS, ...(plan?.checks.filter((check) => check.kind === "behavioral").map((check) => check.id) ?? [])];
     const reportPath = join(runDir, "result.json");
     const runOptions = {
       worktree, sessionDir: join(runDir, "sessions"), logFile: join(runDir, "agent.log"),
-      visualVerification: ui, dockerAccess: false, verification: { readPaths: [], evidenceDir },
+      visualVerification: offerBrowser || ui, dockerAccess: false, verification: { readPaths: [], evidenceDir },
       ...(instance ? { environment: instance.environment() } : {}),
     };
     // A verdict is always validated against the ORIGINAL run's receipts: the repair turn re-emits JSON, it never adds evidence.
