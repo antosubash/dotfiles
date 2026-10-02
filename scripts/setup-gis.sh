@@ -96,8 +96,8 @@ duckdb -c "INSTALL spatial;" > /dev/null
 
 echo "Installing Python GIS command-line tools..."
 if command -v uv &> /dev/null; then
-    # rio-cogeo brings rasterio's `rio` CLI with the `cogeo` subcommand.
-    uv tool list 2>/dev/null | grep -q '^rio-cogeo ' || uv tool install rio-cogeo
+    # rio-cogeo has no executable of its own; it adds `rio cogeo` to rasterio's CLI.
+    uv tool list 2>/dev/null | grep -q '^rasterio ' || uv tool install rasterio --with rio-cogeo
     uv tool list 2>/dev/null | grep -q '^pystac-client ' || uv tool install pystac-client
 else
     echo "uv not found (run setup-ubuntu.sh first), skipping rio-cogeo and pystac-client."
