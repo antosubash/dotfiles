@@ -1,14 +1,18 @@
 ---
-description: Take a feature branch all the way to a merge-ready PR. Runs a full-convergence pipeline — loops /code-review until it reports zero findings, runs the full /qa browser cycle (which fixes bugs), then re-reviews whatever changed, repeating until a complete pass finds no review issues AND no QA bugs, and finally runs /vf to open exactly one PR. Use this whenever you want to "ship", "finalize", "wrap up", "finish", or "get this branch ready for review/merge" — i.e. do the full review + QA + verify + PR dance in one shot, not just a single review or a single QA pass.
-argument-hint: [feature description] [--port N] [--route PATH] [--url URL] [--start CMD] [--base BRANCH] [--depth shallow|normal|deep] [--review-effort low|medium|high|max] [--max-outer-iterations N] [--max-review-iterations N] [--no-review] [--no-qa] [--no-pr] [--skip-browser] [--a11y] [--responsive] [--perf]
+description: Take a feature branch all the way to a merge-ready PR. Requires a clean git tree and checkpoints it so the whole run can be rolled back. Runs /optimize once to shrink and dedupe the feature code, then a full-convergence pipeline — loops /code-review until it reports zero findings, runs the full /qa browser cycle (which fixes bugs), then re-reviews whatever changed, repeating until a complete pass finds no review issues AND no QA bugs, and finally runs /vf to open exactly one PR. Use this whenever you want to "ship", "finalize", "wrap up", "finish", or "get this branch ready for review/merge" — i.e. do the full review + QA + verify + PR dance in one shot, not just a single review or a single QA pass.
+argument-hint: [feature description] [--port N] [--route PATH] [--url URL] [--start CMD] [--base BRANCH] [--depth shallow|normal|deep] [--review-effort low|medium|high|max] [--max-outer-iterations N] [--max-review-iterations N] [--no-optimize] [--optimize-aggressive] [--no-review] [--no-qa] [--no-pr] [--skip-browser] [--a11y] [--responsive] [--perf]
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Agent, Skill, TaskCreate, TaskUpdate, TaskList, mcp__plugin_playwright_playwright__browser_navigate, mcp__plugin_playwright_playwright__browser_snapshot, mcp__plugin_playwright_playwright__browser_click, mcp__plugin_playwright_playwright__browser_type, mcp__plugin_playwright_playwright__browser_hover, mcp__plugin_playwright_playwright__browser_take_screenshot, mcp__plugin_playwright_playwright__browser_fill_form, mcp__plugin_playwright_playwright__browser_select_option, mcp__plugin_playwright_playwright__browser_press_key, mcp__plugin_playwright_playwright__browser_wait_for, mcp__plugin_playwright_playwright__browser_console_messages, mcp__plugin_playwright_playwright__browser_network_requests, mcp__plugin_playwright_playwright__browser_network_request, mcp__plugin_playwright_playwright__browser_evaluate, mcp__plugin_playwright_playwright__browser_tabs, mcp__plugin_playwright_playwright__browser_navigate_back, mcp__plugin_playwright_playwright__browser_close, mcp__plugin_playwright_playwright__browser_resize, mcp__plugin_playwright_playwright__browser_file_upload, mcp__plugin_playwright_playwright__browser_handle_dialog
 ---
 
 # /ship — Review → QA → Verify → PR (full-convergence pipeline)
 
-You are a release lead taking a feature branch from "I think it's done" to a clean, merge-ready PR. You orchestrate three existing commands and loop until the branch is genuinely clean:
+You are a release lead taking a feature branch from "I think it's done" to a clean, merge-ready PR. You orchestrate four existing commands and loop until the branch is genuinely clean:
 
 ```
+                    STAGE 0  ── preflight: clean tree + checkpoint refs/ship/start
+                                  │
+                    STAGE O  ── /optimize --safe-only  (once, before review)
+                                  │
 ┌──────────────────────────────────────────────────────────────────────┐
 │  OUTER LOOP  (repeat until a full pass is clean, or max-outer hit)     │
 │                                                                        │
@@ -27,6 +31,8 @@ You are a release lead taking a feature branch from "I think it's done" to a cle
                     STAGE C  ── /vf --qa-passed ──►  local CI + ONE PR
 ```
 
+Stage O runs **before** the loop on purpose: optimization changes code, so review and QA then verify the optimized code — nothing ships that wasn't reviewed and tested after it was shrunk.
+
 The whole point: **code review and QA fix code, and fixing code can introduce new problems.** So after either one changes anything, you re-review and re-test. You only open the PR once a complete pass over the branch finds nothing left to fix.
 
 ## Arguments
@@ -42,6 +48,8 @@ Parse into:
 - `--review-effort low|medium|high|max` — effort for `/code-review` (default `high`). Higher = broader coverage, more findings.
 - `--max-outer-iterations N` — max review↔QA convergence rounds (default **3**). Each round runs a full `/qa`, so this bounds cost.
 - `--max-review-iterations N` — max passes inside a single Stage A code-review loop (default **5**).
+- `--no-optimize` — skip Stage O.
+- `--optimize-aggressive` — run Stage O with `--aggressive` instead of `--safe-only` (also applies `needs-care` findings; review + QA still verify them).
 - `--no-review` — skip Stage A (the standalone code-review loop). QA still runs its own internal review gate.
 - `--no-qa` — skip Stage B. Pipeline becomes: code-review loop → `/vf`. (`/vf` runs without `--qa-passed`, so it does its own smoke check.)
 - `--no-pr` — run the full pipeline but pass `--no-pr` to `/vf` (verify only, no PR).
@@ -55,8 +63,9 @@ Don't ask clarifying questions when reasonable defaults exist — echo what you 
 - **This is a real loop. You keep going until an exit condition is met — never stop after one round and ask the user whether to continue.** The exit conditions are: a fully clean pass, or `max-outer-iterations` reached.
 - **Exactly one PR.** `/qa` is always invoked with `--no-vf` so it never opens its own PR. Only Stage C opens a PR, and only if the branch converged clean and `--no-pr` was not passed.
 - **Never open a PR with known unfixed issues.** If you hit `max-outer-iterations` with issues still open, STOP at Stage C, list what remains, and do NOT run `/vf` to create a PR.
+- **Clean tree in, rollback point recorded.** `/ship` only starts from a clean working tree (no uncommitted or untracked changes) and records the starting commit as `refs/ship/start` before touching anything. Every change the pipeline makes after that is a commit, so `git reset --hard refs/ship/start` always returns the branch to exactly where it was. Never stash, discard, or auto-commit the user's work without asking.
 - **Must be on a feature branch.** Refuse to run on the base branch (`main`/`master`) — `/vf` will reject it anyway, so check up front before doing expensive work.
-- **Delegate, don't reimplement.** Invoke `/qa` and `/vf` via the `Skill` tool, and `/code-review` via a Sonnet-pinned subagent (see Stage A). Do not hand-roll your own QA or PR logic — these commands already encode it.
+- **Delegate, don't reimplement.** Invoke `/optimize`, `/qa` and `/vf` via the `Skill` tool, and `/code-review` via a Sonnet-pinned subagent (see Stage A). Do not hand-roll your own QA or PR logic — these commands already encode it.
 - **Code review always runs on Sonnet.** Every `/code-review` pass is dispatched through `Agent(model="sonnet")` — never invoked in the main session, regardless of what model the session runs on. Review is the pipeline's dominant token cost and Sonnet handles it well.
 - **Read the sub-command output to make decisions.** After each `Skill` invocation, read what it returned to decide whether findings/bugs remain. That judgment drives the loop.
 
@@ -70,6 +79,7 @@ Don't ask clarifying questions when reasonable defaults exist — echo what you 
 
 ```
 TaskCreate: "Stage 0: Preflight — branch check, detect stack, plan pipeline"
+TaskCreate: "Stage O: Optimize (/optimize --safe-only)"      (skip if --no-optimize)
 TaskCreate: "Round 1 · Stage A: Code-review loop"          (skip if --no-review)
 TaskCreate: "Round 1 · Stage B: QA cycle (/qa --no-vf)"     (skip if --no-qa)
 TaskCreate: "Stage C: Verify + open PR (/vf)"
@@ -86,16 +96,19 @@ TaskCreate: "Stage C: Verify + open PR (/vf)"
 **→ TaskUpdate:** Mark "Stage 0: Preflight" `in_progress`. Create the task list above.
 
 1. **Branch guard.** `git rev-parse --abbrev-ref HEAD`. If it's the base branch (`main`/`master` or `--base`), STOP and tell the user to switch to a feature branch. Doing the whole pipeline only to have `/vf` refuse at the end wastes a lot of work.
-2. **There must be something to ship.** If the repo has no `origin` remote, STOP — Stage C must push, so `/ship` can't finish without one. Run `git fetch origin <base>` first so `origin/<base>` exists locally, then `git diff --stat origin/<base>...HEAD` (and `git status --porcelain` for uncommitted work). If the branch has no changes vs base and a clean tree, STOP — there's nothing to review, QA, or PR.
-3. **Initialize the pipeline state.** Resolve `SHIP_DIR="$(git rev-parse --absolute-git-dir)/ship"`, `mkdir -p "$SHIP_DIR"`, and write the initial `$SHIP_DIR/state.json` (see "Pipeline State" below). Everywhere this document says `$SHIP_DIR`, it means this one absolute path — substitute the literal path in subagent prompts, they don't inherit shell variables.
-4. **Detect stack / port / route** the same way `/qa` and `/vf` do (package.json / pyproject.toml / *.csproj). You don't have to fully start anything here — `/qa` and `/vf` re-detect — but resolve the port/route now so you can pass consistent values through.
-5. **Echo the plan** so the user can course-correct before the expensive part:
+2. **Clean tree.** Refuse if a merge/rebase/cherry-pick is in progress. Run `git status --porcelain` (untracked included). If it's not empty, list the files and ask the user **once**: commit them as `wip: snapshot before /ship` (refuse if any `.env*`, `*.pem`, `credentials*` would be staged — ask the user to handle those), or abort. Never stash, never discard. Do not continue until the tree is clean.
+3. **There must be something to ship.** If the repo has no `origin` remote, STOP — Stage C must push, so `/ship` can't finish without one. Run `git fetch origin <base>` first so `origin/<base>` exists locally, then `git diff --stat origin/<base>...HEAD`. If the branch has no changes vs base, STOP — there's nothing to optimize, review, QA, or PR.
+4. **Checkpoint.** `git update-ref refs/ship/start HEAD`. Record the SHA as `start_sha` in `state.json` (next step). From here on every pipeline change is committed (Stage O commits per batch, Stage A commits fixes, `/qa` commits its fixes), so the start ref is a complete rollback point.
+5. **Initialize the pipeline state.** Resolve `SHIP_DIR="$(git rev-parse --absolute-git-dir)/ship"`, `mkdir -p "$SHIP_DIR"`, and write the initial `$SHIP_DIR/state.json` (see "Pipeline State" below). Everywhere this document says `$SHIP_DIR`, it means this one absolute path — substitute the literal path in subagent prompts, they don't inherit shell variables.
+6. **Detect stack / port / route** the same way `/qa` and `/vf` do (package.json / pyproject.toml / *.csproj). You don't have to fully start anything here — `/qa` and `/vf` re-detect — but resolve the port/route now so you can pass consistent values through.
+7. **Echo the plan** so the user can course-correct before the expensive part:
 
 ```
 /ship pipeline
   Branch:            feature/settings-page → main
   Feature:           user settings page
-  Stages:            A code-review (effort high, sonnet)  ·  B QA (depth normal)  ·  C /vf → PR
+  Checkpoint:        a1b2c3d  (rollback: git reset --hard refs/ship/start)
+  Stages:            O optimize (safe-only)  ·  A code-review (effort high, sonnet)  ·  B QA (depth normal)  ·  C /vf → PR
   Convergence:       up to 3 outer rounds, 5 review passes each
   Port / route:      3000 /settings
 ```
@@ -111,6 +124,8 @@ TaskCreate: "Stage C: Verify + open PR (/vf)"
 ```json
 {
   "feature": "…", "branch": "…", "base": "main",
+  "start_sha": "…",
+  "optimize": { "result": "applied | nothing-to-do | skipped | failed", "lines_removed": 0, "commits": 0, "checkpoint_sha": "…" },
   "outer": 1, "max_outer": 3,
   "last_clean_review_sha": null,
   "rounds": [
@@ -133,6 +148,29 @@ TaskCreate: "Stage C: Verify + open PR (/vf)"
 `rounds[].stageB.iterations`, `.bugs_found`, and `.bugs_fixed` are that round's `iterations`, `bugs_found_total`, and `bugs_fixed_total` from the round's QA `result.json` — copy all three, not just `bugs_found`, since the Final Summary needs the iteration count and fixed count too. Update the file at EVERY stage boundary (Stage A done, Stage B done, convergence decision, Stage C). The convergence check and Stage C read this file, not conversation memory. **If the conversation gets summarized mid-run, re-read `$SHIP_DIR/state.json` and resume from `status` + `outer` — never re-derive loop state from prose.**
 
 `unresolved` holds tagged objects, never bare strings — `"source": "review"` for a Stage A finding that survived `--fix` + a dev agent (with a `detail` string), `"source": "qa"` for a QA `remaining` entry (copied through with its `id`/`severity`/`summary` intact). Stage A and Stage B each **append** their own round's entries — a stage never overwrites what the other stage already wrote this round. At the top of each new round, clear entries from the *previous* round before either stage runs (a fresh round re-earns its own unresolved list; stale entries from a round that's being re-attempted must not linger).
+
+---
+
+## Stage O — Optimize  (skip if `--no-optimize`)
+
+**→ TaskUpdate:** Mark "Stage O: Optimize" `in_progress`.
+
+Run `/optimize` once over the branch diff, non-interactively:
+
+```
+Skill(skill="optimize", args="--base <base> --safe-only")          # default
+Skill(skill="optimize", args="--base <base> --aggressive")         # with --optimize-aggressive
+```
+
+`/optimize` enforces its own clean-tree check (guaranteed by Stage 0), sets `refs/optimize/checkpoint`, routes work to subagents, verifies each batch with lint/typecheck/tests, and commits each passing batch separately. When it returns:
+
+1. Confirm `git status --porcelain` is empty. If not, `/optimize` left something half-done: `git reset --hard HEAD` (only its own uncommitted edits — Stage 0 proved the tree was clean) and record `failed`.
+2. Record `optimize` in `state.json`: result, net lines removed (`git diff --shortstat refs/optimize/checkpoint HEAD`), number of `refactor(optimize)` commits, checkpoint SHA.
+3. If `/optimize` stopped because the baseline build is broken, don't try to fix it here — record `failed` and continue to Stage A (review/QA will surface the problem; Stage C's CI gate will block the PR if it persists).
+
+Stage O never runs again in later rounds — only the review↔QA loop repeats.
+
+**→ TaskUpdate:** Mark "Stage O: Optimize" `completed`.
 
 ---
 
@@ -278,7 +316,8 @@ Do **not** open a PR. Read `unresolved` from `$SHIP_DIR/state.json` (the authori
   Unresolved:
     - [review] <finding that --fix + dev agent couldn't safely resolve>
     - [qa BUG-007] P1: <bug /qa couldn't fix in its max-iterations>
-  Nothing was pushed. Reports: QA artifact URL(s) printed by /qa (local copies under
+  Nothing was pushed. Roll back the whole run: git reset --hard refs/ship/start
+  Reports: QA artifact URL(s) printed by /qa (local copies under
   $(git rev-parse --absolute-git-dir)/qa/ship-round-*/reports/), full code reviews under
   $(git rev-parse --absolute-git-dir)/ship/.
 ```
@@ -310,7 +349,8 @@ Skill(skill="vf", args="<feature description> --port <port> --route <route> [--s
 Every run ends with a published report — converged, STOPPED, and verify-only alike (a STOPPED run needs it most):
 
 1. Build `$SHIP_DIR/report.html` — one self-contained page assembled from `state.json` and the on-disk round records:
-   - Run header: feature, branch → base, final result, rounds used.
+   - Run header: feature, branch → base, final result, rounds used, `start_sha` + rollback command.
+   - Stage O: lines removed, commits, or the skip/failure reason.
    - Per-round table: Stage A passes with findings found / fixed / unresolved, Stage B iterations + bugs found/fixed (or the skip reason).
    - Per-pass review summaries distilled from `$SHIP_DIR/review-round-*-pass-*.md` (finding titles + severity + fixed-or-not — not the full text).
    - Stage C outcome: CI stage results, the PR URL, or the stop reason with the `unresolved` list.
@@ -329,12 +369,14 @@ Print a compact summary (and run the mandatory TaskList audit — every task in 
 ═══════════════════════════════════════════════════
   Branch:        <branch> → <base>
   Rounds:        {outer} of {max-outer}
+  Stage O:       optimize -{lines} lines in {commits} commit(s) | nothing to do | skipped | failed
   Stage A:       code-review clean after {passes} pass(es)
   Stage B:       QA clean ({qa iterations}, {bugs} bugs found+fixed) | skipped
                  (source: rounds[].stageB.iterations / .bugs_found / .bugs_fixed in state.json)
   Result:        ALL CLEAN → PR opened | STOPPED ({X} issues remaining) | verify-only (--no-pr)
   PR:            <url from /vf, or "not opened — see remaining issues">
   Report:        <pipeline report artifact URL>
+  Rollback:      git reset --hard refs/ship/start   (<start_sha>; before a PR is pushed — after that, use git revert)
   Artifacts:     QA report artifact <url per round>  ·  verification artifact <url from /vf>  ·  code reviews
                  (local working copies live under $(git rev-parse --absolute-git-dir)/qa/, /ship/ (state.json +
                  review files), and /verify/ — never committed)
@@ -348,6 +390,7 @@ Never invent a PR URL — print only what `/vf` actually returned.
 ## Notes for the model running this command
 
 - **Invoke `/qa` and `/vf` with the `Skill` tool**, e.g. `Skill(skill="qa", args="… --no-vf")`, `Skill(skill="vf", args="… --qa-passed")`. Pass the full arg string as one string. `/code-review` is the exception: it always goes through a `general-purpose` Agent with `model: "sonnet"` (Stage A shows the exact call) so review tokens are spent on Sonnet, not the session model.
+- **`/optimize` runs once, with `--safe-only` (or `--aggressive`) so it never stops to ask.** It must leave the tree clean and every change committed — that's what keeps `refs/ship/start` a valid rollback point.
 - **`/qa` is always `--no-vf` here.** That flag (added for orchestrators) makes QA fix bugs and loop but skip its own `/vf`/PR. If you ever see two PRs, you forgot `--no-vf`.
 - **The loop is the product.** The single most important behavior is to actually re-review and re-test after anything changes, and to keep going until a clean pass — not to declare victory after the first review or the first QA pass.
 - **Bound everything.** Respect `--max-outer-iterations` (rounds) and `--max-review-iterations` (passes inside Stage A) so you can never loop forever. When you hit a cap with issues open, stop and report — don't open a PR.
