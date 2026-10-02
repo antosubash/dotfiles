@@ -106,7 +106,10 @@ fi
 echo "Installing mapshaper..."
 if ! command -v mapshaper &> /dev/null; then
     if command -v npm &> /dev/null; then
-        sudo npm install -g mapshaper
+        # Allow just the native-module builds mapshaper needs (GeoPackage/MBTiles
+        # via better-sqlite3, fast msgpack) instead of opening install scripts
+        # for every global package.
+        sudo npm install -g --no-fund --allow-scripts=better-sqlite3,msgpackr-extract mapshaper
     else
         echo "npm not found (run setup-ubuntu.sh first), skipping mapshaper."
     fi
