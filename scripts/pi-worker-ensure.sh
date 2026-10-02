@@ -42,6 +42,17 @@ if ! command -v pi-issue-worker >/dev/null 2>&1; then
     "$DOTFILES_DIR/scripts/setup-pi-issue-worker.sh" >/dev/null || fail "worker install failed (run scripts/setup-pi-issue-worker.sh to see why)"
 fi
 
+# 1b. Can pi sanitize evidence? Every run cleans its screenshots with ffmpeg inside bwrap, from a
+# namespaced systemd unit. Ubuntu's apparmor_restrict_unprivileged_userns=1 (kernel 7.0+) blocks that,
+# which blocks every issue at its last step. Probe the way the service runs.
+if command -v systemd-run >/dev/null 2>&1 && command -v bwrap >/dev/null 2>&1; then
+    if ! systemd-run --user --collect --wait -q -p PrivateTmp=true \
+        bwrap --unshare-all --ro-bind /usr /usr --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 \
+        --proc /proc --dev /dev /usr/bin/true >/dev/null 2>&1; then
+        fail "bwrap can't create a namespace under systemd, so every pi run would block at evidence.\nFix (host-wide, run in a terminal with sudo):\n  echo 'kernel.apparmor_restrict_unprivileged_userns = 0' | sudo tee /etc/sysctl.d/60-pi-issue-worker-userns.conf && sudo sysctl -p /etc/sysctl.d/60-pi-issue-worker-userns.conf\nthen rerun this script. See pi/github-issue-worker/docs/troubleshooting.md."
+    fi
+fi
+
 # 2. Profile for this repo?
 mkdir -p "$CONFIG_DIR"; chmod 700 "$CONFIG_DIR"
 profile_file="$(grep -lx "PI_WORKER_REPOSITORY=$repo" "$CONFIG_DIR"/*.env 2>/dev/null | head -1 || true)"
