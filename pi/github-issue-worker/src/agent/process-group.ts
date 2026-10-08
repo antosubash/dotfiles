@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
@@ -25,19 +25,31 @@ function isMissingProcessGroupError(error: unknown): boolean {
   return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ESRCH";
 }
 
-function readTrackedProcessGroupPid(path: string): number | null {
+/**
+ * One pid per line: every bash call that is still running. Codemode scripts and parallel tool calls run
+ * several commands at once, so the file must track all of them, not just the latest.
+ */
+function readTrackedProcessGroupPids(path: string): number[] {
   try {
-    const pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
-    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .map((line) => Number.parseInt(line.trim(), 10))
+      .filter((pid) => Number.isSafeInteger(pid) && pid > 0);
   } catch (error) {
-    if (isMissingFileError(error)) return null;
+    if (isMissingFileError(error)) return [];
     throw error;
   }
 }
 
-function clearTrackedProcessGroupFile(path: string, pid: number): void {
+function trackProcessGroup(path: string, pid: number): void {
+  appendFileSync(path, `${pid}\n`, "utf8");
+}
+
+function untrackProcessGroup(path: string, pid: number): void {
+  const remaining = readTrackedProcessGroupPids(path).filter((tracked) => tracked !== pid);
   try {
-    if (readTrackedProcessGroupPid(path) === pid) unlinkSync(path);
+    if (remaining.length > 0) writeFileSync(path, remaining.map((tracked) => `${tracked}\n`).join(""), "utf8");
+    else unlinkSync(path);
   } catch (error) {
     if (!isMissingFileError(error)) throw error;
   }
@@ -89,16 +101,7 @@ async function terminateProcessGroup(pid: number): Promise<void> {
 }
 
 export async function stopTrackedProcessGroup(processGroupFile: string): Promise<void> {
-  const pid = readTrackedProcessGroupPid(processGroupFile);
-  if (pid === null) {
-    try {
-      unlinkSync(processGroupFile);
-    } catch (error) {
-      if (!isMissingFileError(error)) throw error;
-    }
-    return;
-  }
-  await terminateProcessGroup(pid);
+  await Promise.all(readTrackedProcessGroupPids(processGroupFile).map((pid) => terminateProcessGroup(pid)));
   try {
     unlinkSync(processGroupFile);
   } catch (error) {
@@ -162,8 +165,9 @@ export function createBashOperations(
           reject(new Error("Failed to start bash process"));
           return;
         }
+        const pid = child.pid;
         try {
-          writeFileSync(processGroupFile, `${child.pid}\n`, "utf8");
+          trackProcessGroup(processGroupFile, pid);
         } catch (error) {
           child.kill("SIGKILL");
           discardChildCgroup();
@@ -174,8 +178,10 @@ export function createBashOperations(
         let timeoutHandle: NodeJS.Timeout | undefined;
         let stopPromise: Promise<void> | null = null;
         const stopCurrentProcessGroup = () => {
+          // Only this call's group: a parallel call's command must keep running.
           stopPromise ??= (async () => {
-            await stopTrackedProcessGroup(processGroupFile);
+            await terminateProcessGroup(pid);
+            untrackProcessGroup(processGroupFile, pid);
             if (childCgroup) await cgroups.killAndRemove(childCgroup);
           })();
           return stopPromise;
@@ -209,7 +215,7 @@ export function createBashOperations(
         child.on("error", (error) => {
           cleanupListeners();
           void (async () => {
-            if (child.pid) await stopCurrentProcessGroup();
+            await stopCurrentProcessGroup();
             reject(error);
           })().catch(reject);
         });
@@ -219,7 +225,7 @@ export function createBashOperations(
         child.on("exit", () => {
           if (!childCgroup) return;
           void (async () => {
-            const survivors = (await cgroups.procs(childCgroup).catch(() => [])).filter((pid) => pid !== child.pid);
+            const survivors = (await cgroups.procs(childCgroup).catch(() => [])).filter((survivor) => survivor !== pid);
             if (survivors.length === 0 || settled) return;
             settled = true;
             cleanupListeners();
@@ -243,17 +249,16 @@ export function createBashOperations(
               reject(new Error(`command terminated by ${closeSignal}`));
               return;
             }
-            const pid = child.pid;
             const leftover = childCgroup
               ? (await cgroups.procs(childCgroup).catch(() => [])).length > 0
-              : pid !== undefined && isProcessGroupAlive(pid);
+              : isProcessGroupAlive(pid);
             if (leftover) {
               await stopCurrentProcessGroup();
               reject(new Error("bash command left background processes running"));
               return;
             }
             if (childCgroup) await cgroups.killAndRemove(childCgroup);
-            if (pid !== undefined) clearTrackedProcessGroupFile(processGroupFile, pid);
+            untrackProcessGroup(processGroupFile, pid);
             resolveResult({ exitCode: code });
           })().catch(reject);
         });

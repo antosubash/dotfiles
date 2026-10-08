@@ -84,9 +84,13 @@ test("QA manifest declares launch, readiness, and storage-state authentication",
     for (const [value, pattern] of [
       [{ version: 1, launch: { argv: [] } }, /launch argv is invalid/],
       [{ version: 1, launch: { argv: ["x"], env: { "bad name": "1" } } }, /launch env is invalid/],
+      [{ version: 1, launch: { argv: ["x"], instanceEnv: "bad name" } }, /instanceEnv must be an environment variable name/],
       [{ version: 1, readiness: { resources: ["ok"], paths: { api: "https://evil.test" } } }, /readiness path is unsafe/],
       [{ version: 1, auth: { storageState: "../outside.json" } }, /escapes the repository/],
       [{ version: 1, auth: { storageState: "s.json", setup: { argv: ["x"], envFromEndpoints: { BASE_URL: "nope!" } } } }, /envFromEndpoints is invalid/],
+      [{ version: 1, auth: { storageState: "s.json", roles: { admin: { storageState: "a.json" } } } }, /roles requires auth.setup/],
+      [{ version: 1, auth: { storageState: "s.json", setup: { argv: ["x"] }, roles: { Admin: { storageState: "a.json" } } } }, /roles name is invalid/],
+      [{ version: 1, auth: { storageState: "s.json", setup: { argv: ["x"] }, roles: { admin: { storageState: "s.json" } } } }, /must differ/],
     ] as const) {
       await writeFile(join(root, ".pi-worker/qa.json"), JSON.stringify(value));
       await assert.rejects(loadQaManifest(root, ".pi-worker/qa.json"), pattern);

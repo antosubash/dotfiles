@@ -294,13 +294,15 @@ systemctl --user edit pi-issue-worker-supervisor.service
 
 ```ini
 [Service]
-Environment="PATH=/home/USERNAME/.local/bin:/home/USERNAME/.local/share/pnpm:/home/USERNAME/.dotnet:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/home/USERNAME/.local/bin:/home/USERNAME/.local/share/pnpm:/home/USERNAME/.dotnet:/home/USERNAME/.dotnet/tools:/usr/local/bin:/usr/bin:/bin"
 Environment="DOTNET_ROOT=/home/USERNAME/.dotnet"
 ```
 
 `DOTNET_ROOT` matters as soon as agents run unsandboxed: a user-local .NET install found only through
 `PATH` is invisible to tools that launch the runtime host themselves (Aspire's AppHost, `dotnet test`
 hosts), which then fail with a missing-runtime error or need the variable set by hand in every command.
+`~/.dotnet/tools` holds .NET global tools such as `aspire`; without it a launcher that calls `aspire` fails
+with "the 'aspire' CLI is required but was not found" even though `dotnet tool list -g` shows it installed.
 
 Reload and restart after editing.
 
