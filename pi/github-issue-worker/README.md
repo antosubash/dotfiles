@@ -39,6 +39,13 @@ QA and design-verification sessions evaluate its output before the controller ca
 9. Every review, conflicting head/base pair, and CI-head event is persisted in SQLite, making handling
    idempotent across restarts. After GitHub reports a tracked PR as merged, the cleanup service removes its clean managed worktree once every local commit is contained in the merged PR head (fetched from `refs/pull/<n>/head`, which survives squash merges and branch deletion); closed-unmerged PRs and dirty or diverged worktrees are preserved.
 
+Every agent session (implementation, verifiers, planner) also gets pi's `codemode` tool, so the model can batch
+tool calls in one script, run independent checks in parallel, and filter long output before it reaches the
+context. Nested calls go through the same policy hook, cgroup-fenced bash and process-group tracking as direct
+calls (`test/codemode-policy.test.ts`); its `models` API (classifiers, image generation) is disabled so an
+unattended run never spends on it. The job log marks nested calls `(codemode)` and records tool calls that
+fail or run for a minute or more with their duration.
+
 Each repository child handles its work sequentially. This is intentional: repositories with integration
 databases, browser sessions, or expensive builds should not be fanned out accidentally. A per-profile
 `worker.lock` is acquired before SQLite opens; a concurrent instance exits with the owning PID. Different
@@ -47,7 +54,7 @@ profiles may run concurrently under the supervisor while retaining separate stat
 ## Optional pi-plan and independent acceptance gates
 
 Planning is **opt-in**. Apply the `pi-plan` label to an issue to create only an implementation plan and a
-verification checklist. The planner has only read/grep/find/ls tools: it cannot implement, run tests/servers,
+verification checklist. The planner has only read/grep/find/ls tools (plus `codemode` scripts over them): it cannot implement, run tests/servers,
 commit, push, or open a PR. The controller creates/preserves an isolated worktree for reconnaissance, stores
 `<data-dir>/plans/issue-<number>.json`, and comments the plan on the issue. Both `pi-plan` and any simultaneous
 `pi-ready` label are removed; review the plan, then explicitly apply `pi-ready` to start implementation.

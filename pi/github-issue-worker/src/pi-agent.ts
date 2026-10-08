@@ -2,6 +2,7 @@ import { access, appendFile, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   createAgentSession,
+  createCodemodeExtension,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
@@ -32,6 +33,17 @@ interface AgentRunOptions {
   planning?: boolean;
   /** Per-run variables for agent bash, e.g. a running app instance's `PI_QA_*` values. */
   environment?: NodeJS.ProcessEnv;
+}
+
+/**
+ * `codemode` lets the model batch tool calls in one script (parallel checks, filtered output). Its nested
+ * calls run through the same `tool_call` policy hook and bash operations as direct calls. `models` stays
+ * off: unattended runs must not spend on classifiers or image generation.
+ */
+export function agentTools(planning: boolean): string[] {
+  return planning
+    ? ["read", "grep", "find", "ls", "codemode"]
+    : ["read", "bash", "edit", "write", "grep", "find", "ls", "codemode"];
 }
 
 const SECRET_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "FIGMA_TOKEN", "FIGMA_TOKEN_FILE"] as const;
@@ -108,7 +120,7 @@ export class PiAgentRunner {
           `Independent verification mode: do not modify source. Read-only access is limited to ${JSON.stringify(options.verification.readPaths)} and writes to ${JSON.stringify(options.verification.evidenceDir)}. Return an independent verdict, never implementation changes.`,
         ] : [])],
         noExtensions: true,
-        extensionFactories: [headlessPolicyExtension({
+        extensionFactories: [createCodemodeExtension({ mode: "on", models: false }), headlessPolicyExtension({
           worktree: options.worktree,
           protectedPaths: this.config.protectedPaths,
           dockerAccess,
@@ -131,7 +143,7 @@ export class PiAgentRunner {
         modelRuntime: await this.modelRuntimePromise,
         model: await this.selectedModel(),
         thinkingLevel: this.config.thinkingLevel,
-        tools: options.planning ? ["read", "grep", "find", "ls"] : ["read", "bash", "edit", "write", "grep", "find", "ls"],
+        tools: agentTools(options.planning === true),
         resourceLoader: loader,
         sessionManager,
         settingsManager,
@@ -158,13 +170,17 @@ export class PiAgentRunner {
           }
         }
         if (event.type === "tool_execution_start") {
-          void appendFile(options.logFile, `${new Date().toISOString()} tool ${event.toolName}\n`);
+          const nested = "parentToolCallId" in event && event.parentToolCallId ? " (codemode)" : "";
+          void appendFile(options.logFile, `${new Date().toISOString()} tool ${event.toolName}${nested}\n`);
+        } else if (event.type === "tool_execution_end" && (event.isError || (event.durationMs ?? 0) >= 60_000)) {
+          const took = event.durationMs === undefined ? "" : ` ${(event.durationMs / 1000).toFixed(1)}s`;
+          void appendFile(options.logFile, `${new Date().toISOString()} tool_end ${event.toolName}${took}${event.isError ? " error" : ""}\n`);
         } else if (event.type === "agent_end") {
           void appendFile(options.logFile, `${new Date().toISOString()} agent_end retry=${String(event.willRetry)}\n`);
           if (!event.willRetry) settlementWatchdog.arm();
         } else if (event.type === "agent_settled") {
           settlementWatchdog.settled();
-          void appendFile(options.logFile, `${new Date().toISOString()} agent_settled\n`);
+          void appendFile(options.logFile, `${new Date().toISOString()} agent_settled${event.aborted ? " aborted" : ""}\n`);
           resolveAgentSettled?.();
         }
       });

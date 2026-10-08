@@ -3,6 +3,7 @@
   "defaultProvider": "openai",
   "defaultModel": "gpt-6-astra",
   "defaultThinkingLevel": "high",
+  "defaultTools": ["+codemode"],
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
