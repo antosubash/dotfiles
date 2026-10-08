@@ -188,7 +188,7 @@ test("a running instance replaces launch procedures with endpoints, storage stat
   for (const rule of [
     /already running for this run/, /frontend `http:\/\/localhost:3005`/, /api `https:\/\/localhost:44431`/, /ready after 82 s/,
     /state-load \/data\/instances\/issue-1\/r\/storage-state\.json/, /Do not start, stop or relaunch/, /do not use `setsid`/,
-    /Do not run the repository's Playwright e2e or post-deploy suites/, /playwright-cli open\/interact\/capture\/close sequence in one bash tool call/,
+    /Do not run the repository's Playwright e2e or post-deploy suites as a whole/, /run exactly those files against this instance/, /playwright-cli open\/interact\/capture\/close sequence in one bash tool call/,
     /preflight\.png/, /`admin` `\/data\/instances\/issue-1\/r\/storage-state\.admin\.json` \(\$PI_QA_STORAGE_STATE_ADMIN\)/,
     /which role produced each observation/,
   ]) assert.match(text, rule);
