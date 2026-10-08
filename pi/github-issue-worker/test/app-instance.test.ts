@@ -161,6 +161,25 @@ test("ensureCurrent relaunches when the tree changed and is a no-op otherwise", 
   await rm(root, { recursive: true, force: true });
 });
 
+test("launch.instanceEnv gets a fresh instance name on every launch, relaunches included", async () => {
+  const { root, tree, config, options } = await fixture();
+  const port = await freePort();
+  const manifest = manifestFor(port);
+  const instance = await startAppInstance(config, tree, { ...manifest, launch: { ...manifest.launch, instanceEnv: "FAKE_INSTANCE" } }, options as never);
+  try {
+    await writeFile(join(tree, "a.txt"), "changed\n");
+    assert.equal(await instance.ensureCurrent(), true);
+    const names = [...(await readFile(join(instance.dir, "launch.log"), "utf8")).matchAll(/^instance (\S+)$/gm)].map((match) => match[1]);
+    assert.equal(names.length, 2);
+    for (const name of names) assert.match(name!, /^pi42_[0-9a-f]{8}$/);
+    assert.notEqual(names[0], names[1]);
+    assert.equal(JSON.parse(await readFile(join(instance.dir, "instance.json"), "utf8")).instanceName, names[1]);
+  } finally {
+    await instance.stop();
+  }
+  await rm(root, { recursive: true, force: true });
+});
+
 test("endpoint environment names are upper-cased identifiers", () => {
   assert.equal(endpointEnvironmentName("frontend"), "PI_QA_ENDPOINT_FRONTEND");
   assert.equal(endpointEnvironmentName("cms-host"), "PI_QA_ENDPOINT_CMS_HOST");

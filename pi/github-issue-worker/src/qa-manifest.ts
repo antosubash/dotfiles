@@ -2,7 +2,7 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { parseAuth } from "./qa-manifest-auth.js";
 import {
-  object, onlyKeys, parseArgv, parseEnv, parseNotes, SAFE_HTTP_PATH, SAFE_LOOPBACK_URL, SAFE_NAME, SAFE_RESOURCE,
+  object, onlyKeys, parseArgv, parseEnv, parseNotes, SAFE_ENV_NAME, SAFE_HTTP_PATH, SAFE_LOOPBACK_URL, SAFE_NAME, SAFE_RESOURCE,
   safeRepositoryPath,
 } from "./qa-manifest-fields.js";
 
@@ -24,6 +24,12 @@ export interface QaCommand {
 export interface QaLaunch {
   argv: string[];
   env?: Record<string, string>;
+  /**
+   * A variable the worker sets to a fresh `pi<issue>_<hex>` name on every launch, for launchers that key
+   * databases and cache prefixes off an instance name: a relaunch then never meets the previous launch's
+   * cached state (GeoWiki's AuthServer cached a deleted OpenIddict client id across a relaunch).
+   */
+  instanceEnv?: string;
   notes?: string;
 }
 
@@ -144,11 +150,15 @@ export function parseManifest(raw: unknown): QaManifest {
 
   if (root.launch !== undefined) {
     const launch = object(root.launch, "QA manifest launch");
-    onlyKeys(launch, ["argv", "env", "notes"], "QA manifest launch");
+    onlyKeys(launch, ["argv", "env", "instanceEnv", "notes"], "QA manifest launch");
+    if (launch.instanceEnv !== undefined && (typeof launch.instanceEnv !== "string" || !SAFE_ENV_NAME.test(launch.instanceEnv))) {
+      throw new Error("QA manifest launch instanceEnv must be an environment variable name");
+    }
     const notes = parseNotes(launch.notes, "QA manifest launch");
     manifest.launch = {
       argv: parseArgv(launch.argv, "QA manifest launch"),
       ...(launch.env === undefined ? {} : { env: parseEnv(launch.env, "QA manifest launch env") }),
+      ...(launch.instanceEnv === undefined ? {} : { instanceEnv: launch.instanceEnv as string }),
       ...(notes === undefined ? {} : { notes }),
     };
   }

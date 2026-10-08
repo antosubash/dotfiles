@@ -379,6 +379,11 @@ before a browser opens; `auth.setup` is a repository command that logs in throug
 a Playwright storage state, which must be gitignored. All argv and env values are literals; env names are
 `[A-Z_][A-Z0-9_]*`; paths are repository-relative.
 
+`launch.instanceEnv` (optional) names a variable the worker sets to a fresh `pi<issue>_<hex>` value on every
+launch, including relaunches after the tree changed. Point it at the launcher's instance-name override (GeoWiki:
+`GEOWIKI_INSTANCE_SLUG`, which keys its databases and Redis prefix) so a relaunch never meets the previous
+launch's cached state.
+
 `auth.roles` (optional, needs `auth.setup`) adds up to eight more seeded roles, for example
 `"roles": { "admin": { "env": { "E2E_AUTH_STATE_ROLE": "admin", "E2E_AUTH_STATE_OUT": "e2e/.auth/qa-admin.json" }, "storageState": "frontend/apps/app/e2e/.auth/qa-admin.json" } }`.
 The worker reruns `auth.setup` once per role with that role's `env` merged over `setup.env`, and hands the
