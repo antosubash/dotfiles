@@ -379,6 +379,13 @@ before a browser opens; `auth.setup` is a repository command that logs in throug
 a Playwright storage state, which must be gitignored. All argv and env values are literals; env names are
 `[A-Z_][A-Z0-9_]*`; paths are repository-relative.
 
+`auth.roles` (optional, needs `auth.setup`) adds up to eight more seeded roles, for example
+`"roles": { "admin": { "env": { "E2E_AUTH_STATE_ROLE": "admin", "E2E_AUTH_STATE_OUT": "e2e/.auth/qa-admin.json" }, "storageState": "frontend/apps/app/e2e/.auth/qa-admin.json" } }`.
+The worker reruns `auth.setup` once per role with that role's `env` merged over `setup.env`, and hands the
+verifier `PI_QA_STORAGE_STATE_<ROLE>` beside the default state. The verifier keeps the default role wherever
+it reaches the change and switches only for pages that role is correctly denied, naming the role behind each
+observation, so admin-only fixes can be verified without making every check run as admin.
+
 ### What the worker does with `launch`, `readiness` and `auth`
 
 With `launch` declared, the worker — not the agent — brings the application up **once per job run**: it
@@ -386,7 +393,7 @@ runs `launch.argv` in the worktree inside a child cgroup of its own systemd cgro
 `aspire.resources` through `aspire describe` (or takes `readiness.endpoints` as given), waits until every
 `readiness.paths` probe answers, runs `auth.setup` against the resolved endpoints and copies
 `auth.storageState` out of the worktree, then hands the agents `PI_QA_ENDPOINT_<NAME>`,
-`PI_QA_STORAGE_STATE` and `PI_QA_INSTANCE` in their environment and the same facts in their prompt. The
+`PI_QA_STORAGE_STATE` (plus `PI_QA_STORAGE_STATE_<ROLE>` per `auth.roles` entry) and `PI_QA_INSTANCE` in their environment and the same facts in their prompt. The
 implementer only implements; the visual stage and the independent verifier share that instance (it is
 relaunched if the tree changed between stages) and are told not to launch, not to `setsid`, and not to run
 the repository's Playwright suites. The instance is stopped when the run ends — `SIGTERM` to the launcher

@@ -22,6 +22,8 @@ export class AppInstanceError extends Error {
 export interface AppInstanceSummary {
   endpoints: Endpoints;
   storageState: string | null;
+  /** Storage states of the manifest's extra `auth.roles`, by role name. */
+  roleStorageStates?: Record<string, string>;
   readinessMs: number;
 }
 
@@ -33,7 +35,8 @@ export interface AppInstance extends AppInstanceSummary {
   readonly dir: string;
   readonly runId: string;
   readonly fingerprint: string;
-  /** `PI_QA_INSTANCE`, `PI_QA_RUN_ID`, `PI_QA_ENDPOINT_<KEY>` and, with auth, `PI_QA_STORAGE_STATE`. */
+  readonly roleStorageStates: Record<string, string>;
+  /** `PI_QA_INSTANCE`, `PI_QA_RUN_ID`, `PI_QA_ENDPOINT_<KEY>` and, with auth, `PI_QA_STORAGE_STATE[_<ROLE>]`. */
   environment(): NodeJS.ProcessEnv;
   ensureCurrent(): Promise<boolean>;
   stop(): Promise<void>;
@@ -113,19 +116,20 @@ export async function startAppInstance(
     }
     const readinessMs = Date.now() - started;
     let storageState: string | null = null;
+    let roleStorageStates: Record<string, string> = {};
     if (manifest.auth) {
       try {
-        storageState = await establishAuth(manifest.auth, worktree, endpoints, dir, {
+        ({ storageState, roleStorageStates } = await establishAuth(manifest.auth, worktree, endpoints, dir, {
           cgroupDir, logFile: join(dir, "auth-setup.log"), timeoutMs: 300_000,
-        });
+        }));
       } catch (error) {
         return await fail("auth", error);
       }
     }
-    const record = { runId: options.runId, endpoints, storageState, launchedAt: new Date(started).toISOString(), readinessMs, fingerprint, cgroup: cgroupDir };
+    const record = { runId: options.runId, endpoints, storageState, roleStorageStates, launchedAt: new Date(started).toISOString(), readinessMs, fingerprint, cgroup: cgroupDir };
     await writeFile(join(dir, "instance.json"), JSON.stringify(record, null, 2), { mode: 0o600 });
-    await options.onStarted?.({ runId: options.runId, endpoints, storageState, readinessMs });
-    return { launched, endpoints, storageState, readinessMs, fingerprint };
+    await options.onStarted?.({ runId: options.runId, endpoints, storageState, roleStorageStates, readinessMs });
+    return { launched, endpoints, storageState, roleStorageStates, readinessMs, fingerprint };
   };
 
   let current = await bringUp();
@@ -134,12 +138,14 @@ export async function startAppInstance(
     runId: options.runId,
     get endpoints() { return current.endpoints; },
     get storageState() { return current.storageState; },
+    get roleStorageStates() { return current.roleStorageStates ?? {}; },
     get readinessMs() { return current.readinessMs; },
     get fingerprint() { return current.fingerprint; },
     environment() {
       const result: NodeJS.ProcessEnv = { PI_QA_INSTANCE: dir, PI_QA_RUN_ID: options.runId };
       for (const [key, url] of Object.entries(current.endpoints)) result[endpointEnvironmentName(key)] = url;
       if (current.storageState) result.PI_QA_STORAGE_STATE = current.storageState;
+      for (const [role, path] of Object.entries(current.roleStorageStates ?? {})) result[`PI_QA_STORAGE_STATE_${role.toUpperCase()}`] = path;
       return result;
     },
     async ensureCurrent() {

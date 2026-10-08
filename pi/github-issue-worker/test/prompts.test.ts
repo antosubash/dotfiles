@@ -183,13 +183,14 @@ test("visual verification without the sandbox tells the agent to start the stack
 test("a running instance replaces launch procedures with endpoints, storage state and prohibitions", () => {
   const cfg = { appUrl: null, playwrightState: null, sandbox: false } as WorkerConfig;
   const qaManifest = { version: 1 as const, launch: { argv: ["./run.sh"] }, readiness: { paths: { frontend: "/en" } }, auth: { storageState: "e2e/.auth/state.json" } };
-  const instance = { endpoints: { frontend: "http://localhost:3005", api: "https://localhost:44431" }, storageState: "/data/instances/issue-1/r/storage-state.json", readinessMs: 82_000 };
+  const instance = { endpoints: { frontend: "http://localhost:3005", api: "https://localhost:44431" }, storageState: "/data/instances/issue-1/r/storage-state.json", roleStorageStates: { admin: "/data/instances/issue-1/r/storage-state.admin.json" }, readinessMs: 82_000 };
   const text = buildUiVerificationPrompt({ config: cfg, issueNumber: 1, prNumber: null, evidenceDir: ".qa/issues/1/runs/x", qaManifest, instance });
   for (const rule of [
     /already running for this run/, /frontend `http:\/\/localhost:3005`/, /api `https:\/\/localhost:44431`/, /ready after 82 s/,
     /state-load \/data\/instances\/issue-1\/r\/storage-state\.json/, /Do not start, stop or relaunch/, /do not use `setsid`/,
     /Do not run the repository's Playwright e2e or post-deploy suites/, /playwright-cli open\/interact\/capture\/close sequence in one bash tool call/,
-    /preflight\.png/,
+    /preflight\.png/, /`admin` `\/data\/instances\/issue-1\/r\/storage-state\.admin\.json` \(\$PI_QA_STORAGE_STATE_ADMIN\)/,
+    /which role produced each observation/,
   ]) assert.match(text, rule);
   for (const gone of [
     /Start the stack with exactly/, /ASPIRE_CLI_START_TIMEOUT/, /inspect every intended loopback port/,

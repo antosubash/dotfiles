@@ -111,6 +111,28 @@ test("auth setup runs against the resolved endpoint and the gitignored storage s
   await rm(root, { recursive: true, force: true });
 });
 
+test("each auth role reruns setup with its env and gets its own storage state", async () => {
+  const { root, tree, config, options } = await fixture();
+  const port = await freePort();
+  await writeFile(join(tree, "setup.sh"), '#!/usr/bin/env bash\nmkdir -p .auth && printf \'{"role":"%s"}\' "$ROLE" > "$OUT"\n', { mode: 0o755 });
+  const manifest = manifestFor(port, { auth: {
+    storageState: ".auth/state.json",
+    setup: { argv: ["./setup.sh"], env: { ROLE: "contenteditor", OUT: ".auth/state.json" } },
+    roles: { admin: { storageState: ".auth/admin.json", env: { ROLE: "admin", OUT: ".auth/admin.json" } } },
+  } });
+  const instance = await startAppInstance(config, tree, manifest, options as never);
+  try {
+    assert.deepEqual(JSON.parse(await readFile(instance.storageState!, "utf8")), { role: "contenteditor" });
+    const admin = instance.roleStorageStates.admin!;
+    assert.equal(admin, join(instance.dir, "storage-state.admin.json"));
+    assert.deepEqual(JSON.parse(await readFile(admin, "utf8")), { role: "admin" });
+    assert.equal(instance.environment().PI_QA_STORAGE_STATE_ADMIN, admin);
+  } finally {
+    await instance.stop();
+  }
+  await rm(root, { recursive: true, force: true });
+});
+
 test("a storage state git would list is rejected in the auth phase", async () => {
   const { root, tree, config, options } = await fixture();
   const port = await freePort();
