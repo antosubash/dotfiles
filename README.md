@@ -235,7 +235,7 @@ and [troubleshooting guide](pi/github-issue-worker/docs/troubleshooting.md).
 
 ### 4. Claude Code Workflow
 
-`scripts/setup-claude.sh` (run by `install.sh`) links `.claude/settings.json`, `.claude/CLAUDE.md`, agents and commands into `~/.claude/`. The global `CLAUDE.md` tells Claude to work autonomously: do in-scope follow-ups instead of offering them, run and watch things itself, batch questions, and ask for one design approval instead of one per section.
+`scripts/setup-claude.sh` (run by `install.sh`) links `.claude/settings.json`, `.claude/CLAUDE.md`, agents, commands, workflow refs and the status line scripts into `~/.claude/`. On Windows, `scripts/setup-claude.ps1` (run by `install.ps1`) does the same and installs `psutil` so the status line can show CPU/RAM without `/proc`. The global `CLAUDE.md` tells Claude to work autonomously: do in-scope follow-ups instead of offering them, run and watch things itself, batch questions, and ask for one design approval instead of one per section.
 
 Global commands:
 

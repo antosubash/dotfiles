@@ -12,6 +12,9 @@
       tmux/.tmux.conf   -> $HOME/.tmux.conf   (useful from Git Bash / WSL)
       nvim/             -> $env:LOCALAPPDATA\nvim
 
+    Claude Code config (.claude/) is linked into ~\.claude by
+    scripts\setup-claude.ps1, which this script runs.
+
     Symlinks need Developer Mode (or an elevated session). Directory targets
     fall back to a junction (no admin required); files fall back to a copy.
 
@@ -109,13 +112,19 @@ $mappings = @(
     @{ Src = 'vim\.vimrc';     Dest = (Join-Path $env:USERPROFILE '_vimrc') }
     @{ Src = 'tmux\.tmux.conf';Dest = (Join-Path $env:USERPROFILE '.tmux.conf') }
     @{ Src = 'nvim';           Dest = (Join-Path $env:LOCALAPPDATA 'nvim') }
-    @{ Src = '.claude\agents'; Dest = (Join-Path $env:USERPROFILE '.claude\agents') }
 )
 
 foreach ($m in $mappings) {
     $src = Join-Path $DotfilesDir $m.Src
     New-DotfileLink -Source $src -Target $m.Dest
 }
+
+# ---------------------------------------------------------------------------
+# Claude Code — settings, agents, and commands
+# ---------------------------------------------------------------------------
+
+Write-Section "Claude Code"
+& (Join-Path $DotfilesDir 'scripts\setup-claude.ps1')
 
 # ---------------------------------------------------------------------------
 # Terminal setup
