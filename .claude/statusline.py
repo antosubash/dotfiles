@@ -218,6 +218,11 @@ def system_parts(data):
 
 
 def main():
+    # Windows defaults stdio to the ANSI code page (cp1252), which can't encode
+    # the bar glyphs or non-ASCII paths in the JSON payload. Claude Code speaks UTF-8.
+    for stream in (sys.stdin, sys.stdout):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     try:
         data = json.loads(sys.stdin.read())
     except Exception:

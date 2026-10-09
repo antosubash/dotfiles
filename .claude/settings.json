@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash '/home/anto/.claude/hooks/herdr-agent-state.sh' session",
+            "command": "f=\"$HOME/.claude/hooks/herdr-agent-state.sh\"; [ ! -f \"$f\" ] || bash \"$f\" session",
             "timeout": 10
           }
         ]
