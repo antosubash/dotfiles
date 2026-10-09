@@ -107,6 +107,7 @@ dotfiles/
 │   ├── setup-agnoster.sh   # Agnoster theme installer
 │   ├── setup-terminal.sh    # Terminal theme configuration
 │   ├── setup-pi-issue-worker.sh # Install the generic headless Pi GitHub worker
+│   ├── setup-vpn-dns-guard.sh # Clear FortiClient VPN DNS left on LAN profiles
 │   ├── setup-update.sh     # Update command installer
 │   ├── update-all.sh       # Full system updater
 │   └── update-quick.sh     # Quick daily updater
@@ -166,6 +167,14 @@ QGIS_CHANNEL=latest ./scripts/setup-gis.sh   # QGIS latest release
 ```
 
 Run after `setup-ubuntu.sh`. Adds the official QGIS apt repository and installs QGIS with GRASS and SAGA, plus tippecanoe, pmtiles, osmium, DuckDB (with the spatial extension), mapshaper, rio-cogeo and pystac-client. Safe to re-run.
+
+#### FortiClient VPN DNS guard (Ubuntu, optional)
+
+```bash
+./scripts/setup-vpn-dns-guard.sh
+```
+
+FortiClient writes its VPN DNS servers into the ethernet and Wi-Fi profiles while connected. If the VPN drops uncleanly they stay saved, and the LAN looks dead because names resolve against unreachable VPN servers. This installs a NetworkManager dispatcher hook (`scripts/nm-vpn-dns-guard.sh`) that removes the leftovers whenever the VPN goes down or a LAN link comes up, and installs the GTK2 library the FortiClient tray needs to start. Check its activity with `journalctl -t vpn-dns-guard`. Safe to re-run.
 
 **What gets installed:**
 - 📦 Package managers (Homebrew / apt / winget + scoop)
