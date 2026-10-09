@@ -56,7 +56,24 @@
     "pr-review-toolkit@claude-plugins-official": false,
     "figma@claude-plugins-official": false,
     "grafana-mcp@claude-plugins-official": false,
-    "cc-plugin-you-should-know@builtin": true
+    "cc-plugin-you-should-know@builtin": true,
+    "dotnet@dotnet-agent-skills": true,
+    "dotnet-ai@dotnet-agent-skills": true,
+    "dotnet-data@dotnet-agent-skills": true,
+    "dotnet-diag@dotnet-agent-skills": true,
+    "dotnet-msbuild@dotnet-agent-skills": true,
+    "dotnet-nuget@dotnet-agent-skills": true,
+    "dotnet-template-engine@dotnet-agent-skills": true,
+    "dotnet-test@dotnet-agent-skills": true,
+    "dotnet-upgrade@dotnet-agent-skills": true
+  },
+  "extraKnownMarketplaces": {
+    "dotnet-agent-skills": {
+      "source": {
+        "source": "github",
+        "repo": "dotnet/skills"
+      }
+    }
   },
   "effortLevel": "high",
   "pluginConfigs": {
