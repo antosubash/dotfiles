@@ -2,6 +2,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { REFUSED_EXIT_CODE } from "./exposure.js";
 import {
   activeCommandProcessGroupPath,
   stopTrackedProcessGroup,
@@ -117,6 +118,10 @@ async function runContinuously(
           restartTimers.clear();
         }
         if (stopping) return;
+        if (code === REFUSED_EXIT_CODE) {
+          console.error(`${timestamp()} [${profile.name}] refused its configuration; not restarting`);
+          return;
+        }
         const timer = setTimeout(() => {
           restartTimers.delete(profile.name);
           launch(profile);

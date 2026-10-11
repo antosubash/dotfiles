@@ -172,6 +172,11 @@ in the same persistent Pi session. Each child and
 environment profile serves one repository. The optional `pi-issue-worker-supervisor` runs multiple
 profile-isolated children while preserving separate processes, state, clones, worktrees, and sessions.
 
+A worker refuses to start (exit 78, not restarted by the supervisor) on a **public** repository while
+`PI_WORKER_SANDBOX=0`: anyone can open or edit issues there, and without the OS sandbox the agent runs
+with your GitHub login and home directory. Turn the sandbox on, or set
+`PI_WORKER_ALLOW_UNSANDBOXED_PUBLIC=1` to accept that risk. `pi-worker-ensure.sh` won't add public repos.
+
 Install the CLI and unit template without starting a profile:
 
 ```bash
