@@ -18,6 +18,10 @@ Do not edit generated files by hand; use the repository's documented generators.
 Do not modify controller code, project agent configuration, CI workflows, secret files, or .env files.
 Keep evidence under the ignored .qa directory. Never add .qa artifacts to git.
 If requirements are ambiguous or unsafe, make no speculative destructive change and end with BLOCKED plus the reason.
+Use the codemode tool to batch independent work in one script: read or search several files at once, run
+independent checks with Promise.allSettled, and filter long command output down to the failures you need.
+Every call in a script is still subject to these rules. Do not run commands in parallel that write the same
+build output, lock file, or database, and keep an app server and the browser session that uses it in one bash call.
 `;
 
 function normalizeToolPath(cwd: string, input: unknown): string | null {

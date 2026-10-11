@@ -39,6 +39,13 @@ QA and design-verification sessions evaluate its output before the controller ca
 9. Every review, conflicting head/base pair, and CI-head event is persisted in SQLite, making handling
    idempotent across restarts. After GitHub reports a tracked PR as merged, the cleanup service removes its clean managed worktree once every local commit is contained in the merged PR head (fetched from `refs/pull/<n>/head`, which survives squash merges and branch deletion); closed-unmerged PRs and dirty or diverged worktrees are preserved.
 
+Every agent session (implementation, verifiers, planner) also gets pi's `codemode` tool, so the model can batch
+tool calls in one script, run independent checks in parallel, and filter long output before it reaches the
+context. Nested calls go through the same policy hook, cgroup-fenced bash and process-group tracking as direct
+calls (`test/codemode-policy.test.ts`); its `models` API (classifiers, image generation) is disabled so an
+unattended run never spends on it. The job log marks nested calls `(codemode)` and records tool calls that
+fail or run for a minute or more with their duration.
+
 Each repository child handles its work sequentially. This is intentional: repositories with integration
 databases, browser sessions, or expensive builds should not be fanned out accidentally. A per-profile
 `worker.lock` is acquired before SQLite opens; a concurrent instance exits with the owning PID. Different
@@ -47,7 +54,7 @@ profiles may run concurrently under the supervisor while retaining separate stat
 ## Optional pi-plan and independent acceptance gates
 
 Planning is **opt-in**. Apply the `pi-plan` label to an issue to create only an implementation plan and a
-verification checklist. The planner has only read/grep/find/ls tools: it cannot implement, run tests/servers,
+verification checklist. The planner has only read/grep/find/ls tools (plus `codemode` scripts over them): it cannot implement, run tests/servers,
 commit, push, or open a PR. The controller creates/preserves an isolated worktree for reconnaissance, stores
 `<data-dir>/plans/issue-<number>.json`, and comments the plan on the issue. Both `pi-plan` and any simultaneous
 `pi-ready` label are removed; review the plan, then explicitly apply `pi-ready` to start implementation.
@@ -372,6 +379,18 @@ before a browser opens; `auth.setup` is a repository command that logs in throug
 a Playwright storage state, which must be gitignored. All argv and env values are literals; env names are
 `[A-Z_][A-Z0-9_]*`; paths are repository-relative.
 
+`launch.instanceEnv` (optional) names a variable the worker sets to a fresh `pi<issue>_<hex>` value on every
+launch, including relaunches after the tree changed. Point it at the launcher's instance-name override (GeoWiki:
+`GEOWIKI_INSTANCE_SLUG`, which keys its databases and Redis prefix) so a relaunch never meets the previous
+launch's cached state.
+
+`auth.roles` (optional, needs `auth.setup`) adds up to eight more seeded roles, for example
+`"roles": { "admin": { "env": { "E2E_AUTH_STATE_ROLE": "admin", "E2E_AUTH_STATE_OUT": "e2e/.auth/qa-admin.json" }, "storageState": "frontend/apps/app/e2e/.auth/qa-admin.json" } }`.
+The worker reruns `auth.setup` once per role with that role's `env` merged over `setup.env`, and hands the
+verifier `PI_QA_STORAGE_STATE_<ROLE>` beside the default state. The verifier keeps the default role wherever
+it reaches the change and switches only for pages that role is correctly denied, naming the role behind each
+observation, so admin-only fixes can be verified without making every check run as admin.
+
 ### What the worker does with `launch`, `readiness` and `auth`
 
 With `launch` declared, the worker — not the agent — brings the application up **once per job run**: it
@@ -379,7 +398,7 @@ runs `launch.argv` in the worktree inside a child cgroup of its own systemd cgro
 `aspire.resources` through `aspire describe` (or takes `readiness.endpoints` as given), waits until every
 `readiness.paths` probe answers, runs `auth.setup` against the resolved endpoints and copies
 `auth.storageState` out of the worktree, then hands the agents `PI_QA_ENDPOINT_<NAME>`,
-`PI_QA_STORAGE_STATE` and `PI_QA_INSTANCE` in their environment and the same facts in their prompt. The
+`PI_QA_STORAGE_STATE` (plus `PI_QA_STORAGE_STATE_<ROLE>` per `auth.roles` entry) and `PI_QA_INSTANCE` in their environment and the same facts in their prompt. The
 implementer only implements; the visual stage and the independent verifier share that instance (it is
 relaunched if the tree changed between stages) and are told not to launch, not to `setsid`, and not to run
 the repository's Playwright suites. The instance is stopped when the run ends — `SIGTERM` to the launcher

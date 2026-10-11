@@ -30,7 +30,7 @@ test("with a manifest launch the implementer does not capture; visual QA and the
   const log: string[] = [];
   const prompts: string[] = [];
   const instance: AppInstance = {
-    dir: "/i", runId: "r", fingerprint: "f", endpoints: { frontend: "http://localhost:3005" }, storageState: null, readinessMs: 1,
+    dir: "/i", runId: "r", fingerprint: "f", endpoints: { frontend: "http://localhost:3005" }, storageState: null, roleStorageStates: {}, readinessMs: 1,
     environment: () => ({ PI_QA_INSTANCE: "/i" }),
     ensureCurrent: async () => { log.push("ensure"); return false; },
     stop: async () => { log.push("stop"); },

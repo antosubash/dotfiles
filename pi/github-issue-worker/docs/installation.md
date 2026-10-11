@@ -252,7 +252,7 @@ Example—replace `/home/USERNAME` with the absolute home path:
 
 ```ini
 [Service]
-Environment="PATH=/home/USERNAME/.local/bin:/home/USERNAME/.local/share/pnpm:/home/USERNAME/.dotnet:/home/USERNAME/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/home/USERNAME/.local/bin:/home/USERNAME/.local/share/pnpm:/home/USERNAME/.dotnet:/home/USERNAME/.dotnet/tools:/home/USERNAME/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
 ```
 
 Then reload and restart:

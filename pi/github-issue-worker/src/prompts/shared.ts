@@ -33,12 +33,19 @@ Read a note's file before acting on it (notes are the \`*.md\` files; \`qa.json\
 `;
 }
 
+function roleStatesInstructions(states: Record<string, string> | undefined): string {
+  const entries = Object.entries(states ?? {});
+  if (entries.length === 0) return "";
+  const list = entries.map(([role, path]) => `\`${role}\` \`${path}\` ($PI_QA_STORAGE_STATE_${role.toUpperCase()})`).join(", ");
+  return `- Storage states for other seeded roles: ${list}. Use the default role wherever it can reach the changed behaviour. When a changed page correctly denies the default role and is meant for one of these roles, load that role's state instead of reporting BLOCKED, and say in the report which role produced each observation.\n`;
+}
+
 /** The facts about a harness-owned instance, and what the agent must not do to it. */
 export function runningInstanceInstructions(instance: AppInstanceSummary): string {
   const endpoints = Object.entries(instance.endpoints).map(([key, url]) => `${key} \`${url}\``).join(", ");
   return `- The application is already running for this run (launched by the controller from the repository's QA manifest; ready after ${Math.round(instance.readinessMs / 1000)} s). Endpoints: ${endpoints}. The same values are in the environment as PI_QA_ENDPOINT_<NAME>.
-${instance.storageState ? `- A Playwright storage state for the declared QA role is at \`${instance.storageState}\` (also $PI_QA_STORAGE_STATE): load it with \`playwright-cli -s=<session> state-load ${instance.storageState}\` before navigating instead of driving the login form.\n` : ""}- Do not start, stop or relaunch the stack, do not run the launcher, do not use \`setsid\`, \`nohup\` or \`disown\`; if the instance is unusable, report BLOCKED with the exact observation (URL, status, console/network evidence).
-- Do not run the repository's Playwright e2e or post-deploy suites; check behaviour directly against this instance with playwright-cli.
+${instance.storageState ? `- A Playwright storage state for the declared QA role is at \`${instance.storageState}\` (also $PI_QA_STORAGE_STATE): load it with \`playwright-cli -s=<session> state-load ${instance.storageState}\` before navigating instead of driving the login form.\n` : ""}${roleStatesInstructions(instance.roleStorageStates)}- Do not start, stop or relaunch the stack, do not run the launcher, do not use \`setsid\`, \`nohup\` or \`disown\`; if the instance is unusable, report BLOCKED with the exact observation (URL, status, console/network evidence).
+- Do not run the repository's Playwright e2e or post-deploy suites as a whole; check behaviour directly against this instance with playwright-cli. Exception: when the task names failing spec files (an E2E-failure issue, for example) and their Playwright config targets an existing base URL without starting a web server, run exactly those files against this instance (its frontend endpoint as the config's base-URL variable, a run-unique output directory under the evidence directory), including the earlier steps of a serial spec they depend on; these specs create the sessions and records they need, so missing seed data in the fresh instance is not a blocker. Keep the playwright-cli evidence of the changed behaviour as well.
 - Keep the complete playwright-cli open/interact/capture/close sequence in one bash tool call with a cleanup trap that closes the browser; the application is not yours to start or stop.
 `;
 }
