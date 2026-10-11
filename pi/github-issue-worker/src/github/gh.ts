@@ -12,6 +12,11 @@ export function createGhRunner(): GhRunner {
   };
 }
 
+// gh prints "(HTTP 404)" or "HTTP 404:"; a bare "404" would misread errors whose command line contains it.
+export function isNotFound(error: unknown): boolean {
+  return /\(HTTP 404\)|\bHTTP 404:/.test(String(error));
+}
+
 export async function apiPages<T>(gh: GhRunner, endpoint: string): Promise<T[]> {
   const output = await gh(["api", "--paginate", "--slurp", endpoint]);
   if (!output) return [];

@@ -1,7 +1,7 @@
 import type { WorkerConfig } from "../config.js";
 import type { GitHubIssue, GitHubPullRequest } from "../types.js";
 import { commentIssue, commentPullRequest, WORKER_MARKER } from "./comments.js";
-import type { GhRunner } from "./gh.js";
+import { type GhRunner, isNotFound } from "./gh.js";
 
 export async function ensureLabels(gh: GhRunner, config: WorkerConfig): Promise<void> {
   const labels = [
@@ -202,7 +202,7 @@ export async function rejectTrigger(gh: GhRunner, config: WorkerConfig, number: 
     // An absent label is fine; any other failure throws before commenting, so a later poll can't post the comment twice.
     await gh(["api", "-X", "DELETE", `/repos/${config.repository}/issues/${number}/labels/${encodeURIComponent(name)}`]).catch(
       (error: unknown) => {
-        if (!/\(HTTP 404\)|\bHTTP 404:/.test(String(error))) throw error;
+        if (!isNotFound(error)) throw error;
       },
     );
   }

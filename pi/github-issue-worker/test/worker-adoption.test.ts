@@ -124,8 +124,8 @@ test("adopted PR label activation recovers after a claim-time crash", async () =
   }
 });
 
-test("completed PR jobs recover evidence markers without duplicate comments", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-worker-completed-evidence-recovery-"));
+async function completedEvidenceJob(prefix: string) {
+  const root = await mkdtemp(join(tmpdir(), prefix));
   const state = new WorkerState(join(root, "state.sqlite"));
   const pullRequest: GitHubPullRequest = {
     ...issue,
@@ -145,6 +145,11 @@ test("completed PR jobs recover evidence markers without duplicate comments", as
     "published",
     "\n\n![QA](https://example.invalid/qa.png)",
   );
+  return { root, state };
+}
+
+test("completed PR jobs recover evidence markers without duplicate comments", async () => {
+  const { root, state } = await completedEvidenceJob("pi-worker-completed-evidence-recovery-");
   const comments: string[] = [];
   try {
     const worker = new IssueWorker(config(root), state, {
@@ -171,26 +176,7 @@ test("completed PR jobs recover evidence markers without duplicate comments", as
 });
 
 test("unknown worker login treats evidence markers as absent and posts recovery", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-worker-null-viewer-evidence-"));
-  const state = new WorkerState(join(root, "state.sqlite"));
-  const pullRequest: GitHubPullRequest = {
-    ...issue,
-    number: 88,
-    url: "https://github.com/example/widgets/pull/88",
-    headRefName: "feature/adopt-me",
-    headRefOid: "head-88",
-    baseRefName: "main",
-    isCrossRepository: false,
-  };
-  state.adoptPullRequest(pullRequest, join(root, "worktrees", "pr-88"), false);
-  state.setStatus(88, "completed");
-  state.recordEvidenceRun(
-    88,
-    88,
-    "20260901T010101Z",
-    "published",
-    "\n\n![QA](https://example.invalid/qa.png)",
-  );
+  const { root, state } = await completedEvidenceJob("pi-worker-null-viewer-evidence-");
   const comments: string[] = [];
   let checked = false;
   try {

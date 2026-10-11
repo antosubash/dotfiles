@@ -1,4 +1,4 @@
-import { apiPages, type GhRunner } from "./gh.js";
+import { apiPages, type GhRunner, isNotFound } from "./gh.js";
 
 export interface ContentEdit { editor: string | null; editedAt: string }
 export interface Approval { labeledBy: string | null; labeledAt: string | null; renames: ContentEdit[] }
@@ -54,7 +54,7 @@ export class GitHubTrust implements TrustService {
         ".permission",
       ]);
     } catch (error) {
-      if (!/\(HTTP 404\)|\bHTTP 404:/.test(String(error))) throw error;
+      if (!isNotFound(error)) throw error;
     }
     const writable = WRITE_PERMISSIONS.has(permission.trim().toLowerCase());
     this.permissions.set(key, { writable, at: this.now() });

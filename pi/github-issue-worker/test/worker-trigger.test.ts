@@ -11,6 +11,13 @@ import { WorkerState } from "../src/state.js";
 import type { GitHubIssue, GitHubPullRequest, PullRequestFeedback } from "../src/types.js";
 import { config, issue, TestIssueWorker as IssueWorker, trustingTrust } from "./helpers/worker-fixtures.js";
 
+function retryCommand(eventKey: string, id: number, author: string): PullRequestFeedback {
+  return {
+    eventKey, source: "conversation", id, body: "/pi retry",
+    author, authorAssociation: "OWNER", createdAt: "2999-01-01T00:00:00Z", url: null,
+  };
+}
+
 async function harness(options: {
   trust: Partial<TrustService>; ready?: GitHubIssue[]; planning?: GitHubIssue[]; pulls?: GitHubPullRequest[]; commands?: PullRequestFeedback[]; rejectFails?: boolean;
 }) {
@@ -126,10 +133,7 @@ test("a planning request labelled by a user without write access is rejected und
 
 test("a /pi retry deferred by a transient trust error stays unprocessed and is admitted on the next poll", async (t) => {
   t.mock.method(console, "error", () => undefined);
-  const command: PullRequestFeedback = {
-    eventKey: "conversation:retry-42", source: "conversation", id: 2, body: "/pi retry",
-    author: "maintainer", authorAssociation: "OWNER", createdAt: "2999-01-01T00:00:00Z", url: null,
-  };
+  const command = retryCommand("conversation:retry-42", 2, "maintainer");
   let healthy = false;
   const h = await harness({
     commands: [command],
@@ -157,10 +161,7 @@ test("a /pi retry deferred by a transient trust error stays unprocessed and is a
 });
 
 test("a /pi retry from a commenter without write access is retired and never starts the issue, even once access is granted", async () => {
-  const command: PullRequestFeedback = {
-    eventKey: "conversation:retry-readonly", source: "conversation", id: 3, body: "/pi retry",
-    author: "triager", authorAssociation: "OWNER", createdAt: "2999-01-01T00:00:00Z", url: null,
-  };
+  const command = retryCommand("conversation:retry-readonly", 3, "triager");
   let granted = false;
   const h = await harness({ commands: [command], trust: { canWrite: async (login) => granted || login !== "triager" } });
   try {
@@ -182,10 +183,7 @@ test("a /pi retry from a commenter without write access is retired and never sta
 
 test("a transient write-check error leaves a /pi retry unprocessed and the tick running", async (t) => {
   const logged = t.mock.method(console, "error", () => undefined);
-  const command: PullRequestFeedback = {
-    eventKey: "conversation:retry-flaky", source: "conversation", id: 4, body: "/pi retry",
-    author: "maintainer", authorAssociation: "OWNER", createdAt: "2999-01-01T00:00:00Z", url: null,
-  };
+  const command = retryCommand("conversation:retry-flaky", 4, "maintainer");
   let healthy = false;
   const h = await harness({
     commands: [command],
