@@ -5,6 +5,9 @@
 
 set -e
 
+# Resolved up front: update_dotfiles cds away before the APT step runs
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Colors for output
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -78,10 +81,12 @@ update_package_managers() {
         if command_exists apt; then
             log_info "Updating APT packages..."
             sudo apt update
-            sudo apt upgrade -y
+            sudo apt full-upgrade -y
             sudo apt autoremove -y
             sudo apt autoclean
             log_success "APT packages updated"
+
+            "$SCRIPT_DIR/nvidia-kernel-guard.sh" --fix
         fi
         
         if command_exists snap; then

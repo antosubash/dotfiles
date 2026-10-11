@@ -373,7 +373,7 @@ update --cleanup
 ```bash
 # Package managers only
 brew update && brew upgrade    # macOS
-sudo apt update && sudo apt upgrade  # Ubuntu
+sudo apt update && sudo apt full-upgrade  # Ubuntu (not `upgrade`: it can hold back NVIDIA modules)
 
 # Language-specific
 npm update -g                 # Node.js

@@ -98,7 +98,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     alias brew-up='brew update && brew upgrade && brew cleanup'
     alias mac-up='update'
 else
-    alias apt-up='sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y'
+    alias apt-up='sudo apt update && sudo apt full-upgrade -y && sudo apt autoremove -y && ~/dotfiles/scripts/nvidia-kernel-guard.sh --fix'
     alias linux-up='update'
 fi
 
