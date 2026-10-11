@@ -18,6 +18,28 @@
       "Bash(grep:*)",
       "Skill(superpowers:brainstorming)"
     ],
+    "deny": [
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.config/pi-issue-worker/**)",
+      "Read(~/.pi/agent/auth.json)",
+      "Read(~/.netrc)",
+      "Read(~/.git-credentials)",
+      "Read(~/.docker/config.json)",
+      "Read(~/.kube/config)",
+      "Read(//**/.env)",
+      "Read(//**/.env.local)",
+      "Read(//**/.env.*.local)",
+      "Read(//**/*.pem)",
+      "Edit(~/.claude/settings.json)",
+      "Edit(~/.claude/settings.local.json)",
+      "Edit(~/.claude/hooks/**)",
+      "Edit(~/.claude/statusline.py)",
+      "Edit(~/dotfiles/.claude/settings.json)",
+      "Edit(~/dotfiles/.claude/statusline.py)"
+    ],
     "defaultMode": "auto"
   },
   "hooks": {
@@ -27,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash '/home/anto/.claude/hooks/herdr-agent-state.sh' session",
+            "command": "bash \"$HOME/.claude/hooks/herdr-agent-state.sh\" session",
             "timeout": 10
           }
         ]
