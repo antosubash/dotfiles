@@ -9,6 +9,9 @@
 
 set -e
 
+# shellcheck source=lib/setup-common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/setup-common.sh"
+
 QGIS_CHANNEL="${QGIS_CHANNEL:-ltr}"
 LOCAL_BIN="$HOME/.local/bin"
 mkdir -p "$LOCAL_BIN"
@@ -25,11 +28,6 @@ case "$QGIS_CHANNEL" in
 esac
 
 echo "Setting up GIS tools on Ubuntu $CODENAME..."
-
-# Latest release tag (e.g. v1.31.2) of a GitHub repository.
-latest_tag() {
-    curl -fsSL "https://api.github.com/repos/$1/releases/latest" | jq -r .tag_name
-}
 
 # QGIS official repository. Ubuntu's archive lags behind and has no LTR channel.
 echo "Configuring QGIS $QGIS_CHANNEL repository..."
@@ -76,19 +74,14 @@ fi
 
 echo "Installing pmtiles CLI..."
 if ! command -v pmtiles &> /dev/null; then
-    tag="$(latest_tag protomaps/go-pmtiles)"
-    curl -fsSL "https://github.com/protomaps/go-pmtiles/releases/download/$tag/go-pmtiles_${tag#v}_Linux_x86_64.tar.gz" \
-        | tar -xz -C "$LOCAL_BIN" pmtiles
+    install_verified_binary "$PMTILES_URL" "$PMTILES_SHA256" "$LOCAL_BIN/pmtiles" pmtiles
 else
     echo "pmtiles is already installed."
 fi
 
 echo "Installing DuckDB CLI with the spatial extension..."
 if ! command -v duckdb &> /dev/null; then
-    tag="$(latest_tag duckdb/duckdb)"
-    curl -fsSL "https://github.com/duckdb/duckdb/releases/download/$tag/duckdb_cli-linux-amd64.gz" \
-        | gunzip > "$LOCAL_BIN/duckdb"
-    chmod +x "$LOCAL_BIN/duckdb"
+    install_verified_binary "$DUCKDB_URL" "$DUCKDB_SHA256" "$LOCAL_BIN/duckdb"
 else
     echo "DuckDB is already installed."
 fi
@@ -108,8 +101,9 @@ if ! command -v mapshaper &> /dev/null; then
     if command -v npm &> /dev/null; then
         # Allow just the native-module builds mapshaper needs (GeoPackage/MBTiles
         # via better-sqlite3, fast msgpack) instead of opening install scripts
-        # for every global package.
-        sudo npm install -g --no-fund --allow-scripts=better-sqlite3,msgpackr-extract mapshaper
+        # for every global package. Installed for this user into ~/.local, not as root.
+        npm install -g --prefix "$HOME/.local" --no-fund \
+            --allow-scripts=better-sqlite3,msgpackr-extract "mapshaper@$MAPSHAPER_VERSION"
     else
         echo "npm not found (run setup-ubuntu.sh first), skipping mapshaper."
     fi

@@ -2,6 +2,9 @@
 
 set -e
 
+# shellcheck source=lib/setup-common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/setup-common.sh"
+
 echo "Installing development & operations tools on Ubuntu Server (headless)..."
 
 # ---------- Preflight: verify bootstrap commands & environment ----------
@@ -74,6 +77,9 @@ sudo dpkg-reconfigure -f noninteractive unattended-upgrades || true
 # Enable & start core services
 sudo systemctl enable --now ssh || sudo systemctl enable --now sshd || true
 sudo systemctl enable --now fail2ban || true
+
+# Key-only SSH (skipped with a warning until you have an authorized key)
+harden_sshd || echo "WARNING: SSH hardening was not applied; see the error above."
 
 # Install Neovim
 # Install Neovim from the official release binary.
@@ -158,10 +164,7 @@ done
 
 echo "Installing Go..."
 if ! command -v go &> /dev/null; then
-    GO_VERSION="1.21.5"
-    wget -q https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz
-    sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz
-    rm go${GO_VERSION}.linux-amd64.tar.gz
+    install_go
     if ! grep -q 'export PATH=$PATH:/usr/local/go/bin' ~/.zshrc 2>/dev/null; then
         echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.zshrc
     fi
@@ -196,7 +199,7 @@ else
     echo "httpie and jq are already installed."
 fi
 if ! command -v yq &> /dev/null; then
-    sudo wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq && sudo chmod +x /usr/bin/yq
+    install_verified_binary "$YQ_URL" "$YQ_SHA256" /usr/local/bin/yq
 else
     echo "yq is already installed."
 fi
@@ -237,20 +240,24 @@ else
     echo "UFW is already installed."
 fi
 
-# Configure UFW with safe defaults (SSH allowed, deny incoming, allow outgoing)
-# Only set defaults if UFW is inactive to avoid clobbering existing rules.
+# Configure and enable UFW with safe defaults (SSH allowed, deny incoming,
+# allow outgoing). Only touch it while inactive to avoid clobbering existing rules.
 if command -v ufw &> /dev/null && ! sudo ufw status | grep -q "Status: active"; then
-    echo "Configuring UFW defaults (allow SSH)..."
+    echo "Configuring UFW defaults (allow SSH) and enabling it..."
     sudo ufw default deny incoming
     sudo ufw default allow outgoing
     sudo ufw allow OpenSSH
-    echo "UFW configured but NOT enabled. Enable manually with: sudo ufw enable"
+    # Also allow sshd on any non-default port, so enabling UFW can't cut off SSH.
+    for port in $(sudo sshd -T 2>/dev/null | awk '$1 == "port" && $2 != 22 { print $2 }'); do
+        sudo ufw allow "$port/tcp"
+    done
+    sudo ufw --force enable
 fi
 
 # Install VPN tools
 echo "Installing VPN tools..."
 if ! command -v tailscale &> /dev/null; then
-    curl -fsSL https://tailscale.com/install.sh | sh
+    install_tailscale
 else
     echo "Tailscale is already installed."
 fi
@@ -333,11 +340,7 @@ fi
 # Install Lazygit
 echo "Installing Lazygit..."
 if ! command -v lazygit &> /dev/null; then
-    LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | grep -Po '"tag_name": "v\K[^"]*')
-    curl -Lo lazygit.tar.gz "https://github.com/jesseduffield/lazygit/releases/latest/download/lazygit_${LAZYGIT_VERSION}_Linux_x86_64.tar.gz"
-    tar xf lazygit.tar.gz lazygit
-    sudo install lazygit /usr/local/bin
-    rm lazygit lazygit.tar.gz
+    install_verified_binary "$LAZYGIT_URL" "$LAZYGIT_SHA256" /usr/local/bin/lazygit lazygit
 else
     echo "Lazygit is already installed."
 fi
@@ -345,7 +348,7 @@ fi
 # Install Lazydocker
 echo "Installing Lazydocker..."
 if ! command -v lazydocker &> /dev/null; then
-    curl https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash
+    install_verified_binary "$LAZYDOCKER_URL" "$LAZYDOCKER_SHA256" /usr/local/bin/lazydocker lazydocker
 else
     echo "Lazydocker is already installed."
 fi
@@ -386,8 +389,7 @@ fi
 # Install Node.js and pnpm
 echo "Installing Node.js..."
 if ! command -v node &> /dev/null; then
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-    sudo apt-get install -y nodejs
+    install_nodejs
 else
     echo "Node.js is already installed."
 fi
@@ -424,15 +426,13 @@ fi
 # Install Kubernetes CLI tools
 echo "Installing kubectl..."
 if ! command -v kubectl &> /dev/null; then
-    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-    sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-    rm kubectl
+    install_verified_binary "$KUBECTL_URL" "$KUBECTL_SHA256" /usr/local/bin/kubectl
 else
     echo "kubectl is already installed."
 fi
 
 if ! command -v helm &> /dev/null; then
-    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    install_verified_binary "$HELM_URL" "$HELM_SHA256" /usr/local/bin/helm linux-amd64/helm
 else
     echo "Helm is already installed."
 fi
@@ -512,6 +512,6 @@ echo ""
 echo "Next steps:"
 echo "  1. Run 'source ~/.zshrc' (or ~/.bashrc) to apply PATH changes."
 echo "  2. If you were added to the docker group, log out and back in."
-echo "  3. Review & enable UFW:        sudo ufw enable"
+echo "  3. Review the firewall:        sudo ufw status verbose"
 echo "  4. Bring up Tailscale:         sudo tailscale up"
 echo "  5. Verify fail2ban is active:  sudo systemctl status fail2ban"
