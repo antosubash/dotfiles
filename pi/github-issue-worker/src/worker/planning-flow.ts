@@ -7,7 +7,7 @@ export async function processPlanningIssues(ctx: WorkerContext): Promise<Set<num
   if (typeof ctx.github.listPlanningIssues !== "function") return handled;
   for (const issue of await ctx.github.listPlanningIssues()) {
     handled.add(issue.number);
-    if (!(await admitTrigger(ctx, issue, "pi-plan"))) continue;
+    if ((await admitTrigger(ctx, issue, "pi-plan")).status !== "admitted") continue;
     try {
       const job = ctx.state.getJob(issue.number);
       if (job && !["blocked", "stopped", "completed"].includes(job.status)) {

@@ -34,19 +34,20 @@ export async function checkTrigger(trust: TrustService, item: TriggerItem, label
   return { ok: true, hash: issueHash(item) };
 }
 
+export type Admission = { status: "admitted"; hash: string } | { status: "rejected" } | { status: "deferred" };
+
 /**
- * Returns the content hash to pin on the job, or null when the item must not run. A rejection removes
- * the labels and comments once. A transient error changes nothing, so the next poll retries.
+ * Admitted carries the content hash to pin on the job. A rejection removes the labels and comments once.
+ * Deferred (a transient error, including a failed rejection) changes nothing, so the next poll retries.
  */
-export async function admitTrigger(ctx: WorkerContext, item: TriggerItem, label: string): Promise<string | null> {
-  let result: TriggerResult;
+export async function admitTrigger(ctx: WorkerContext, item: TriggerItem, label: string): Promise<Admission> {
   try {
-    result = await checkTrigger(ctx.trust, item, label);
+    const result = await checkTrigger(ctx.trust, item, label);
+    if (result.ok) return { status: "admitted", hash: result.hash };
+    await ctx.github.rejectTrigger(item.number, label, `⛔ Not started: ${result.reason}.`);
+    return { status: "rejected" };
   } catch (error) {
     console.error(`${new Date().toISOString()} trigger check for #${item.number} deferred: ${errorText(error)}`);
-    return null;
+    return { status: "deferred" };
   }
-  if (result.ok) return result.hash;
-  await ctx.github.rejectTrigger(item.number, label, `⛔ Not started: ${result.reason}.`);
-  return null;
 }

@@ -25,6 +25,7 @@ import {
 import { processPlanningIssues } from "./worker/planning-flow.js";
 import { processReadyPullRequests, startPullRequest } from "./worker/pull-request-adoption.js";
 import type { WorkerContext } from "./worker/shared.js";
+import { admitTrigger } from "./worker/trigger-gate.js";
 
 export { isBlockedFinalOutput } from "./worker/shared.js";
 
@@ -112,13 +113,19 @@ export class IssueWorker {
         .filter((item) => parseWorkerCommand(item.body) === "retry")
         .at(-1);
       if (!command) continue;
-      this.ctx.state.markProcessed(job.issueNumber, command.eventKey);
+      // A deferred gate leaves the command unprocessed, so the next poll retries it.
       if (job.kind === "pull_request" && typeof this.ctx.github.getPullRequest === "function") {
         const pullRequest = await this.ctx.github.getPullRequest(job.prNumber ?? job.issueNumber);
-        await startPullRequest(this.ctx, pullRequest).catch((error) => blockInitialIssue(this.ctx, job.issueNumber, error));
+        const admission = await admitTrigger(this.ctx, pullRequest, this.ctx.config.readyLabel);
+        if (admission.status === "deferred") continue;
+        this.ctx.state.markProcessed(job.issueNumber, command.eventKey);
+        await startPullRequest(this.ctx, pullRequest, admission).catch((error) => blockInitialIssue(this.ctx, job.issueNumber, error));
       } else {
         const issue = await this.ctx.github.getIssue(job.issueNumber);
-        await startIssue(this.ctx, issue).catch((error) => handleInitialFailure(this.ctx, issue.number, error));
+        const admission = await admitTrigger(this.ctx, issue, this.ctx.config.readyLabel);
+        if (admission.status === "deferred") continue;
+        this.ctx.state.markProcessed(job.issueNumber, command.eventKey);
+        await startIssue(this.ctx, issue, admission).catch((error) => handleInitialFailure(this.ctx, issue.number, error));
       }
     }
   }
@@ -137,7 +144,7 @@ export class IssueWorker {
       const issue = await this.ctx.github.getIssue(job.issueNumber);
       if (!job.triggerHash || issueHash(issue) !== job.triggerHash) {
         await handleInitialFailure(this.ctx, job.issueNumber, new Error(
-          `#${job.issueNumber} changed since it was approved (or predates trigger verification). Review it and comment \`/pi retry\`.`,
+          `#${job.issueNumber} changed since it was approved (or predates trigger verification). Review it and add \`${this.ctx.config.readyLabel}\` again, or comment \`/pi retry\` if it is unchanged.`,
         ));
         continue;
       }

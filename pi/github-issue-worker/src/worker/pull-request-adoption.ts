@@ -2,7 +2,7 @@ import type { GitHubPullRequest } from "../types.js";
 import { blockInitialIssue } from "./issue-flow.js";
 import { ensureJobWorktree, validatePullRequestForAdoption } from "./job-worktree.js";
 import { errorText, evidenceRequested, looksLikeUiTask, type WorkerContext } from "./shared.js";
-import { admitTrigger } from "./trigger-gate.js";
+import { admitTrigger, type Admission } from "./trigger-gate.js";
 
 export async function processReadyPullRequests(ctx: WorkerContext): Promise<void> {
   if (typeof ctx.github.listReadyPullRequests !== "function") return;
@@ -10,6 +10,9 @@ export async function processReadyPullRequests(ctx: WorkerContext): Promise<void
   for (const pullRequest of readyPullRequests) {
     const tracked = ctx.state.getJobByPullRequest(pullRequest.number);
     if (tracked) {
+      const inactive = ["blocked", "stopped", "completed"].includes(tracked.status);
+      // Re-labelling an inactive PR restarts it, so the labeller must pass the same gate as a new adoption.
+      if (inactive && (await admitTrigger(ctx, pullRequest, ctx.config.readyLabel)).status !== "admitted") continue;
       try {
         validatePullRequestForAdoption(ctx, pullRequest);
         if (tracked.branch !== pullRequest.headRefName) {
@@ -18,7 +21,7 @@ export async function processReadyPullRequests(ctx: WorkerContext): Promise<void
           );
         }
         await ensureJobWorktree(ctx, tracked);
-        if (["blocked", "stopped", "completed"].includes(tracked.status)) {
+        if (inactive) {
           ctx.state.setStatus(tracked.issueNumber, "pr_open");
         }
         if (typeof ctx.github.activatePullRequest === "function") {
@@ -38,8 +41,14 @@ export async function processReadyPullRequests(ctx: WorkerContext): Promise<void
   }
 }
 
-export async function startPullRequest(ctx: WorkerContext, pullRequest: GitHubPullRequest): Promise<void> {
-  if (!(await admitTrigger(ctx, pullRequest, ctx.config.readyLabel))) return;
+/** Pass `admission` when the caller already ran the trigger gate for this exact pull request snapshot. */
+export async function startPullRequest(
+  ctx: WorkerContext,
+  pullRequest: GitHubPullRequest,
+  admission?: Admission,
+): Promise<void> {
+  const admitted = admission ?? (await admitTrigger(ctx, pullRequest, ctx.config.readyLabel));
+  if (admitted.status !== "admitted") return;
   validatePullRequestForAdoption(ctx, pullRequest);
   const worktreePath = ctx.repository.pathForPullRequest(pullRequest.number);
   const job = ctx.state.adoptPullRequest(

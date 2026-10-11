@@ -199,7 +199,12 @@ export async function labelPullRequestFromIssue(
 
 export async function rejectTrigger(gh: GhRunner, config: WorkerConfig, number: number, label: string, message: string): Promise<void> {
   for (const name of new Set([label, config.readyLabel])) {
-    await gh(["api", "-X", "DELETE", `/repos/${config.repository}/issues/${number}/labels/${encodeURIComponent(name)}`]).catch(() => undefined);
+    // An absent label is fine; any other failure throws before commenting, so a later poll can't post the comment twice.
+    await gh(["api", "-X", "DELETE", `/repos/${config.repository}/issues/${number}/labels/${encodeURIComponent(name)}`]).catch(
+      (error: unknown) => {
+        if (!/\(HTTP 404\)|\bHTTP 404:/.test(String(error))) throw error;
+      },
+    );
   }
   await gh(
     ["api", "-X", "POST", `/repos/${config.repository}/issues/${number}/comments`, "--input", "-"],

@@ -16,7 +16,7 @@ import {
 import { stageNeedsInstance, withAppInstance } from "./app-stage.js";
 import { runImplementer } from "./issue-implement.js";
 import { ensureJobWorktree } from "./job-worktree.js";
-import { admitTrigger } from "./trigger-gate.js";
+import { admitTrigger, type Admission } from "./trigger-gate.js";
 import { verifyImplementation } from "./verification-flow.js";
 import {
   containsUiFiles,
@@ -89,9 +89,10 @@ export async function processPendingPullRequestLabels(ctx: WorkerContext): Promi
   }
 }
 
-export async function startIssue(ctx: WorkerContext, issue: GitHubIssue): Promise<void> {
-  const triggerHash = await admitTrigger(ctx, issue, ctx.config.readyLabel);
-  if (!triggerHash) return;
+/** Pass `admission` when the caller already ran the trigger gate for this exact issue snapshot. */
+export async function startIssue(ctx: WorkerContext, issue: GitHubIssue, admission?: Admission): Promise<void> {
+  const admitted = admission ?? (await admitTrigger(ctx, issue, ctx.config.readyLabel));
+  if (admitted.status !== "admitted") return;
   const branch = ctx.repository.branchForIssue(issue.number, issue.title);
   const worktreePath = ctx.repository.pathForIssue(issue.number);
   const job = ctx.state.claim(
@@ -99,7 +100,7 @@ export async function startIssue(ctx: WorkerContext, issue: GitHubIssue): Promis
     branch,
     worktreePath,
     evidenceRequested(issue, ctx.config.visualLabel),
-    triggerHash,
+    admitted.hash,
   );
   await ctx.github.claimIssue(issue.number);
   await implementIssue(ctx, issue, job);
