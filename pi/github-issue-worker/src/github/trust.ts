@@ -54,7 +54,7 @@ export class GitHubTrust implements TrustService {
         ".permission",
       ]);
     } catch (error) {
-      if (!/\b404\b|Not Found/i.test(String(error))) throw error;
+      if (!/\(HTTP 404\)|\bHTTP 404:/.test(String(error))) throw error;
     }
     const writable = WRITE_PERMISSIONS.has(permission.trim().toLowerCase());
     this.permissions.set(key, { writable, at: this.now() });
@@ -93,7 +93,10 @@ export class GitHubTrust implements TrustService {
   viewerLogin(): Promise<string | null> {
     this.viewer ??= this.gh(["api", "user", "--jq", ".login"]).then(
       (login) => login.trim() || null,
-      () => null,
+      () => {
+        this.viewer = null;
+        return null;
+      },
     );
     return this.viewer;
   }

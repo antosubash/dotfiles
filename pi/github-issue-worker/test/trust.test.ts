@@ -19,13 +19,19 @@ test("write, maintain and admin can write; triage, read and 404 cannot", async (
     const trust = new GitHubTrust(fake({ "/permission": `${permission}\n` }), "o/r");
     assert.equal(await trust.canWrite("u"), expected, permission);
   }
-  const missing = new GitHubTrust(fake({ "/permission": new Error("gh api failed (1): HTTP 404: Not Found") }), "o/r");
+  const missing = new GitHubTrust(fake({ "/permission": new Error("gh api /repos/o/r/collaborators/ghost/permission --jq .permission failed (1)\ngh: Not Found (HTTP 404)") }), "o/r");
   assert.equal(await missing.canWrite("ghost"), false);
 });
 
 test("other permission errors throw so callers retry", async () => {
   const trust = new GitHubTrust(fake({ "/permission": new Error("HTTP 502: Bad Gateway") }), "o/r");
   await assert.rejects(trust.canWrite("u"), /502/);
+});
+
+test("a 502 whose command line contains a standalone 404 still throws", async () => {
+  const error = new Error("gh api /repos/o/my-404-repo/collaborators/user-404/permission --jq .permission failed (1)\ngh: Bad Gateway (HTTP 502)");
+  const trust = new GitHubTrust(fake({ "/permission": error }), "o/my-404-repo");
+  await assert.rejects(trust.canWrite("user-404"), /502/);
 });
 
 test("permission is cached per lowercased login for 10 minutes", async () => {
@@ -67,12 +73,15 @@ test("more than one page of edits fails closed", async () => {
   await assert.rejects(trust.bodyEdits(7), TooManyEditsError);
 });
 
-test("viewerLogin is cached and null when gh api user fails", async () => {
+test("viewerLogin caches success; failure returns null and is retried", async () => {
   const calls: string[] = [];
   const ok = new GitHubTrust(fake({ "api user": "worker-bot\n" }, calls), "o/r");
   assert.equal(await ok.viewerLogin(), "worker-bot");
   assert.equal(await ok.viewerLogin(), "worker-bot");
   assert.equal(calls.length, 1);
-  const broken = new GitHubTrust(fake({ "api user": new Error("401") }), "o/r");
+  const brokenCalls: string[] = [];
+  const broken = new GitHubTrust(fake({ "api user": new Error("401") }, brokenCalls), "o/r");
   assert.equal(await broken.viewerLogin(), null);
+  assert.equal(await broken.viewerLogin(), null);
+  assert.equal(brokenCalls.length, 2);
 });
