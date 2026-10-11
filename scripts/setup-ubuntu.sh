@@ -2,6 +2,9 @@
 
 set -e
 
+# shellcheck source=lib/setup-common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/setup-common.sh"
+
 echo "Installing latest versions of development tools on Ubuntu..."
 
 # Update package manager
@@ -32,9 +35,7 @@ else
     echo "Python3 and Java are already installed."
 fi
 if ! command -v go &> /dev/null; then
-    wget https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
-    sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
-    rm go1.21.5.linux-amd64.tar.gz
+    install_go
     if ! grep -q '/usr/local/go/bin' ~/.zshrc 2>/dev/null; then
         echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.zshrc
     fi
@@ -94,7 +95,7 @@ else
     echo "httpie and jq are already installed."
 fi
 if ! command -v yq &> /dev/null; then
-    sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq && sudo chmod +x /usr/bin/yq
+    install_verified_binary "$YQ_URL" "$YQ_SHA256" /usr/local/bin/yq
 else
     echo "yq is already installed."
 fi
@@ -148,11 +149,12 @@ fi
 sudo systemctl enable --now ssh
 # Pre-allow SSH so enabling UFW later can't lock out remote sessions.
 sudo ufw allow OpenSSH
+harden_sshd || echo "WARNING: SSH hardening was not applied; see the error above."
 
 # Install VPN tools
 echo "Installing VPN tools..."
 if ! command -v tailscale &> /dev/null; then
-    curl -fsSL https://tailscale.com/install.sh | sh
+    install_tailscale
 else
     echo "Tailscale is already installed."
 fi
@@ -194,11 +196,7 @@ bash "$(dirname "${BASH_SOURCE[0]}")/setup-nvidia-guard.sh"
 # Install Lazygit
 echo "Installing Lazygit..."
 if ! command -v lazygit &> /dev/null; then
-    LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | grep -Po '"tag_name": "v\K[^"]*')
-    curl -Lo lazygit.tar.gz "https://github.com/jesseduffield/lazygit/releases/latest/download/lazygit_${LAZYGIT_VERSION}_Linux_x86_64.tar.gz"
-    tar xf lazygit.tar.gz lazygit
-    sudo install lazygit /usr/local/bin
-    rm lazygit lazygit.tar.gz
+    install_verified_binary "$LAZYGIT_URL" "$LAZYGIT_SHA256" /usr/local/bin/lazygit lazygit
 else
     echo "Lazygit is already installed."
 fi
@@ -206,7 +204,7 @@ fi
 # Install Lazydocker
 echo "Installing Lazydocker..."
 if ! command -v lazydocker &> /dev/null; then
-    curl https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash
+    install_verified_binary "$LAZYDOCKER_URL" "$LAZYDOCKER_SHA256" /usr/local/bin/lazydocker lazydocker
 else
     echo "Lazydocker is already installed."
 fi
@@ -242,8 +240,7 @@ fi
 # Install Node.js and npm
 echo "Installing Node.js and npm..."
 if ! command -v node &> /dev/null; then
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-    sudo apt-get install -y nodejs
+    install_nodejs
 else
     echo "Node.js is already installed."
 fi
@@ -282,7 +279,9 @@ fi
 # Install Pi coding agent (config is linked by install.sh via setup-pi.sh)
 echo "Installing Pi coding agent..."
 if ! command -v pi &> /dev/null; then
-    sudo npm install -g @earendil-works/pi-coding-agent
+    # Per-user install into ~/.local (already on PATH), not a root-run global install.
+    npm install -g --prefix "$HOME/.local" "@earendil-works/pi-coding-agent@$PI_CODING_AGENT_VERSION"
+    export PATH="$HOME/.local/bin:$PATH"
 else
     echo "Pi is already installed."
 fi
@@ -309,15 +308,13 @@ fi
 # Install Kubernetes tools
 echo "Installing Kubernetes tools..."
 if ! command -v kubectl &> /dev/null; then
-    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-    sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-    rm kubectl
+    install_verified_binary "$KUBECTL_URL" "$KUBECTL_SHA256" /usr/local/bin/kubectl
 else
     echo "kubectl is already installed."
 fi
 
 if ! command -v helm &> /dev/null; then
-    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    install_verified_binary "$HELM_URL" "$HELM_SHA256" /usr/local/bin/helm linux-amd64/helm
 else
     echo "Helm is already installed."
 fi
@@ -356,7 +353,13 @@ fi
 # Install Ollama
 echo "Installing Ollama..."
 if ! command -v ollama &> /dev/null; then
-    curl -fsSL https://ollama.com/install.sh | sh
+    # Ollama has no apt repository, so this runs the vendor's own installer
+    # (it also sets up the ollama user, systemd service and GPU support).
+    # Download it to a file first instead of piping it straight into a shell.
+    OLLAMA_INSTALL="$(mktemp)"
+    curl -fsSL --proto '=https' --tlsv1.2 https://ollama.com/install.sh -o "$OLLAMA_INSTALL"
+    sh "$OLLAMA_INSTALL"
+    rm -f "$OLLAMA_INSTALL"
 else
     echo "Ollama is already installed."
 fi

@@ -46,7 +46,9 @@ npm install --global --prefix "$PREFIX" "$PACK_DIR/$TARBALL"
 
 # Run the worker on the globally installed pi instead of its own bundled copy, so `pi update`
 # keeps the CLI and the worker on one version (a stale bundled SDK can't read newer auth/models).
-GLOBAL_PI="$(npm root -g)/@earendil-works/pi-coding-agent"
+# setup-ubuntu.sh installs pi per-user under $PREFIX; older installs used npm's global root.
+GLOBAL_PI="$PREFIX/lib/node_modules/@earendil-works/pi-coding-agent"
+[ -f "$GLOBAL_PI/package.json" ] || GLOBAL_PI="$(npm root -g)/@earendil-works/pi-coding-agent"
 WORKER_PI="$PREFIX/lib/node_modules/@pi-tools/github-issue-worker/node_modules/@earendil-works/pi-coding-agent"
 if [ -f "$GLOBAL_PI/package.json" ]; then
     rm -rf -- "$WORKER_PI"
@@ -58,7 +60,7 @@ if [ -f "$GLOBAL_PI/package.json" ]; then
         printf '%s\n' "Warning: global pi differs from the version the worker was tested with; run 'pi-issue-worker-supervisor --check' and bump the worker's dependency if it fails." >&2
     fi
 else
-    printf '%s\n' "Global pi not found under $(npm root -g); the worker keeps its bundled pi SDK." >&2
+    printf '%s\n' "Global pi not found under $PREFIX/lib/node_modules or $(npm root -g); the worker keeps its bundled pi SDK." >&2
 fi
 
 mkdir -p "$CONFIG_DIR" "$DATA_DIR"

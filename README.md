@@ -81,8 +81,16 @@ Headless variant: same dev toolchain as `setup-ubuntu.sh` (Java,
 .NET 7/8/9/10, Go, Rust, Node, Python/uv, Docker, k8s, GDAL/PROJ/GEOS,
 etc.) but drops GUI items (Wireshark, VLC, Thunderbird, snap chat apps,
 terminal fonts) and adds server essentials: `openssh-server`,
-`unattended-upgrades`, `fail2ban`, `sysstat`, `ncdu`, `iotop`, plus a
-UFW default config that allows SSH.
+`unattended-upgrades`, `fail2ban`, `sysstat`, `ncdu`, `iotop`, plus
+UFW enabled with SSH allowed.
+
+Both Ubuntu scripts turn off SSH password, keyboard-interactive and root
+logins (`/etc/ssh/sshd_config.d/10-hardening.conf`), but only once your
+`~/.ssh/authorized_keys` has a key; until then they print a warning and leave
+SSH alone, so add your key and re-run. Release binaries (Go, yq, lazygit,
+lazydocker, kubectl, helm, pmtiles, DuckDB) are pinned and checked against a
+sha256 in `scripts/lib/setup-common.sh`; to bump one, update its version and
+hash there and run `VERIFY_DOWNLOADS=1 bash scripts/tests/test-setup-common.sh`.
 
 ### 4. Install Update Commands
 
