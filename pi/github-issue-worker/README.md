@@ -64,10 +64,13 @@ A transient GitHub error defers instead: nothing changes and the check is retrie
   authored by someone with write access.
 - **Resuming:** a job pins the issue content hash when it is claimed. If the issue changed before a restart
   resumes it, the job blocks with "add `pi-ready` again, or `/pi retry` if unchanged".
+  The hash pin protects the run up to the pull request; later CI-repair, conflict and review runs read the
+  issue's current text (edits there are only possible by the author or users with write access).
 - **Commands and reviews:** `/pi` comments and PR reviews are acted on only from users with write access.
   `PI_WORKER_TRUSTED_ASSOCIATIONS` (default `OWNER,COLLABORATOR`) is only a cheap prefilter; it never grants access.
 - **Caching:** permission lookups are cached for 10 minutes, so a revoked collaborator may still be honoured
-  for up to that long.
+  for up to that long. "No access" results (including 404) are cached for up to 10 minutes as well, so a newly
+  added collaborator may wait up to 10 minutes before their issues, labels or commands are accepted.
 - **Related safeguards:** Docker is off unless `PI_WORKER_ALLOW_DOCKER=1`; an unsandboxed worker refuses a
   public repository (exit 78) unless `PI_WORKER_ALLOW_UNSANDBOXED_PUBLIC=1`; and public repositories should
   use a single-repository `GH_TOKEN` rather than the keyring login (see
@@ -305,7 +308,8 @@ must not be group/world writable. The supervisor parses these files as dotenv da
 shell commands, validates every profile before starting, and rejects duplicate repositories or shared
 data directories. Parent-process GitHub token
 environment variables are not shared; put a repository-scoped `GH_TOKEN` in each profile or use the
-authenticated `gh` keyring identity.
+authenticated `gh` keyring identity. The keyring identity is not for public repositories; use a per-repo
+fine-grained token there (see [GitHub credentials](docs/installation.md#github-credentials)).
 
 ```bash
 cp .env.example ~/.config/pi-issue-worker/blog.env

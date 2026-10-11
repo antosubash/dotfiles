@@ -66,7 +66,9 @@ export class GitHubTrust implements TrustService {
     let labeled: RawEvent | null = null;
     const renames: ContentEdit[] = [];
     for (const event of events) {
-      if (event.event === "labeled" && event.label?.name?.toLowerCase() === label.toLowerCase()) labeled = event;
+      // The newest matching event wins regardless of array order; a later index breaks timestamp ties.
+      if (event.event === "labeled" && event.label?.name?.toLowerCase() === label.toLowerCase() &&
+          (!labeled || Date.parse(event.created_at) >= Date.parse(labeled.created_at))) labeled = event;
       if (event.event === "renamed") renames.push({ editor: event.actor?.login ?? null, editedAt: event.created_at });
     }
     return { labeledBy: labeled?.actor?.login ?? null, labeledAt: labeled?.created_at ?? null, renames };

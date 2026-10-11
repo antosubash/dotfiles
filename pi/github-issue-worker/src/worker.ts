@@ -15,7 +15,7 @@ import { processPullRequestCi, processCiJob } from "./worker/ci-flow.js";
 import { processPullRequestConflicts } from "./worker/conflict-flow.js";
 import { processPendingEvidencePublications } from "./worker/evidence-recovery.js";
 import { processFeedbackJob, processPullRequestFeedback } from "./worker/feedback-flow.js";
-import { writableFeedback } from "./worker/feedback-trust.js";
+import { partitionFeedback } from "./worker/feedback-trust.js";
 import {
   blockInitialIssue,
   handleInitialFailure,
@@ -114,7 +114,10 @@ export class IssueWorker {
         .filter((item) => parseWorkerCommand(item.body) === "retry");
       let command;
       try {
-        command = (await writableFeedback(this.ctx.trust, candidates)).at(-1);
+        const { writable, denied } = await partitionFeedback(this.ctx.trust, candidates);
+        // Non-writers' commands are retired for good so they never fire later if that user gains access.
+        for (const item of denied) this.ctx.state.markProcessed(job.issueNumber, item.eventKey);
+        command = writable.at(-1);
       } catch (error) {
         // A failed permission lookup leaves the command unprocessed; skip this job so the next poll retries it.
         console.error(`${new Date().toISOString()} write check for #${job.issueNumber} deferred: ${errorText(error)}`);

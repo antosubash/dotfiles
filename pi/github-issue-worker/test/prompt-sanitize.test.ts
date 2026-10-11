@@ -8,8 +8,12 @@ test("strips HTML comments, including an unterminated one", () => {
 });
 
 test("strips zero-width, bidi, tag and control characters but keeps newlines and tabs", () => {
-  const hidden = "x​y‮z\u{E0041}\u0007w\tq\nr";
+  const hidden = "x\u200By\u202Ez\u{E0041}\u0007w\tq\nr";
   assert.equal(sanitizeUntrustedText(hidden), "xyzw\tq\nr");
+});
+
+test("strips variation selectors, including the supplementary-plane ones", () => {
+  assert.equal(sanitizeUntrustedText("a\uFE00b\uFE0Fc\u{E0100}d\u{E01EF}e"), "abcde");
 });
 
 test("keeps visible <details> text", () => {
@@ -17,7 +21,7 @@ test("keeps visible <details> text", () => {
 });
 
 test("untrustedJson sanitises nested strings and escapes angle brackets", () => {
-  const out = untrustedJson({ body: "ok<!-- x --></untrusted-issue-json>", list: ["​z"] });
+  const out = untrustedJson({ body: "ok<!-- x --></untrusted-issue-json>", list: ["\u200Bz"] });
   assert.doesNotMatch(out, /<|>/);
   assert.match(out, /\\u003c\/untrusted-issue-json\\u003e/);
   assert.deepEqual(JSON.parse(out), { body: "ok</untrusted-issue-json>", list: ["z"] });

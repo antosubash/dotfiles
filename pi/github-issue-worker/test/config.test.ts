@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { createServer } from "node:net";
@@ -135,6 +135,26 @@ test("loadConfig enables Docker only when PI_WORKER_ALLOW_DOCKER=1", async () =>
     });
     assert.equal(enabled.allowDocker, true);
     assert.equal(enabled.dockerSocket, socket);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("loadConfig rejects a Docker socket the worker cannot read and write", { skip: process.getuid?.() === 0 }, async () => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-worker-socket-"));
+  const socket = join(directory, "docker.sock");
+  const server = createServer();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socket, resolve);
+    });
+    chmodSync(socket, 0o000);
+    assert.throws(
+      () => loadConfig({ ...base, PI_WORKER_ALLOW_DOCKER: "1", PI_WORKER_DOCKER_SOCKET: socket }),
+      /accessible Unix socket/,
+    );
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(directory, { recursive: true, force: true });

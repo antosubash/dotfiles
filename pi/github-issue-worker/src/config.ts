@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { realpathSync, statSync } from "node:fs";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { safeRepositoryPath } from "./qa-manifest.js";
@@ -186,6 +186,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       if (!statSync(dockerSocket).isSocket()) {
         throw new Error("path is not a Unix socket");
       }
+      accessSync(dockerSocket, constants.R_OK | constants.W_OK);
       dockerSocket = realpathSync(dockerSocket);
     } catch (error) {
       throw new Error(

@@ -14,7 +14,7 @@ import {
 } from "./evidence-flow.js";
 import { ensureJobWorktree } from "./job-worktree.js";
 import { stageNeedsInstance, withAppInstance } from "./app-stage.js";
-import { writableFeedback } from "./feedback-trust.js";
+import { partitionFeedback } from "./feedback-trust.js";
 import { verifyImplementation } from "./verification-flow.js";
 import { mergeConflictEventKey } from "./conflict-context.js";
 import {
@@ -45,7 +45,10 @@ export async function processFeedbackJob(ctx: WorkerContext, job: IssueJob): Pro
       isActionableFeedback(item, ctx.config.trustedAssociations),
   );
   // A failed permission lookup throws here, leaving every event unprocessed for the next tick.
-  const pending = (await writableFeedback(ctx.trust, prefiltered)).slice(0, 20);
+  const { writable, denied } = await partitionFeedback(ctx.trust, prefiltered);
+  // Non-writers' items are retired for good so they never fire later if that user gains access.
+  for (const item of denied) ctx.state.markProcessed(job.issueNumber, item.eventKey);
+  const pending = writable.slice(0, 20);
   if (pending.length === 0) {
     if (job.status === "addressing_review") ctx.state.setStatus(job.issueNumber, "pr_open");
     return;

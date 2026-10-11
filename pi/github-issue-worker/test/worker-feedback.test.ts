@@ -177,7 +177,7 @@ test("trusted review feedback reuses the job and records event idempotency", asy
   }
 });
 
-test("a /pi fix from a COLLABORATOR whom the write check rejects is not acted on", async () => {
+test("a /pi fix from a COLLABORATOR whom the write check rejects is retired and never acted on later", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-review-readonly-"));
   const state = new WorkerState(join(root, "state.sqlite"));
   state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
@@ -193,6 +193,7 @@ test("a /pi fix from a COLLABORATOR whom the write check rejects is not acted on
     url: null,
   };
   let runs = 0;
+  let grantedToTriager = false;
   const github = {
     listReadyIssues: async () => [],
     getIssue: async () => issue,
@@ -207,13 +208,17 @@ test("a /pi fix from a COLLABORATOR whom the write check rejects is not acted on
   try {
     const worker = new IssueWorker(config(root), state, {
       github: github as unknown as GitHubClient,
-      trust: { ...trustingTrust, canWrite: async (login) => login !== "triager" },
+      trust: { ...trustingTrust, canWrite: async (login) => grantedToTriager || login !== "triager" },
       agent: agent as unknown as PiAgentRunner,
     });
     await worker.tick();
     assert.equal(runs, 0);
-    assert.equal(state.hasProcessed(comment.eventKey), false);
+    assert.equal(state.hasProcessed(comment.eventKey), true);
     assert.equal(state.requireJob(42).status, "pr_open");
+    // Access granted later must not replay the old comment.
+    grantedToTriager = true;
+    await worker.tick();
+    assert.equal(runs, 0);
   } finally {
     state.close();
     await rm(root, { recursive: true, force: true });

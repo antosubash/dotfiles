@@ -61,6 +61,16 @@ test("approval returns the last ready-label event and all renames", async () => 
   });
 });
 
+test("approval picks the newest matching label event even when the events array is out of order", async () => {
+  const events = JSON.stringify([[
+    { event: "labeled", label: { name: "pi-ready" }, actor: { login: "newest" }, created_at: "2026-03-01T00:00:00Z" },
+    { event: "labeled", label: { name: "pi-ready" }, actor: { login: "oldest" }, created_at: "2026-01-01T00:00:00Z" },
+    { event: "labeled", label: { name: "pi-ready" }, actor: { login: "middle" }, created_at: "2026-02-01T00:00:00Z" },
+  ]]);
+  const trust = new GitHubTrust(fake({ "/issues/7/events": events }), "o/r");
+  assert.deepEqual(await trust.approval(7, "pi-ready"), { labeledBy: "newest", labeledAt: "2026-03-01T00:00:00Z", renames: [] });
+});
+
 test("bodyEdits maps editors and keeps deleted accounts as null", async () => {
   const page = JSON.stringify({ nodes: [{ editor: { login: "a" }, editedAt: "t1" }, { editor: null, editedAt: "t2" }], pageInfo: { hasNextPage: false } });
   const trust = new GitHubTrust(fake({ graphql: page }), "o/r");
