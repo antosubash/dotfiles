@@ -4,7 +4,7 @@ Date: 2026-09-14
 
 ## Problem
 
-A base-branch conflict retry on `IIASA.GeoWiki#501` takes 35–45 minutes and has failed twelve times
+A base-branch conflict retry on `example-app#501` takes 35–45 minutes and has failed twelve times
 on verifier variance, never on the code. Measured from the one verifier run that passed (32.5 min):
 
 | Phase | Time | Necessary |
@@ -22,7 +22,7 @@ on verifier variance, never on the code. Measured from the one verifier run that
 The Aspire CLI log for the 10-minute launch shows every resource `Running` 18 s after start, then
 silence, then a DCP keepalive failure. The kernel journal for that minute: `Under memory pressure`,
 then an OOM kill with **155 `dotnet` processes (10.6 GB), 9 `dcp` orchestrators, 70 chrome (4.7 GB),
-swap full**. Nine orchestrators means nine GeoWiki stacks were alive at once: the eight probe cycles
+swap full**. Nine orchestrators means nine app stacks were alive at once: the eight probe cycles
 never tore anything down.
 
 They leaked because of the harness's own rule. Each agent bash call runs in a process group; leftovers
@@ -138,7 +138,7 @@ instance would be stale before it was useful.
 
 ### Stop
 
-`stop()`: `SIGTERM` to the launcher (so a launcher's own exit trap — GeoWiki drops its databases — runs
+`stop()`: `SIGTERM` to the launcher (so a launcher's own exit trap — the app drops its databases — runs
 and Aspire stops its resources), wait up to 30 s, then `cgroup.kill` on the instance cgroup, wait for it
 to empty, remove it. Runs in `finally` of the stage wrapper and on the worker's shutdown signal. On
 worker start, any `qa-*` child cgroup left under the worker's cgroup by a crash is killed and removed.
@@ -239,7 +239,7 @@ Per profile, i.e. per repository: `<dataDir>/memory/`, outside every worktree, n
 
 Both documented in `.env.example` and the README.
 
-## Expected timings (GeoWiki conflict retry, warm caches)
+## Expected timings (app conflict retry, warm caches)
 
 resolve 2 min → push → launch + readiness + auth ≈ 1.5 min → verifier restore/build/tests/checks ≈ 7
 min → browser pass ≈ 1 min → report ≈ 2 min: **≈ 13–14 minutes**, one stack, no leak.
@@ -260,5 +260,5 @@ min → browser pass ≈ 1 min → report ≈ 2 min: **≈ 13–14 minutes**, on
 - Manifest tests: `readiness.endpoints` parsing and rejection of non-loopback or non-http URLs.
 - Memory tests: index cap, ordering, secret filter, 4 KB/40-file limits.
 - `test/systemd.test.ts`: `Delegate=yes` in both units.
-- Live: one GeoWiki conflict retry with the manifest on `dev` (#580 merged), timings recorded in
+- Live: one app conflict retry with the manifest on `dev` (#580 merged), timings recorded in
   `instance-timing.md`; `npm run check` green (currently 174 tests).

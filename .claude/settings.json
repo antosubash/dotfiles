@@ -59,13 +59,6 @@
     "cc-plugin-you-should-know@builtin": true
   },
   "effortLevel": "high",
-  "pluginConfigs": {
-    "grafana-mcp@claude-plugins-official": {
-      "options": {
-        "grafana_url": "https://grafana.nodes.iiasa.ac.at"
-      }
-    }
-  },
   "tui": "fullscreen",
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",

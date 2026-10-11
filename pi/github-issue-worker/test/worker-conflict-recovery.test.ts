@@ -9,7 +9,7 @@ import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
 import { config, issue, TestIssueWorker as IssueWorker } from "./helpers/worker-fixtures.js";
 
-// IIASA.GeoWiki#501, tenth attempt: the independent verifier passed after 45 minutes, and 37 seconds later
+// example-app#501, tenth attempt: the independent verifier passed after 45 minutes, and 37 seconds later
 // the GitHub token expired. The merge-context check threw a transport error, the catch path treated it like
 // a failed verification — abort, discard, block — and the verified resolution was gone. A GitHub outage
 // after verification must keep the staged merge in place so the next tick can resume and finish it.

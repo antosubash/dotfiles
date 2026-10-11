@@ -10,7 +10,7 @@
 #   claude-plugins.sh enable  figma grafana-mcp      # in the current repo
 #   claude-plugins.sh disable figma
 #   claude-plugins.sh list
-#   claude-plugins.sh --repo ~/Repos/IIASA.GeoWiki enable grafana-mcp
+#   claude-plugins.sh --repo ~/Repos/my-app enable grafana-mcp
 #
 # Short names get "@claude-plugins-official" appended; pass a full "name@marketplace" otherwise.
 set -euo pipefail

@@ -117,7 +117,7 @@ alias kns="kubectl config set-context --current"
 
 # Utility aliases
 alias ports="netstat -tuln"  # Show listening ports
-alias myip="curl ifconfig.me" # Get public IP
+alias myip="curl -fsS https://ifconfig.me" # Get public IP
 if [[ "$OSTYPE" == "darwin"* ]]; then
     alias localip="ipconfig getifaddr en0"  # macOS local IP
 fi

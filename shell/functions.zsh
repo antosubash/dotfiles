@@ -30,7 +30,7 @@ extract() {
 
 # Quick server - serves current directory on port 8000
 server() {
-    python3 -m http.server "${1:-8000}"
+    python3 -m http.server --bind 127.0.0.1 "${1:-8000}"
 }
 
 # Git quick commit with message

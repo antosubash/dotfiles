@@ -158,16 +158,16 @@ sync_repo() {
 
     if [ "$cur" != "$def" ]; then
         if git -C "$repo" show-ref --verify --quiet "refs/heads/$def"; then
-            git -C "$repo" switch --quiet "$def" 2>/dev/null \
+            git -C "$repo" -c core.hooksPath=/dev/null switch --quiet "$def" 2>/dev/null \
                 || { printf 'error|could not switch to %s\n' "$def"; return; }
         else
-            git -C "$repo" switch --quiet --create "$def" --track "origin/$def" 2>/dev/null \
+            git -C "$repo" -c core.hooksPath=/dev/null switch --quiet --create "$def" --track "origin/$def" 2>/dev/null \
                 || { printf 'error|could not create %s from origin\n' "$def"; return; }
         fi
     fi
 
     before="$(git -C "$repo" rev-parse --short HEAD)"
-    if git -C "$repo" merge --ff-only --quiet "origin/$def" 2>/dev/null; then
+    if git -C "$repo" -c core.hooksPath=/dev/null merge --ff-only --quiet "origin/$def" 2>/dev/null; then
         after="$(git -C "$repo" rev-parse --short HEAD)"
         # A checkout that moved reports as "switched" even when it also
         # fast-forwarded, so the summary never hides a branch move.

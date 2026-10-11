@@ -60,7 +60,7 @@ test("QA manifest loads strict Aspire, preview, and argv command metadata", asyn
   }
 });
 
-// Eleven live conflict retries on IIASA.GeoWiki#501 all reached the stack, and every remaining failure was
+// Eleven live conflict retries on example-app#501 all reached the stack, and every remaining failure was
 // the verifier re-deriving the same repository facts differently each run: how to launch, what "ready"
 // means, how to log in. A repository can now declare them — launch argv, readiness resources/paths, and an
 // auth setup that produces a Playwright storage state (env values mapped from resolved endpoints) — so
@@ -71,7 +71,7 @@ test("QA manifest declares launch, readiness, and storage-state authentication",
     const declared = {
       version: 1,
       aspire: { apphost: "AppHost/AppHost.csproj", resources: { frontend: "app-frontend", api: "app-api", auth: "app-auth" } },
-      launch: { argv: ["./scripts/start-apphost.sh"], env: { GEOWIKI_DROP_DATABASES_ON_EXIT: "1" }, notes: "Isolated Aspire instance; frontend port derives from the slug." },
+      launch: { argv: ["./scripts/start-apphost.sh"], env: { APP_DROP_DATABASES_ON_EXIT: "1" }, notes: "Isolated Aspire instance; frontend port derives from the slug." },
       readiness: { resources: ["api", "auth", "frontend"], paths: { api: "/api/abp/application-configuration", frontend: "/en" } },
       auth: {
         setup: { argv: ["pnpm", "--filter", "app", "exec", "playwright", "test", "e2e/tools/save-auth-state.setup.ts"], envFromEndpoints: { BASE_URL: "frontend" }, env: { E2E_IGNORE_HTTPS_ERRORS: "1" } },

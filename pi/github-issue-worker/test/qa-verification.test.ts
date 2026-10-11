@@ -9,11 +9,11 @@ import type { PiAgentRunner } from "../src/pi-agent.js";
 import { DEFAULT_QA_CHECKS, QaVerificationService, assertQaExecution, validateQaResult, verifierSourcePolicy } from "../src/qa-verification.js";
 import type { GitHubIssue, VerificationEvidence } from "../src/types.js";
 
-// Shapes taken from iiasa/IIASA.GeoWiki#555: the runner recorded a multi-line
+// Shapes taken from example/app#555: the runner recorded a multi-line
 // script with an exit-status wrapper; the verdict JSON echoed the core command
 // with `; ` separators and no wrapper. QA had passed; the gate rejected it.
 const evidenceDir = "/data/verification/issue-555/run/evidence";
-const core = `TMPDIR="$EVIDENCE/tmp" pnpm --dir frontend --filter @geowiki/pagebuilder exec vitest run src/widgets/__tests__/badge.test.tsx --cache=false > "$EVIDENCE/widget-test-runner.log" 2>&1`;
+const core = `TMPDIR="$EVIDENCE/tmp" pnpm --dir frontend --filter @app/pagebuilder exec vitest run src/widgets/__tests__/badge.test.tsx --cache=false > "$EVIDENCE/widget-test-runner.log" 2>&1`;
 const recorded = `EVIDENCE=${evidenceDir}\n${core}\nstatus=$?\nprintf 'exit=%s\\n' "$status"`;
 const claimed = `EVIDENCE=${evidenceDir}; ${core}`;
 
@@ -94,7 +94,7 @@ async function evidenceFixture(...logs: string[]) {
   return { dir, cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 
-// Shape taken from iiasa/IIASA.GeoWiki#557: one command entry named two logs
+// Shape taken from example/app#557: one command entry named two logs
 // joined by `;`. Both files existed; the gate raised a raw ENOENT.
 test("a command may name several log files as an array or a ;-joined string", async () => {
   const f = await evidenceFixture("mowing-test.log", "pagebuilder-test.log");

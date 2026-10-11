@@ -139,13 +139,14 @@ else
 fi
 
 echo "Installing .NET SDKs (7, 8, 9, 10)..."
-curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
-chmod +x /tmp/dotnet-install.sh
+DOTNET_INSTALL="$(mktemp)"
+curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$DOTNET_INSTALL"
+chmod +x "$DOTNET_INSTALL"
 for channel in 7.0 8.0 9.0 10.0; do
     echo "Installing .NET $channel..."
-    /tmp/dotnet-install.sh --channel "$channel" --install-dir "$HOME/.dotnet"
+    "$DOTNET_INSTALL" --channel "$channel" --install-dir "$HOME/.dotnet"
 done
-rm -f /tmp/dotnet-install.sh
+rm -f "$DOTNET_INSTALL"
 export DOTNET_ROOT="$HOME/.dotnet"
 export PATH="$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools"
 for rc in ~/.zshrc ~/.bashrc; do

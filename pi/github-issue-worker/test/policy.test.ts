@@ -232,7 +232,7 @@ test("headless policy blocks commands that reference credential stores", () => {
     "cat ${HOME}/.pi/agent/models.json",
     "cat /home/worker/.pi/agent/auth.json",
     "grep -r TOKEN ~/.config/pi-issue-worker/",
-    "cat ~/.config/pi-issue-worker/iiasa-geowiki.env",
+    "cat ~/.config/pi-issue-worker/example-app.env",
     "cat ~/.ssh/id_ed25519",
     "cat ~/.aws/credentials",
     "ls ~/.gnupg",

@@ -109,7 +109,7 @@ test("only signature-validated visual artifacts are publishable", async () => {
   }
 });
 
-// Shape taken from iiasa/IIASA.GeoWiki#558: a workflow GIF over 10 MiB made the
+// Shape taken from example/app#558: a workflow GIF over 10 MiB made the
 // whole run terminal even though the PNG screenshots were valid.
 test("an oversized workflow GIF is skipped with a note while PNG screenshots still publish", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-worker-oversized-"));

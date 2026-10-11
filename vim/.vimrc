@@ -64,3 +64,6 @@ nnoremap <leader>v :vsplit<CR>
 " Plug 'preservim/nerdtree'
 " Plug 'tpope/vim-fugitive'
 " call plug#end()
+
+" Modelines in opened files can run commands; don't honour them
+set nomodeline

@@ -52,32 +52,32 @@ run_script() {
 
 test_derive_flips_top_bit_of_last_octet() {
     setup_test "derive address"
-    run_script --derive 2c:0d:a7:d7:dc:fe
-    assert_eq "2C:0D:A7:D7:DC:7E" "$OUTPUT" "derived from FE"
-    run_script --derive 2C:0D:A7:D7:DC:05
-    assert_eq "2C:0D:A7:D7:DC:85" "$OUTPUT" "derived from 05"
+    run_script --derive 00:1a:7d:da:71:fe
+    assert_eq "00:1A:7D:DA:71:7E" "$OUTPUT" "derived from FE"
+    run_script --derive 00:1A:7D:DA:71:05
+    assert_eq "00:1A:7D:DA:71:85" "$OUTPUT" "derived from 05"
     teardown_test
 }
 
 test_sets_address_from_conf_on_powered_adapter() {
     setup_test "sets address from conf"
-    setup_fake_adapter 2C:0D:A7:D7:DC:FE on
-    printf 'FACTORY_ADDRESS=2C:0D:A7:D7:DC:FE\nADDRESS=2C:0D:A7:D7:DC:7E\n' > "$BT_OWN_ADDRESS_CONF"
+    setup_fake_adapter 00:1A:7D:DA:71:FE on
+    printf 'FACTORY_ADDRESS=00:1A:7D:DA:71:FE\nADDRESS=00:1A:7D:DA:71:7E\n' > "$BT_OWN_ADDRESS_CONF"
     run_script
     assert_eq 0 "$STATUS" "exit status"
-    assert_eq "2C:0D:A7:D7:DC:7E" "$(cat "$BT_STATE/addr")" "adapter address"
+    assert_eq "00:1A:7D:DA:71:7E" "$(cat "$BT_STATE/addr")" "adapter address"
     assert_eq "on" "$(cat "$BT_STATE/power")" "powered back on"
     assert_contains "$(cat "$BT_LOG")" "power off" "powered off first"
-    assert_contains "$OUTPUT" "now uses 2C:0D:A7:D7:DC:7E" "message"
+    assert_contains "$OUTPUT" "now uses 00:1A:7D:DA:71:7E" "message"
     teardown_test
 }
 
 test_leaves_unpowered_adapter_off() {
     setup_test "unpowered adapter at boot"
-    setup_fake_adapter 2C:0D:A7:D7:DC:FE off
-    run_script 2c:0d:a7:d7:dc:7e
+    setup_fake_adapter 00:1A:7D:DA:71:FE off
+    run_script 00:1a:7d:da:71:7e
     assert_eq 0 "$STATUS" "exit status"
-    assert_eq "2C:0D:A7:D7:DC:7E" "$(cat "$BT_STATE/addr")" "adapter address"
+    assert_eq "00:1A:7D:DA:71:7E" "$(cat "$BT_STATE/addr")" "adapter address"
     assert_eq "off" "$(cat "$BT_STATE/power")" "still off"
     assert_not_contains "$(cat "$BT_LOG")" "power" "no power changes"
     teardown_test
@@ -85,8 +85,8 @@ test_leaves_unpowered_adapter_off() {
 
 test_noop_when_address_already_set() {
     setup_test "already set"
-    setup_fake_adapter 2C:0D:A7:D7:DC:7E on
-    run_script 2C:0D:A7:D7:DC:7E
+    setup_fake_adapter 00:1A:7D:DA:71:7E on
+    run_script 00:1A:7D:DA:71:7E
     assert_eq 0 "$STATUS" "exit status"
     assert_contains "$OUTPUT" "already uses" "message"
     assert_not_contains "$(cat "$BT_LOG")" "public-addr" "no change"
@@ -99,7 +99,7 @@ test_noop_without_conf_or_adapter() {
     run_script
     assert_eq 0 "$STATUS" "no conf exit status"
     assert_contains "$OUTPUT" "nothing to do" "no conf message"
-    run_script 2C:0D:A7:D7:DC:7E
+    run_script 00:1A:7D:DA:71:7E
     assert_eq 0 "$STATUS" "no adapter exit status"
     assert_contains "$OUTPUT" "hci0 not found" "no adapter message"
     teardown_test
@@ -107,10 +107,10 @@ test_noop_without_conf_or_adapter() {
 
 test_rejects_invalid_address() {
     setup_test "invalid address"
-    setup_fake_adapter 2C:0D:A7:D7:DC:FE on
-    run_script 2C:0D:A7:D7:DC
+    setup_fake_adapter 00:1A:7D:DA:71:FE on
+    run_script 00:1A:7D:DA:71
     assert_eq 1 "$STATUS" "exit status"
-    assert_eq "2C:0D:A7:D7:DC:FE" "$(cat "$BT_STATE/addr")" "unchanged"
+    assert_eq "00:1A:7D:DA:71:FE" "$(cat "$BT_STATE/addr")" "unchanged"
     teardown_test
 }
 

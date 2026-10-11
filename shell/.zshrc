@@ -178,4 +178,4 @@ compinit
 export PATH="$HOME/.aspire/bin:$PATH"
 
 # opencode
-export PATH=/home/anto/.opencode/bin:$PATH
+export PATH="$HOME/.opencode/bin:$PATH"

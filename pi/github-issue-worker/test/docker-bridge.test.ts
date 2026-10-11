@@ -26,18 +26,18 @@ test("Docker bridge accepts only a private worker runtime", async () => {
 });
 
 test("Docker bridge arguments reject host namespaces and shell syntax", () => {
-  assert.deepEqual(bridgeArguments(["start", "issue-28_default", "geowiki-web", "8080"]), {
+  assert.deepEqual(bridgeArguments(["start", "issue-28_default", "app-web", "8080"]), {
     action: "start",
     network: "issue-28_default",
-    host: "geowiki-web",
+    host: "app-web",
     port: 8080,
   });
   assert.deepEqual(bridgeArguments(["stop"]), { action: "stop" });
   for (const args of [
-    ["start", "host", "geowiki-web", "8080"],
+    ["start", "host", "app-web", "8080"],
     ["start", "issue-28_default", "host;id", "8080"],
-    ["start", "issue-28_default", "geowiki-web", "0"],
-    ["start", "issue-28_default", "geowiki-web", "8080", "extra"],
+    ["start", "issue-28_default", "app-web", "0"],
+    ["start", "issue-28_default", "app-web", "8080", "extra"],
   ]) {
     assert.throws(() => bridgeArguments(args), /Docker bridge refused/);
   }

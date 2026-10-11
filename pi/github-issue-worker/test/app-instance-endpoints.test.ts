@@ -7,11 +7,11 @@ const running = (displayName: string, url: string) => ({ displayName, state: "Ru
 test("endpointsFromAspire maps manifest keys to running resources' first URL", () => {
   const { endpoints, missing } = endpointsFromAspire(
     [
-      running("geowiki-frontend", "http://localhost:3005"),
-      { displayName: "geowiki-api", state: "Starting", urls: [] },
-      { displayName: "geowiki-frontend-installer", state: "Finished" },
+      running("app-frontend", "http://localhost:3005"),
+      { displayName: "app-api", state: "Starting", urls: [] },
+      { displayName: "app-frontend-installer", state: "Finished" },
     ],
-    { frontend: "geowiki-frontend", api: "geowiki-api" },
+    { frontend: "app-frontend", api: "app-api" },
     ["frontend", "api"],
   );
   assert.deepEqual(endpoints, { frontend: "http://localhost:3005" });
@@ -35,12 +35,12 @@ test("resolveEndpoints polls describe until every required key is running", asyn
   const describe = async () => {
     calls += 1;
     return calls < 3
-      ? [running("geowiki-frontend", "http://localhost:3005")]
-      : [running("geowiki-frontend", "http://localhost:3005"), running("geowiki-api", "https://localhost:44431")];
+      ? [running("app-frontend", "http://localhost:3005")]
+      : [running("app-frontend", "http://localhost:3005"), running("app-api", "https://localhost:44431")];
   };
   const manifest = {
     version: 1 as const,
-    aspire: { apphost: "App/App.csproj", resources: { frontend: "geowiki-frontend", api: "geowiki-api" } },
+    aspire: { apphost: "App/App.csproj", resources: { frontend: "app-frontend", api: "app-api" } },
     readiness: { resources: ["frontend", "api"] },
   };
   const endpoints = await resolveEndpoints(manifest, "/w", { describe, deadline: Date.now() + 5_000, intervalMs: 5, launcherExited: () => null });

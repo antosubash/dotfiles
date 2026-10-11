@@ -38,7 +38,7 @@ export function launch(argv: readonly string[], worktree: string, env: NodeJS.Pr
 }
 
 /**
- * SIGTERM first, so a launcher's own exit trap runs (GeoWiki drops its per-instance databases, Aspire
+ * SIGTERM first, so a launcher's own exit trap runs (the app drops its per-instance databases, Aspire
  * stops its resources); then everything still in the cgroup — orchestrator children included — is killed.
  */
 export async function stopLaunched(launched: Launched, cgroups: CgroupController, graceMs = 30_000): Promise<void> {
