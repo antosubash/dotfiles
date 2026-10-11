@@ -3,7 +3,7 @@ import type { PullRequestFeedback } from "../types.js";
 import { apiPages } from "./gh.js";
 import type { GhRunner } from "./gh.js";
 
-const WORKER_MARKER = "<!-- pi-issue-worker -->";
+export const WORKER_MARKER = "<!-- pi-issue-worker -->";
 
 interface RawFeedback {
   id: number;

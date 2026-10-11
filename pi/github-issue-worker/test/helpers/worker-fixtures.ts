@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { loadConfig } from "../../src/config.js";
+import type { TrustService } from "../../src/github/trust.js";
 import type { GitHubIssue } from "../../src/types.js";
 import { IssueWorker as RuntimeIssueWorker } from "../../src/worker.js";
 
@@ -13,6 +14,14 @@ export const issue: GitHubIssue = {
   author: { login: "maintainer" },
 };
 
+/** Controller-flow tests assume a fully trusted maintainer; trigger rules are covered in trigger tests. */
+export const trustingTrust: TrustService = {
+  canWrite: async () => true,
+  approval: async () => ({ labeledBy: "maintainer", labeledAt: "9999-01-01T00:00:00Z", renames: [] }),
+  bodyEdits: async () => [],
+  viewerLogin: async () => "pi-worker",
+};
+
 // Controller-flow tests do not exercise the independent QA service itself.
 export class TestIssueWorker extends RuntimeIssueWorker {
   constructor(...args: ConstructorParameters<typeof RuntimeIssueWorker>) {
@@ -20,6 +29,7 @@ export class TestIssueWorker extends RuntimeIssueWorker {
       qaVerifier: { verify: async () => "/private/qa/result.json" },
       // Flows call this only when a manifest declares `launch`; the fixture worktrees declare none.
       appInstances: { start: async () => { throw new Error("no app instance in controller-flow tests"); } },
+      trust: trustingTrust,
       ...args[2],
     });
   }

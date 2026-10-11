@@ -2,6 +2,7 @@ import type { AppInstanceService } from "../app-instance/index.js";
 import type { WorkerConfig } from "../config.js";
 import type { FigmaVerificationService } from "../figma-verification.js";
 import type { GitHubClient } from "../github.js";
+import type { TrustService } from "../github/trust.js";
 import type { IssuePlanService } from "../issue-plan.js";
 import type { PiAgentRunner } from "../pi-agent.js";
 import type { QaVerificationService } from "../qa-verification.js";
@@ -13,6 +14,7 @@ export interface WorkerContext {
   readonly config: WorkerConfig;
   readonly state: WorkerState;
   readonly github: GitHubClient;
+  readonly trust: TrustService;
   readonly repository: RepositoryManager;
   readonly agent: PiAgentRunner;
   readonly designVerifier: Pick<FigmaVerificationService, "verify">;

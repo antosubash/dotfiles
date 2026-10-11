@@ -29,6 +29,7 @@ export interface JobRow {
   visual_requested: number;
   ci_attempts: number;
   ci_head_sha: string | null;
+  trigger_hash: string | null;
   last_error: string | null;
   created_at: string;
   updated_at: string;
@@ -60,6 +61,7 @@ export function mapJob(row: JobRow): IssueJob {
     visualRequested: row.visual_requested === 1,
     ciAttempts: row.ci_attempts,
     ciHeadSha: row.ci_head_sha,
+    triggerHash: row.trigger_hash ?? null,
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

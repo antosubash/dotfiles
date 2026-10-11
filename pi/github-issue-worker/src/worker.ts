@@ -4,7 +4,9 @@ import { PullRequestWorktreeCleanupService } from "./cleanup.js";
 import type { WorkerConfig } from "./config.js";
 import { FigmaVerificationService } from "./figma-verification.js";
 import { GitHubClient, isActionableFeedback, parseWorkerCommand } from "./github.js";
-import { IssuePlanService } from "./issue-plan.js";
+import { createGhRunner } from "./github/gh.js";
+import { GitHubTrust, type TrustService } from "./github/trust.js";
+import { IssuePlanService, issueHash } from "./issue-plan.js";
 import { PiAgentRunner } from "./pi-agent.js";
 import { QaVerificationService } from "./qa-verification.js";
 import { RepositoryManager } from "./repository.js";
@@ -35,6 +37,7 @@ export class IssueWorker {
     state: WorkerState,
     dependencies: {
       github?: GitHubClient;
+      trust?: TrustService;
       repository?: RepositoryManager;
       agent?: PiAgentRunner;
       designVerifier?: Pick<FigmaVerificationService, "verify">;
@@ -43,6 +46,10 @@ export class IssueWorker {
       appInstances?: Pick<AppInstanceService, "start">;
     } = {},
   ) {
+    if (dependencies.github && !dependencies.trust) {
+      throw new Error("An injected GitHub client needs an injected trust service; tests must never reach the real API");
+    }
+    const trust = dependencies.trust ?? new GitHubTrust(createGhRunner(), config.repository);
     const github = dependencies.github ?? new GitHubClient(config);
     const repository = dependencies.repository ?? new RepositoryManager(config);
     // Bash calls and app instances are fenced under the same cgroup root so a call's cleanup never touches the instance.
@@ -52,6 +59,7 @@ export class IssueWorker {
       config,
       state,
       github,
+      trust,
       repository,
       agent,
       designVerifier: dependencies.designVerifier ?? new FigmaVerificationService(config, agent),
@@ -127,6 +135,12 @@ export class IssueWorker {
       }
       if (job.prNumber || !["claimed", "implementing"].includes(job.status)) continue;
       const issue = await this.ctx.github.getIssue(job.issueNumber);
+      if (!job.triggerHash || issueHash(issue) !== job.triggerHash) {
+        await handleInitialFailure(this.ctx, job.issueNumber, new Error(
+          `#${job.issueNumber} changed since it was approved (or predates trigger verification). Review it and comment \`/pi retry\`.`,
+        ));
+        continue;
+      }
       await implementIssue(this.ctx, issue, job).catch((error) => handleInitialFailure(this.ctx, job.issueNumber, error));
     }
   }

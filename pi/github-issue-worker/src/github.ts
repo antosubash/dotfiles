@@ -60,6 +60,10 @@ export class GitHubClient {
     return labels.finishPlanning(this.gh, this.config, issueNumber, message);
   }
 
+  rejectTrigger(number: number, label: string, message: string): Promise<void> {
+    return labels.rejectTrigger(this.gh, this.config, number, label, message);
+  }
+
   listReadyIssues(): Promise<GitHubIssue[]> {
     return queries.listReadyIssues(this.gh, this.config);
   }

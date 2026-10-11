@@ -184,3 +184,17 @@ test("state persists jobs, pull requests, and event idempotency", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("claim pins the trigger hash and a later claim without one clears it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-worker-state-trigger-"));
+  try {
+    const state = new WorkerState(join(directory, "state.sqlite"));
+    state.claim(issue, "b", "/w", false, "abc");
+    assert.equal(state.getJob(42)?.triggerHash, "abc");
+    state.claim(issue, "b", "/w", false);
+    assert.equal(state.getJob(42)?.triggerHash, null);
+    state.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -40,6 +40,7 @@ export interface IssueJob {
   visualRequested: boolean;
   ciAttempts: number;
   ciHeadSha: string | null;
+  triggerHash: string | null;
   lastError: string | null;
   createdAt: string;
   updatedAt: string;

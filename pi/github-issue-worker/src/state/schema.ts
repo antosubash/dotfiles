@@ -58,6 +58,7 @@ export function openDatabase(path: string): DatabaseSync {
   if (!jobColumns.has("ci_head_sha")) {
     database.exec("ALTER TABLE issue_jobs ADD COLUMN ci_head_sha TEXT");
   }
+  if (!jobColumns.has("trigger_hash")) database.exec("ALTER TABLE issue_jobs ADD COLUMN trigger_hash TEXT");
   const duplicatePullRequests = database
     .prepare(
       `SELECT pr_number, COUNT(*) AS count FROM issue_jobs

@@ -5,23 +5,30 @@ import { mapJob, type JobRow } from "./rows.js";
 export class JobStore {
   constructor(private readonly database: DatabaseSync) {}
 
-  claim(issue: GitHubIssue, branch: string, worktreePath: string, visualRequested: boolean): IssueJob {
+  claim(
+    issue: GitHubIssue,
+    branch: string,
+    worktreePath: string,
+    visualRequested: boolean,
+    triggerHash: string | null = null,
+  ): IssueJob {
     const now = new Date().toISOString();
     this.database
       .prepare(
         `INSERT INTO issue_jobs (
-          issue_number, job_kind, title, status, branch, worktree_path, visual_requested, created_at, updated_at
-        ) VALUES (?, 'issue', ?, 'claimed', ?, ?, ?, ?, ?)
+          issue_number, job_kind, title, status, branch, worktree_path, visual_requested, trigger_hash, created_at, updated_at
+        ) VALUES (?, 'issue', ?, 'claimed', ?, ?, ?, ?, ?, ?)
         ON CONFLICT(issue_number) DO UPDATE SET
           title = excluded.title,
           status = 'claimed',
           visual_requested = MAX(issue_jobs.visual_requested, excluded.visual_requested),
           ci_attempts = 0,
           ci_head_sha = NULL,
+          trigger_hash = excluded.trigger_hash,
           last_error = NULL,
           updated_at = excluded.updated_at`,
       )
-      .run(issue.number, issue.title, branch, worktreePath, visualRequested ? 1 : 0, now, now);
+      .run(issue.number, issue.title, branch, worktreePath, visualRequested ? 1 : 0, triggerHash, now, now);
     return this.requireJob(issue.number);
   }
 

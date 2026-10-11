@@ -2,6 +2,7 @@ import type { GitHubPullRequest } from "../types.js";
 import { blockInitialIssue } from "./issue-flow.js";
 import { ensureJobWorktree, validatePullRequestForAdoption } from "./job-worktree.js";
 import { errorText, evidenceRequested, looksLikeUiTask, type WorkerContext } from "./shared.js";
+import { admitTrigger } from "./trigger-gate.js";
 
 export async function processReadyPullRequests(ctx: WorkerContext): Promise<void> {
   if (typeof ctx.github.listReadyPullRequests !== "function") return;
@@ -38,6 +39,7 @@ export async function processReadyPullRequests(ctx: WorkerContext): Promise<void
 }
 
 export async function startPullRequest(ctx: WorkerContext, pullRequest: GitHubPullRequest): Promise<void> {
+  if (!(await admitTrigger(ctx, pullRequest, ctx.config.readyLabel))) return;
   validatePullRequestForAdoption(ctx, pullRequest);
   const worktreePath = ctx.repository.pathForPullRequest(pullRequest.number);
   const job = ctx.state.adoptPullRequest(

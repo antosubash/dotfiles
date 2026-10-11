@@ -1,4 +1,5 @@
 import { errorText, type WorkerContext } from "./shared.js";
+import { admitTrigger } from "./trigger-gate.js";
 
 /** Process pi-plan requests before ready work; planning never commits, pushes, or opens a PR. */
 export async function processPlanningIssues(ctx: WorkerContext): Promise<Set<number>> {
@@ -6,6 +7,7 @@ export async function processPlanningIssues(ctx: WorkerContext): Promise<Set<num
   if (typeof ctx.github.listPlanningIssues !== "function") return handled;
   for (const issue of await ctx.github.listPlanningIssues()) {
     handled.add(issue.number);
+    if (!(await admitTrigger(ctx, issue, "pi-plan"))) continue;
     try {
       const job = ctx.state.getJob(issue.number);
       if (job && !["blocked", "stopped", "completed"].includes(job.status)) {

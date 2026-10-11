@@ -16,7 +16,7 @@ export interface IssuePlan {
   checks: Array<{ id: string; kind: "behavioral" | "design"; requirement: string; steps: string[]; expected: string }>;
 }
 
-export function issueHash(issue: GitHubIssue): string {
+export function issueHash(issue: Pick<GitHubIssue, "number" | "title" | "body">): string {
   return createHash("sha256").update(JSON.stringify([issue.number, issue.title, issue.body])).digest("hex");
 }
 
