@@ -34,7 +34,7 @@ interface AgentRunOptions {
   environment?: NodeJS.ProcessEnv;
 }
 
-const SECRET_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "FIGMA_TOKEN", "FIGMA_TOKEN_FILE"] as const;
+const SECRET_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "FIGMA_TOKEN", "FIGMA_TOKEN_FILE"] as const;
 
 export class PiAgentRunner {
   private readonly modelRuntimePromise: Promise<ModelRuntime>;

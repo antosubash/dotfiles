@@ -24,3 +24,11 @@ export async function unsafeExposureReason(
     `to accept the risk.`
   );
 }
+
+/** A public repository should use a fine-grained single-repo token, never the owner's keyring login. */
+export async function keyringWarning(gh: GhRunner, repository: string, env: NodeJS.ProcessEnv): Promise<string | null> {
+  if (env.GH_TOKEN || env.GITHUB_TOKEN) return null;
+  const visibility = await gh(["repo", "view", repository, "--json", "visibility", "-q", ".visibility"]);
+  if (visibility.trim().toUpperCase() !== "PUBLIC") return null;
+  return `${repository} is public and no GH_TOKEN is set, so the worker uses the gh keyring login. Use a fine-grained token for this repository only (see docs/installation.md).`;
+}

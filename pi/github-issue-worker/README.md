@@ -44,6 +44,35 @@ databases, browser sessions, or expensive builds should not be fanned out accide
 `worker.lock` is acquired before SQLite opens; a concurrent instance exits with the owning PID. Different
 profiles may run concurrently under the supervisor while retaining separate state and process boundaries.
 
+## What can start a run
+
+Anyone can open or edit an issue on a public repository, so the worker checks *who* approved *what* before it
+acts. An issue (or `pi-plan` request, or adopted PR) starts only if all of these hold, using GitHub's
+collaborator-permission API (`admin`, `maintain` or `write` count as write access):
+
+1. The author has write access.
+2. The actor of the **last** `pi-ready` (or `pi-plan`) `labeled` event has write access.
+3. Every user who edited the body or renamed the title has write access.
+4. No body edit or rename happened **after** that label event.
+
+If a check fails, the worker removes the trigger label and the ready label and comments the reason once.
+A transient GitHub error defers instead: nothing changes and the check is retried on the next poll.
+
+- **Edited after approval:** review the issue and add `pi-ready` again; the new label event re-runs the gate.
+  Re-labelling a stopped, blocked or completed tracked PR goes through the gate too.
+- **Outside-authored issues** are always rejected. A maintainer re-files the work with `/handoff` so it is
+  authored by someone with write access.
+- **Resuming:** a job pins the issue content hash when it is claimed. If the issue changed before a restart
+  resumes it, the job blocks with "add `pi-ready` again, or `/pi retry` if unchanged".
+- **Commands and reviews:** `/pi` comments and PR reviews are acted on only from users with write access.
+  `PI_WORKER_TRUSTED_ASSOCIATIONS` (default `OWNER,COLLABORATOR`) is only a cheap prefilter; it never grants access.
+- **Caching:** permission lookups are cached for 10 minutes, so a revoked collaborator may still be honoured
+  for up to that long.
+- **Related safeguards:** Docker is off unless `PI_WORKER_ALLOW_DOCKER=1`; an unsandboxed worker refuses a
+  public repository (exit 78) unless `PI_WORKER_ALLOW_UNSANDBOXED_PUBLIC=1`; and public repositories should
+  use a single-repository `GH_TOKEN` rather than the keyring login (see
+  [GitHub credentials](docs/installation.md#github-credentials)).
+
 ## Optional pi-plan and independent acceptance gates
 
 Planning is **opt-in**. Apply the `pi-plan` label to an issue to create only an implementation plan and a
@@ -312,7 +341,7 @@ in a systemd override.
 
 ## Review commands
 
-Trusted repository owners, members, and collaborators can write:
+Users with write access to the repository can write:
 
 ```text
 /pi fix handle the empty state as discussed
@@ -323,7 +352,7 @@ Trusted repository owners, members, and collaborators can write:
 /pi help
 ```
 
-Formal PR reviews and inline review comments from trusted associations are processed automatically.
+Formal PR reviews and inline review comments from users with write access are processed automatically.
 Ordinary PR conversation text is ignored unless it starts with `/pi`. To bootstrap a PR that the worker did not create, apply `pi-ready` to that same-repository PR; the label is the explicit adoption authorization, while `/pi` supplies the requested action. Worker-authored comments carry a
 hidden marker and are ignored, preventing feedback loops. A trusted `/pi retry` comment posted on a
 blocked issue is also processed automatically: the controller reclaims the existing worktree/session and
@@ -490,7 +519,7 @@ feature PRs.
 
 - Applying the ready label is the human approval boundary. Do not grant issue-triage rights broadly.
 - Issue and review text remains untrusted and is delimited as data in prompts.
-- Only configured GitHub author associations can trigger follow-up work.
+- Only users with write access can start runs or trigger follow-up work; see [What can start a run](#what-can-start-a-run).
 - With `PI_WORKER_SANDBOX=1`, Pi bash commands use Anthropic Sandbox Runtime OS isolation (bubblewrap on
   Linux, sandbox-exec on macOS, with platform prerequisites installed). Home-directory and credential reads
   are denied, writes are allow-only, and network access is allowlisted. Initialization failure blocks the
