@@ -44,8 +44,15 @@ export async function processFeedbackJob(ctx: WorkerContext, job: IssueJob): Pro
       !ctx.state.hasProcessed(item.eventKey) &&
       isActionableFeedback(item, ctx.config.trustedAssociations),
   );
-  // A failed permission lookup throws here, leaving every event unprocessed for the next tick.
-  const { writable, denied } = await partitionFeedback(ctx.trust, prefiltered);
+  let partition;
+  try {
+    partition = await partitionFeedback(ctx.trust, prefiltered);
+  } catch (error) {
+    // A failed permission lookup must not abort every other job's feedback this tick; the events stay unprocessed and retry next tick.
+    console.error(`${new Date().toISOString()} write check for PR #${job.prNumber} deferred: ${errorText(error)}`);
+    return;
+  }
+  const { writable, denied } = partition;
   // Non-writers' items are retired for good so they never fire later if that user gains access.
   for (const item of denied) ctx.state.markProcessed(job.issueNumber, item.eventKey);
   const pending = writable.slice(0, 20);

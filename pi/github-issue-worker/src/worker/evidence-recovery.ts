@@ -3,7 +3,6 @@ import { publishEvidence } from "./evidence-flow.js";
 import { errorText, evidenceCommentMarker, type WorkerContext } from "./shared.js";
 
 export async function processPendingEvidencePublications(ctx: WorkerContext): Promise<void> {
-  const viewer = await ctx.trust.viewerLogin();
   for (const job of ctx.state.listTrackedPullRequests()) {
     if (!job.prNumber) continue;
     const discovered = [
@@ -23,7 +22,8 @@ export async function processPendingEvidencePublications(ctx: WorkerContext): Pr
       if (record.status === "published") {
         try {
           const marker = evidenceCommentMarker(eventKey);
-          // Only the worker's own comments count; an unknown login means "absent".
+          // Only the worker's own comments count; an unknown login means "absent". Looked up only when needed.
+          const viewer = await ctx.trust.viewerLogin();
           if (
             viewer !== null &&
             typeof ctx.github.hasPullRequestCommentMarker === "function" &&
