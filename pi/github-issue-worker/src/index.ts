@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { cgroupController, ownCgroupPath } from "./agent/cgroup.js";
 import { loadConfig } from "./config.js";
 import { commandExists } from "./exec.js";
-import { REFUSED_EXIT_CODE, unsafeExposureReason } from "./exposure.js";
+import { REFUSED_EXIT_CODE, keyringWarning, unsafeExposureReason } from "./exposure.js";
 import { createGhRunner } from "./github/gh.js";
 import { WorkerState } from "./state.js";
 import { IssueWorker } from "./worker.js";
@@ -27,6 +27,8 @@ async function main(): Promise<void> {
     process.exitCode = REFUSED_EXIT_CODE;
     return;
   }
+  const warning = await keyringWarning(createGhRunner(), config.repository, process.env).catch(() => null);
+  if (warning) console.error(`${new Date().toISOString()} warning: ${warning}`);
   await mkdir(config.dataDir, { recursive: true });
   // A crash can leave a fenced bash call or app instance behind; their child cgroups are killed and removed here.
   for (const name of await cgroupController(ownCgroupPath()).sweepChildren(["bash-", "qa-"])) {

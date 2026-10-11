@@ -176,6 +176,7 @@ A worker refuses to start (exit 78, not restarted by the supervisor) on a **publ
 `PI_WORKER_SANDBOX=0`: anyone can open or edit issues there, and without the OS sandbox the agent runs
 with your GitHub login and home directory. Turn the sandbox on, or set
 `PI_WORKER_ALLOW_UNSANDBOXED_PUBLIC=1` to accept that risk. `pi-worker-ensure.sh` won't add public repos.
+What may start a run (write-access gate, outsider issues, edits after approval) is described in [What can start a run](github-issue-worker/README.md#what-can-start-a-run).
 
 Install the CLI and unit template without starting a profile:
 

@@ -164,6 +164,7 @@ test("visual verification without the sandbox tells the agent to start the stack
   assert.match(prompt, /end with BLOCKED only when the launch itself fails, quoting the exact failure/);
   assert.match(prompt, /the controller terminates every background process when a bash call ends/);
   assert.match(prompt, /Direct Docker commands stay policy-gated/);
+  assert.match(prompt, /unless Docker is enabled for this worker \(PI_WORKER_ALLOW_DOCKER=1\)/);
   // #501 attempt 7: the verifier read "storage state: not configured" as "no credentials" on a fresh instance.
   assert.match(prompt, /Authenticate the way the repository.s own end-to-end tests do/);
   assert.match(prompt, /"No credentials configured" is not a blocker/);
@@ -212,4 +213,20 @@ test("prompts render the project memory index and the saving rules", () => {
   assert.match(text, /never secrets/i);
   assert.doesNotMatch(buildIssuePrompt({ config: cfg, issue, evidenceDir: null }), /Project memory/);
   assert.match(buildUiVerificationPrompt({ config: cfg, issueNumber: 1, prNumber: null, evidenceDir: ".qa/x", memory }), /Project memory/);
+});
+
+test("feedback prompt attributes Docker access to the machine owner, not a maintainer", () => {
+  const prompt = buildFeedbackPrompt({
+    config: { appUrl: null, playwrightState: null } as WorkerConfig,
+    issueNumber: 1,
+    prNumber: 2,
+    feedback: [],
+    evidenceDir: null,
+    gifRequested: false,
+    dockerAccess: true,
+  });
+  assert.match(prompt, /enabled for this worker by the machine owner \(PI_WORKER_ALLOW_DOCKER=1\)/);
+  // The prompt intro legitimately says "trusted maintainer feedback"; only the Docker claim must go.
+  assert.doesNotMatch(prompt, /Docker access was explicitly granted/);
+  assert.doesNotMatch(prompt, /granted by a trusted maintainer/);
 });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { GitHubClient } from "../src/github.js";
+import { issueHash } from "../src/issue-plan.js";
 import type { PiAgentRunner } from "../src/pi-agent.js";
 import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
@@ -68,7 +69,7 @@ test("worker claims an approved issue and opens a draft PR", async () => {
 test("PR label synchronization retries without blocking an already-open pull request", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-pr-label-retry-"));
   const state = new WorkerState(join(root, "state.sqlite"));
-  state.claim(issue, "pi/issue-42", join(root, "worktree"), false);
+  state.claim(issue, "pi/issue-42", join(root, "worktree"), false, issueHash(issue));
   state.setStatus(42, "implementing");
   let labelAttempts = 0;
   let blocked = 0;
@@ -147,7 +148,7 @@ test("trusted issue /pi retry restarts a blocked job without manual label change
     id: 2,
     body: "/pi retry",
     author: "maintainer",
-    authorAssociation: "MEMBER",
+    authorAssociation: "OWNER",
     createdAt: "2999-01-01T00:00:00Z",
     url: null,
   };

@@ -77,7 +77,7 @@ test("trusted visual wording enables the browser sandbox even outside the verify
     id: 10,
     body: "/pi add visual confirmation",
     author: "maintainer",
-    authorAssociation: "MEMBER",
+    authorAssociation: "OWNER",
     createdAt: "2026-01-02T00:00:00Z",
     url: null,
   };

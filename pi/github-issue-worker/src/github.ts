@@ -60,6 +60,10 @@ export class GitHubClient {
     return labels.finishPlanning(this.gh, this.config, issueNumber, message);
   }
 
+  rejectTrigger(number: number, label: string, message: string): Promise<void> {
+    return labels.rejectTrigger(this.gh, this.config, number, label, message);
+  }
+
   listReadyIssues(): Promise<GitHubIssue[]> {
     return queries.listReadyIssues(this.gh, this.config);
   }
@@ -104,8 +108,8 @@ export class GitHubClient {
     return comments.commentPullRequest(this.gh, this.config, prNumber, body);
   }
 
-  hasPullRequestCommentMarker(prNumber: number, marker: string): Promise<boolean> {
-    return comments.hasPullRequestCommentMarker(this.gh, this.config, prNumber, marker);
+  hasPullRequestCommentMarker(prNumber: number, marker: string, author: string): Promise<boolean> {
+    return comments.hasPullRequestCommentMarker(this.gh, this.config, prNumber, marker, author);
   }
 
   findOpenPullRequest(branch: string): Promise<PullRequestInfo | null> {

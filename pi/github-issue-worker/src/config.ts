@@ -112,7 +112,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     throw new Error(`PI_WORKER_THINKING_LEVEL is invalid: ${thinking}`);
   }
 
-  const associations = (env.PI_WORKER_TRUSTED_ASSOCIATIONS || "OWNER,MEMBER,COLLABORATOR")
+  const associations = (env.PI_WORKER_TRUSTED_ASSOCIATIONS || "OWNER,COLLABORATOR")
     .split(",")
     .map((value) => value.trim().toUpperCase())
     .filter(Boolean);
@@ -170,18 +170,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     env.PI_WORKER_DOCKER_SOCKET?.trim() || "/var/run/docker.sock",
     home,
   );
-  const automaticDocker = (() => {
-    try {
-      if (!statSync(configuredDockerSocket).isSocket()) return false;
-      accessSync(configuredDockerSocket, constants.R_OK | constants.W_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-  const allowDocker = env.PI_WORKER_ALLOW_DOCKER === undefined
-    ? automaticDocker
-    : booleanFlag("PI_WORKER_ALLOW_DOCKER", env.PI_WORKER_ALLOW_DOCKER);
+  const allowDocker = booleanFlag("PI_WORKER_ALLOW_DOCKER", env.PI_WORKER_ALLOW_DOCKER ?? "0");
   let dockerSocket = allowDocker ? configuredDockerSocket : null;
   const evidenceBranch = env.PI_WORKER_EVIDENCE_BRANCH?.trim() || "pi-evidence";
   if (
@@ -197,6 +186,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       if (!statSync(dockerSocket).isSocket()) {
         throw new Error("path is not a Unix socket");
       }
+      accessSync(dockerSocket, constants.R_OK | constants.W_OK);
       dockerSocket = realpathSync(dockerSocket);
     } catch (error) {
       throw new Error(

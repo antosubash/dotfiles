@@ -261,3 +261,23 @@ test("blocking an invalid ready PR removes the adoption label", async () => {
   assert.ok(edit.includes("pi-ready"));
   assert.ok(edit.includes("pi-blocked"));
 });
+
+test("evidence markers count only in comments authored by the worker", async () => {
+  const marker = "<!-- m -->";
+  const make = (pages: unknown) =>
+    new GitHubClient(
+      loadConfig({
+        PI_WORKER_REPOSITORY: "example/widgets",
+        PI_WORKER_BASE_BRANCH: "main",
+        PI_WORKER_ALLOW_DOCKER: "0",
+      }),
+      async (args) => {
+        assert.deepEqual(args.slice(0, 3), ["api", "--paginate", "--slurp"]);
+        return JSON.stringify(pages);
+      },
+    );
+  const spoofed = make([[{ user: { login: "stranger" }, body: marker }, { user: { login: "pi-worker" }, body: "other" }]]);
+  assert.equal(await spoofed.hasPullRequestCommentMarker(5, marker, "pi-worker"), false);
+  const genuine = make([[{ user: { login: "stranger" }, body: "x" }], [{ user: { login: "Pi-Worker" }, body: `hi ${marker}` }]]);
+  assert.equal(await genuine.hasPullRequestCommentMarker(5, marker, "pi-worker"), true);
+});

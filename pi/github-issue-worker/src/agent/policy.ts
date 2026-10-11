@@ -76,7 +76,7 @@ export function commandBlockReason(
       /\bdocker(?:-compose)?\b/i,
       options.dockerAccess
         ? ""
-        : "Docker requires an explicit trusted /pi request and PI_WORKER_ALLOW_DOCKER=1",
+        : "Docker is disabled for this worker (PI_WORKER_ALLOW_DOCKER=0)",
     ],
   ];
   for (const [pattern, reason] of rules) {
@@ -91,7 +91,7 @@ export function commandBlockReason(
     .filter((segment) => dockerInvocation.test(segment));
   for (const dockerCommand of dockerSegments) {
     if (!options.dockerAccess) {
-      return "Docker requires an explicit trusted /pi request and PI_WORKER_ALLOW_DOCKER=1";
+      return "Docker is disabled for this worker (PI_WORKER_ALLOW_DOCKER=0)";
     }
     if (/\$\(|`|\$(?:\{|[A-Za-z_])/i.test(dockerCommand)) {
       return "Docker commands must use literal arguments; shell expansion is forbidden";

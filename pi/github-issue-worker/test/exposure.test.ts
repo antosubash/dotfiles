@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { unsafeExposureReason } from "../src/exposure.js";
+import { keyringWarning, unsafeExposureReason } from "../src/exposure.js";
 import type { GhRunner } from "../src/github/gh.js";
 
 function fakeGh(visibility: string, calls: (readonly string[])[] = []): GhRunner {
@@ -38,4 +38,19 @@ test("a failed visibility lookup fails closed", async () => {
     throw new Error("gh: network unreachable");
   };
   await assert.rejects(unsafeExposureReason(gh, "example/widgets", false, {}), /network unreachable/);
+});
+
+test("keyringWarning is silent, without asking GitHub, when a token is configured", async () => {
+  const calls: (readonly string[])[] = [];
+  assert.equal(await keyringWarning(fakeGh("PUBLIC", calls), "example/widgets", { GH_TOKEN: "x" }), null);
+  assert.equal(await keyringWarning(fakeGh("PUBLIC", calls), "example/widgets", { GITHUB_TOKEN: "x" }), null);
+  assert.deepEqual(calls, []);
+});
+
+test("keyringWarning flags a public repository that falls back to the keyring login", async () => {
+  assert.match((await keyringWarning(fakeGh("PUBLIC"), "example/widgets", {})) ?? "", /keyring login/);
+});
+
+test("keyringWarning is silent for a private repository", async () => {
+  assert.equal(await keyringWarning(fakeGh("PRIVATE"), "example/widgets", {}), null);
 });

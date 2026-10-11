@@ -25,8 +25,14 @@ export class WorkerState {
     this.events = new EventStore(this.database);
   }
 
-  claim(issue: GitHubIssue, branch: string, worktreePath: string, visualRequested: boolean): IssueJob {
-    return this.jobs.claim(issue, branch, worktreePath, visualRequested);
+  claim(
+    issue: GitHubIssue,
+    branch: string,
+    worktreePath: string,
+    visualRequested: boolean,
+    triggerHash: string | null = null,
+  ): IssueJob {
+    return this.jobs.claim(issue, branch, worktreePath, visualRequested, triggerHash);
   }
 
   adoptPullRequest(

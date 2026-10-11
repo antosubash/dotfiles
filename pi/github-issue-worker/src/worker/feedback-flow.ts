@@ -14,6 +14,7 @@ import {
 } from "./evidence-flow.js";
 import { ensureJobWorktree } from "./job-worktree.js";
 import { stageNeedsInstance, withAppInstance } from "./app-stage.js";
+import { partitionFeedback } from "./feedback-trust.js";
 import { verifyImplementation } from "./verification-flow.js";
 import { mergeConflictEventKey } from "./conflict-context.js";
 import {
@@ -38,13 +39,23 @@ export async function processFeedbackJob(ctx: WorkerContext, job: IssueJob): Pro
     return;
   }
   const all = await ctx.github.listFeedback(job.prNumber);
-  const pending = all
-    .filter(
-      (item) =>
-        !ctx.state.hasProcessed(item.eventKey) &&
-        isActionableFeedback(item, ctx.config.trustedAssociations),
-    )
-    .slice(0, 20);
+  const prefiltered = all.filter(
+    (item) =>
+      !ctx.state.hasProcessed(item.eventKey) &&
+      isActionableFeedback(item, ctx.config.trustedAssociations),
+  );
+  let partition;
+  try {
+    partition = await partitionFeedback(ctx.trust, prefiltered);
+  } catch (error) {
+    // A failed permission lookup must not abort every other job's feedback this tick; the events stay unprocessed and retry next tick.
+    console.error(`${new Date().toISOString()} write check for PR #${job.prNumber} deferred: ${errorText(error)}`);
+    return;
+  }
+  const { writable, denied } = partition;
+  // Non-writers' items are retired for good so they never fire later if that user gains access.
+  for (const item of denied) ctx.state.markProcessed(job.issueNumber, item.eventKey);
+  const pending = writable.slice(0, 20);
   if (pending.length === 0) {
     if (job.status === "addressing_review") ctx.state.setStatus(job.issueNumber, "pr_open");
     return;
@@ -118,7 +129,7 @@ export async function handleFeedback(
     for (const item of feedback) ctx.state.markProcessed(job.issueNumber, item.eventKey);
     await ctx.github.commentPullRequest(
       job.prNumber!,
-      "Commands: `/pi fix <request>`, `/pi retry`, `/pi verify visual`, `/pi verify gif`, `/pi stop`. UI work receives screenshot/GIF evidence automatically, and Docker is available automatically when the configured daemon socket exists. Formal reviews and inline review comments from trusted maintainers are handled automatically.",
+      "Commands: `/pi fix <request>`, `/pi retry`, `/pi verify visual`, `/pi verify gif`, `/pi stop`. UI work receives screenshot/GIF evidence automatically, and Docker is available only when the machine owner sets PI_WORKER_ALLOW_DOCKER=1. Formal reviews and inline review comments from trusted maintainers are handled automatically.",
     );
     return;
   }

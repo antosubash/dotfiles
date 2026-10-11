@@ -4,7 +4,9 @@ import { PullRequestWorktreeCleanupService } from "./cleanup.js";
 import type { WorkerConfig } from "./config.js";
 import { FigmaVerificationService } from "./figma-verification.js";
 import { GitHubClient, isActionableFeedback, parseWorkerCommand } from "./github.js";
-import { IssuePlanService } from "./issue-plan.js";
+import { createGhRunner } from "./github/gh.js";
+import { GitHubTrust, type TrustService } from "./github/trust.js";
+import { IssuePlanService, issueHash } from "./issue-plan.js";
 import { PiAgentRunner } from "./pi-agent.js";
 import { QaVerificationService } from "./qa-verification.js";
 import { RepositoryManager } from "./repository.js";
@@ -13,6 +15,7 @@ import { processPullRequestCi, processCiJob } from "./worker/ci-flow.js";
 import { processPullRequestConflicts } from "./worker/conflict-flow.js";
 import { processPendingEvidencePublications } from "./worker/evidence-recovery.js";
 import { processFeedbackJob, processPullRequestFeedback } from "./worker/feedback-flow.js";
+import { partitionFeedback } from "./worker/feedback-trust.js";
 import {
   blockInitialIssue,
   handleInitialFailure,
@@ -22,7 +25,8 @@ import {
 } from "./worker/issue-flow.js";
 import { processPlanningIssues } from "./worker/planning-flow.js";
 import { processReadyPullRequests, startPullRequest } from "./worker/pull-request-adoption.js";
-import type { WorkerContext } from "./worker/shared.js";
+import { errorText, type WorkerContext } from "./worker/shared.js";
+import { admitTrigger } from "./worker/trigger-gate.js";
 
 export { isBlockedFinalOutput } from "./worker/shared.js";
 
@@ -35,6 +39,7 @@ export class IssueWorker {
     state: WorkerState,
     dependencies: {
       github?: GitHubClient;
+      trust?: TrustService;
       repository?: RepositoryManager;
       agent?: PiAgentRunner;
       designVerifier?: Pick<FigmaVerificationService, "verify">;
@@ -43,6 +48,10 @@ export class IssueWorker {
       appInstances?: Pick<AppInstanceService, "start">;
     } = {},
   ) {
+    if (dependencies.github && !dependencies.trust) {
+      throw new Error("An injected GitHub client needs an injected trust service; tests must never reach the real API");
+    }
+    const trust = dependencies.trust ?? new GitHubTrust(createGhRunner(), config.repository);
     const github = dependencies.github ?? new GitHubClient(config);
     const repository = dependencies.repository ?? new RepositoryManager(config);
     // Bash calls and app instances are fenced under the same cgroup root so a call's cleanup never touches the instance.
@@ -52,6 +61,7 @@ export class IssueWorker {
       config,
       state,
       github,
+      trust,
       repository,
       agent,
       designVerifier: dependencies.designVerifier ?? new FigmaVerificationService(config, agent),
@@ -98,19 +108,35 @@ export class IssueWorker {
   private async processBlockedIssueCommands(): Promise<void> {
     if (typeof this.ctx.github.listIssueCommands !== "function") return;
     for (const job of this.ctx.state.listBlocked()) {
-      const command = (await this.ctx.github.listIssueCommands(job.issueNumber))
+      const candidates = (await this.ctx.github.listIssueCommands(job.issueNumber))
         .filter((item) => item.createdAt > job.updatedAt && !this.ctx.state.hasProcessed(item.eventKey))
         .filter((item) => isActionableFeedback(item, this.ctx.config.trustedAssociations))
-        .filter((item) => parseWorkerCommand(item.body) === "retry")
-        .at(-1);
+        .filter((item) => parseWorkerCommand(item.body) === "retry");
+      let command;
+      try {
+        const { writable, denied } = await partitionFeedback(this.ctx.trust, candidates);
+        // Non-writers' commands are retired for good so they never fire later if that user gains access.
+        for (const item of denied) this.ctx.state.markProcessed(job.issueNumber, item.eventKey);
+        command = writable.at(-1);
+      } catch (error) {
+        // A failed permission lookup leaves the command unprocessed; skip this job so the next poll retries it.
+        console.error(`${new Date().toISOString()} write check for #${job.issueNumber} deferred: ${errorText(error)}`);
+        continue;
+      }
       if (!command) continue;
-      this.ctx.state.markProcessed(job.issueNumber, command.eventKey);
+      // A deferred gate leaves the command unprocessed, so the next poll retries it.
       if (job.kind === "pull_request" && typeof this.ctx.github.getPullRequest === "function") {
         const pullRequest = await this.ctx.github.getPullRequest(job.prNumber ?? job.issueNumber);
-        await startPullRequest(this.ctx, pullRequest).catch((error) => blockInitialIssue(this.ctx, job.issueNumber, error));
+        const admission = await admitTrigger(this.ctx, pullRequest, this.ctx.config.readyLabel);
+        if (admission.status === "deferred") continue;
+        this.ctx.state.markProcessed(job.issueNumber, command.eventKey);
+        await startPullRequest(this.ctx, pullRequest, admission).catch((error) => blockInitialIssue(this.ctx, job.issueNumber, error));
       } else {
         const issue = await this.ctx.github.getIssue(job.issueNumber);
-        await startIssue(this.ctx, issue).catch((error) => handleInitialFailure(this.ctx, issue.number, error));
+        const admission = await admitTrigger(this.ctx, issue, this.ctx.config.readyLabel);
+        if (admission.status === "deferred") continue;
+        this.ctx.state.markProcessed(job.issueNumber, command.eventKey);
+        await startIssue(this.ctx, issue, admission).catch((error) => handleInitialFailure(this.ctx, issue.number, error));
       }
     }
   }
@@ -127,6 +153,12 @@ export class IssueWorker {
       }
       if (job.prNumber || !["claimed", "implementing"].includes(job.status)) continue;
       const issue = await this.ctx.github.getIssue(job.issueNumber);
+      if (!job.triggerHash || issueHash(issue) !== job.triggerHash) {
+        await handleInitialFailure(this.ctx, job.issueNumber, new Error(
+          `#${job.issueNumber} changed since it was approved (or predates trigger verification). Review it and add \`${this.ctx.config.readyLabel}\` again, or comment \`/pi retry\` if it is unchanged.`,
+        ));
+        continue;
+      }
       await implementIssue(this.ctx, issue, job).catch((error) => handleInitialFailure(this.ctx, job.issueNumber, error));
     }
   }

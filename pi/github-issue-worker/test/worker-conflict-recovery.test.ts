@@ -102,7 +102,7 @@ test("trusted /pi retry on a conflict-blocked PR re-queues the base-branch resol
     markBlocked: async () => undefined,
     listFeedback: async () => [{
       eventKey: "conversation:retry-conflict", source: "conversation", id: 11, body: "/pi retry", author: "maintainer",
-      authorAssociation: "MEMBER", createdAt: "2026-01-02T00:00:00Z", url: null,
+      authorAssociation: "OWNER", createdAt: "2026-01-02T00:00:00Z", url: null,
     }],
     getPullRequestChecks: async () => ({ headSha: "feature-head", state: "pending", failures: [] }),
   };

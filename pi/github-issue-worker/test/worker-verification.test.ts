@@ -11,6 +11,7 @@ import { WorkerState } from "../src/state.js";
 import type { GitHubIssue, PullRequestFeedback } from "../src/types.js";
 import { IssueWorker } from "../src/worker.js";
 import type { IssuePlan } from "../src/issue-plan.js";
+import { trustingTrust } from "./helpers/worker-fixtures.js";
 
 const baseIssue: GitHubIssue = { number: 42, title: "Add behavior", body: "Acceptance criteria", url: "https://github.com/example/repo/issues/42", updatedAt: "now", labels: [{ name: "pi-ready" }], author: { login: "owner" } };
 const plan: IssuePlan = { schemaVersion: 1, issueNumber: 42, issueHash: "a".repeat(64), sourceFingerprint: "b".repeat(64), implementationSteps: ["Implement behavior"], checks: [{ id: "P1", kind: "behavioral", requirement: "Acceptance", steps: ["test"], expected: "Result" }] };
@@ -42,7 +43,7 @@ async function harness(options: { figma?: boolean; qaFail?: boolean; designFail?
     clearAgentChanges: async () => { dirty = false; calls.push("cleanup"); },
   };
   const worker = new IssueWorker(config, state, {
-    github: github as unknown as GitHubClient, repository: repository as unknown as RepositoryManager,
+    github: github as unknown as GitHubClient, trust: trustingTrust, repository: repository as unknown as RepositoryManager,
     agent: { run: async (run: { prompt: string }) => { calls.push("implement"); dirty = true;
       if (options.savedPlan) assert.match(run.prompt, /Saved pi-plan/);
       return { sessionFile: join(root, "worker.jsonl"), finalText: "Implemented" }; } } as unknown as PiAgentRunner,

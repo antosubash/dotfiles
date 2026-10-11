@@ -148,7 +148,8 @@ PI_WORKER_MAX_CI_FIX_ATTEMPTS=3
 PI_WORKER_AGENT_TIMEOUT_MINUTES=60
 PI_WORKER_MODEL=openai/gpt-6-sol
 PI_WORKER_THINKING_LEVEL=high
-PI_WORKER_TRUSTED_ASSOCIATIONS=OWNER,MEMBER,COLLABORATOR
+# Prefilter only; the worker also checks write permission through the GitHub API. Add MEMBER if org teams grant write access.
+PI_WORKER_TRUSTED_ASSOCIATIONS=OWNER,COLLABORATOR
 PI_WORKER_PROTECTED_PATHS=.git,.github/workflows,.pi
 PI_WORKER_QA_RETENTION_DAYS=14
 ```
@@ -167,13 +168,23 @@ Defaults already include GitHub, npm registries, localhost, and the hostname fro
 
 ### GitHub credentials
 
-When no token is present, children use the authenticated `gh` keyring identity. For separate repository identities, put a repository-scoped token in each mode-0600 profile:
+For a public repository, never rely on the personal `gh` keyring login: an approved issue there is attacker-influenced input, and the keyring identity can reach everything you can. Create a fine-grained personal access token (or a machine-user token) scoped to **that single repository** with:
+
+- Contents: read and write
+- Issues: read and write
+- Pull requests: read and write
+- Actions: read and write (for CI logs and reruns)
+- Metadata: read
+
+Put it in that repository's mode-0600 profile:
 
 ```dotenv
-GH_TOKEN=github_pat_REDACTED
+GH_TOKEN=github_pat_…
 ```
 
-The supervisor deliberately removes parent-process GitHub token variables before applying each profile, preventing one sourced profile token from leaking into another child.
+The worker logs a startup warning when a public repository has neither `GH_TOKEN` nor `GITHUB_TOKEN` and would fall back to the keyring login. Private repositories may use the keyring login, though a repository-scoped token is still preferable.
+
+The supervisor deliberately removes parent-process GitHub token variables before applying each profile, preventing one sourced profile token from leaking into another child. The agent's own bash never sees `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` or `GITHUB_ENTERPRISE_TOKEN`.
 
 ### Multiple repositories
 

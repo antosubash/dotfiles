@@ -50,7 +50,7 @@ drwx------ pi-issue-worker
 | Custom data directory fails with `EROFS` | systemd `ProtectSystem` does not allow that path | add the path to `ReadWritePaths` |
 | `--check` fails while service is healthy | profile lock is already held by the service | stop the service before interactive checks |
 | Issue remains untouched | no exact ready label, wrong repository, closed issue, or worker unhealthy | inspect labels, queue, service, and profile |
-| Conversation feedback is ignored | comment lacks `/pi` or author association is untrusted | use `/pi ...` from a configured association |
+| Conversation feedback is ignored | comment lacks `/pi`, or the commenter lacks write access (collaborator permission admin/maintain/write; a read-only collaborator is ignored) | use `/pi ...` from a user with write access |
 | Draft PR checks fail with no worker response | old installation, worker stopped, or PR job missing from local state | update/restart, inspect `gh pr checks`, issue labels, and the journal |
 | Chromium reports `Unix sockets are blocked` or `ProcessSingleton` errors | outdated visual sandbox or an overlong temp/socket path | update, then run the browser smoke test below |
 | Playwright gets `net::ERR_ACCESS_DENIED` on a local URL `curl` reaches; evidence or `npm run check` fails with `bwrap: … Operation not permitted` | Ubuntu's `apparmor_restrict_unprivileged_userns` on kernel ≥ 7.0 confines the namespaced units | `journalctl -k | grep 'apparmor="DENIED"'`; see the kernel 7.0 entry under "An issue becomes blocked" |
@@ -339,6 +339,16 @@ Confirm:
 
 The worker intentionally processes sequentially within each repository. A long-running issue delays the next issue in that profile, while other repository children continue independently.
 
+### `trigger check for #N deferred: …`
+
+The worker logs this line to stderr (the journal) when a GitHub lookup needed to verify who approved or edited an issue failed. Nothing changed: the issue is not claimed, rejected or relabelled, and the check is retried on the next poll. Common causes are a GitHub outage or rate limit, or a token that lacks the permissions the gate needs. A fine-grained token needs:
+
+- Metadata: read (collaborator permission endpoint)
+- Issues: read and Pull requests: read (issue events and the GraphQL `userContentEdits` history)
+- plus the write permissions listed under [GitHub credentials](installation.md#github-credentials)
+
+If the same line repeats for every poll, check `journalctl --user -u pi-issue-worker-supervisor.service` for the error text after `deferred:` and compare the token's permissions with that list.
+
 ## An issue becomes blocked
 
 The worker applies `pi-blocked`, removes active labels, and posts a summarized error when possible. Inspect:
@@ -537,7 +547,7 @@ the source issue still has `pi-pr-open`, the PR is open, and the profile child i
 
 ## PR feedback is ignored
 
-Formal reviews and inline review comments are accepted automatically only from configured trusted associations. Ordinary PR conversation comments must begin with `/pi`:
+Formal reviews, inline review comments and `/pi` commands are acted on only from users with write access (collaborator permission admin, maintain or write); `PI_WORKER_TRUSTED_ASSOCIATIONS` is only a prefilter and never grants access. Ordinary PR conversation comments must begin with `/pi`:
 
 ```text
 /pi fix handle the empty state described above
@@ -548,7 +558,7 @@ Formal reviews and inline review comments are accepted automatically only from c
 /pi help
 ```
 
-Check `PI_WORKER_TRUSTED_ASSOCIATIONS` when a legitimate maintainer is ignored. Worker-authored comments contain a hidden marker and are always ignored to prevent loops.
+Check `PI_WORKER_TRUSTED_ASSOCIATIONS` when a legitimate maintainer is ignored. Prefilter only; the worker also checks write permission through the GitHub API. Add `MEMBER` if org teams grant write access. Worker-authored comments contain a hidden marker and are always ignored to prevent loops.
 
 For a PR the worker did not create, a `/pi` comment alone is intentionally insufficient: apply `pi-ready` to the PR to authorize adoption. Confirm it appears in:
 

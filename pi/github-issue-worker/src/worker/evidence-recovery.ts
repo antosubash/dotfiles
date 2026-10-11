@@ -22,9 +22,12 @@ export async function processPendingEvidencePublications(ctx: WorkerContext): Pr
       if (record.status === "published") {
         try {
           const marker = evidenceCommentMarker(eventKey);
+          // Only the worker's own comments count; an unknown login means "absent". Looked up only when needed.
+          const viewer = await ctx.trust.viewerLogin();
           if (
+            viewer !== null &&
             typeof ctx.github.hasPullRequestCommentMarker === "function" &&
-            (await ctx.github.hasPullRequestCommentMarker(job.prNumber, marker))
+            (await ctx.github.hasPullRequestCommentMarker(job.prNumber, marker, viewer))
           ) {
             ctx.state.markProcessed(job.issueNumber, eventKey);
             continue;

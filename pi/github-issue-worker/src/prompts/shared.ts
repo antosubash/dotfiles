@@ -5,8 +5,28 @@ import type { QaManifest } from "../qa-manifest.js";
 
 export const DESIGN_CHECKS = ["layout", "typography", "colors", "assets", "content", "responsive"] as const;
 
+// Hidden carriers for instructions a human reviewer would not see in the rendered issue.
+const HTML_COMMENT = /<!--[\s\S]*?(?:-->|$)/g;
+const INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFE00-\uFE0F\uFEFF\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+// C0/C1 controls except tab (\u0009) and newline (\u000A).
+const CONTROL = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
+
+export function sanitizeUntrustedText(text: string): string {
+  return text.replace(HTML_COMMENT, "").replace(INVISIBLE, "").replace(CONTROL, "");
+}
+
+function sanitizeValue(value: unknown): unknown {
+  if (typeof value === "string") return sanitizeUntrustedText(value);
+  if (Array.isArray(value)) return value.map(sanitizeValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeValue(item)]));
+  }
+  return value;
+}
+
+/** Fenced prompt data: hidden content removed, and `<`/`>` escaped so text can't close the fence. */
 export function untrustedJson(value: unknown): string {
-  return JSON.stringify(value, null, 2);
+  return JSON.stringify(sanitizeValue(value), null, 2).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
 }
 
 export const contentOnlyInstructions = `
@@ -65,7 +85,7 @@ ${procedures}${procedures ? "\n" : ""}`;
 
 function dockerInstructions(config: WorkerConfig): string {
   if (!config.sandbox) {
-    return `- Direct Docker commands stay policy-gated: they are blocked unless this run was explicitly granted Docker access, and shell-variable expansion or command substitution in a command containing \`docker\` is always blocked.
+    return `- Direct Docker commands stay policy-gated: they are blocked unless Docker is enabled for this worker (PI_WORKER_ALLOW_DOCKER=1), and shell-variable expansion or command substitution in a command containing \`docker\` is always blocked.
 `;
   }
   return `- Use literal arguments in direct Docker commands; shell-variable expansion and command substitution in a command containing \`docker\` are blocked. Linux Docker services run outside the visual sandbox's network namespace, so a Docker-published host or bridge address may remain unreachable even in the same bash call. If that happens, preserve network isolation: run \`SOCKET=$(pi-worker-docker-bridge start <compose-network> <service-name> <container-port>)\`, then start \`socat TCP-LISTEN:<selected-port>,bind=127.0.0.1,fork UNIX-CONNECT:$SOCKET\` inside the sandbox. The controller-owned bridge validates and mounts only the current private runtime directory; direct Docker host mounts, host networking, privileged containers, and socket forwarding remain forbidden. Use a cleanup trap that closes the browser and local socat process, runs \`pi-worker-docker-bridge stop\`, and stops the application.

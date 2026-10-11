@@ -171,7 +171,7 @@ test("headless policy keeps GitHub and git writes in the controller", () => {
   assert.match(commandBlockReason("git -C /tmp/repo push origin branch", []) || "", /git mutation/);
   assert.match(commandBlockReason("git commit -m test", []) || "", /git mutation/);
   assert.equal(commandBlockReason("git diff --stat", []), null);
-  assert.match(commandBlockReason("docker build .", []) || "", /explicit trusted/);
+  assert.match(commandBlockReason("docker build .", []) || "", /Docker is disabled for this worker/);
   assert.equal(commandBlockReason("docker build .", [], { dockerAccess: true }), null);
   assert.equal(
     commandBlockReason(
