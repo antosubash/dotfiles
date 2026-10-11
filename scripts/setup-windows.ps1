@@ -365,6 +365,29 @@ if (-not $SkipTerminal) {
 }
 
 # ---------------------------------------------------------------------------
+# Dual boot clock
+# ---------------------------------------------------------------------------
+
+# A Linux partition on any disk means a dual boot: keep the RTC in UTC so
+# Linux and Windows stop shifting each other's clock.
+$linuxGptType = '{0fc63daf-8483-4772-8e79-3d69d8477de4}'
+$dualBoot = $false
+try {
+    $dualBoot = [bool](Get-Partition -ErrorAction Stop | Where-Object GptType -eq $linuxGptType)
+} catch {
+    Write-Section "Dual boot clock"
+    Write-Warn2 "Couldn't list partitions: $($_.Exception.Message)"
+}
+if ($dualBoot) {
+    Write-Section "Dual boot clock"
+    if (Test-Admin) {
+        & (Join-Path $PSScriptRoot 'fix-dualboot-clock.ps1')
+    } else {
+        Write-Warn2 "Linux partition found. Run scripts\fix-dualboot-clock.ps1 as Administrator."
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 
