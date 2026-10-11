@@ -14,6 +14,7 @@ import {
 } from "./evidence-flow.js";
 import { ensureJobWorktree } from "./job-worktree.js";
 import { stageNeedsInstance, withAppInstance } from "./app-stage.js";
+import { writableFeedback } from "./feedback-trust.js";
 import { verifyImplementation } from "./verification-flow.js";
 import { mergeConflictEventKey } from "./conflict-context.js";
 import {
@@ -38,13 +39,13 @@ export async function processFeedbackJob(ctx: WorkerContext, job: IssueJob): Pro
     return;
   }
   const all = await ctx.github.listFeedback(job.prNumber);
-  const pending = all
-    .filter(
-      (item) =>
-        !ctx.state.hasProcessed(item.eventKey) &&
-        isActionableFeedback(item, ctx.config.trustedAssociations),
-    )
-    .slice(0, 20);
+  const prefiltered = all.filter(
+    (item) =>
+      !ctx.state.hasProcessed(item.eventKey) &&
+      isActionableFeedback(item, ctx.config.trustedAssociations),
+  );
+  // A failed permission lookup throws here, leaving every event unprocessed for the next tick.
+  const pending = (await writableFeedback(ctx.trust, prefiltered)).slice(0, 20);
   if (pending.length === 0) {
     if (job.status === "addressing_review") ctx.state.setStatus(job.issueNumber, "pr_open");
     return;

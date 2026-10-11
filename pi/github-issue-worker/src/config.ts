@@ -112,7 +112,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     throw new Error(`PI_WORKER_THINKING_LEVEL is invalid: ${thinking}`);
   }
 
-  const associations = (env.PI_WORKER_TRUSTED_ASSOCIATIONS || "OWNER,MEMBER,COLLABORATOR")
+  const associations = (env.PI_WORKER_TRUSTED_ASSOCIATIONS || "OWNER,COLLABORATOR")
     .split(",")
     .map((value) => value.trim().toUpperCase())
     .filter(Boolean);

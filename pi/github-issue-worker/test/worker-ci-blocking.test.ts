@@ -128,7 +128,7 @@ test("trusted /pi retry reopens the same processed CI head with a fresh bounded 
     id: 11,
     body: "/pi retry",
     author: "maintainer",
-    authorAssociation: "MEMBER",
+    authorAssociation: "OWNER",
     createdAt: "2026-01-02T00:00:00Z",
     url: null,
   };

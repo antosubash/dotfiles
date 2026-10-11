@@ -156,6 +156,50 @@ test("a /pi retry deferred by a transient trust error stays unprocessed and is a
   }
 });
 
+test("a /pi retry from a commenter without write access does not start the issue and is not acted on", async () => {
+  const command: PullRequestFeedback = {
+    eventKey: "conversation:retry-readonly", source: "conversation", id: 3, body: "/pi retry",
+    author: "triager", authorAssociation: "OWNER", createdAt: "2999-01-01T00:00:00Z", url: null,
+  };
+  const h = await harness({ commands: [command], trust: { canWrite: async (login) => login !== "triager" } });
+  try {
+    h.state.claim(issue, "pi/issue-42", join(h.root, "worktree"), false);
+    h.state.setStatus(42, "blocked", "old blocker");
+    await h.worker.tick();
+    assert.equal(h.state.hasProcessed(command.eventKey), false);
+    assert.equal(h.state.requireJob(42).status, "blocked");
+    assert.ok(!h.calls.includes("claim"));
+    assert.deepEqual(h.rejections, []);
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("a transient write-check error leaves a /pi retry unprocessed and the tick running", async (t) => {
+  const logged = t.mock.method(console, "error", () => undefined);
+  const command: PullRequestFeedback = {
+    eventKey: "conversation:retry-flaky", source: "conversation", id: 4, body: "/pi retry",
+    author: "maintainer", authorAssociation: "OWNER", createdAt: "2999-01-01T00:00:00Z", url: null,
+  };
+  let healthy = false;
+  const h = await harness({
+    commands: [command],
+    trust: { canWrite: async () => { if (!healthy) throw new Error("HTTP 502"); return true; } },
+  });
+  try {
+    h.state.claim(issue, "pi/issue-42", join(h.root, "worktree"), false);
+    h.state.setStatus(42, "blocked", "old blocker");
+    await h.worker.tick();
+    assert.equal(h.state.hasProcessed(command.eventKey), false);
+    assert.match(String(logged.mock.calls[0]?.arguments[0]), /write check for #42 deferred: HTTP 502/);
+    healthy = true;
+    await h.worker.tick();
+    assert.equal(h.state.hasProcessed(command.eventKey), true);
+  } finally {
+    await h.cleanup();
+  }
+});
+
 test("re-labelling a stopped tracked PR by a user without write access does not re-activate it", async () => {
   const pullRequest: GitHubPullRequest = {
     ...issue, number: 88, url: "https://github.com/example/widgets/pull/88",

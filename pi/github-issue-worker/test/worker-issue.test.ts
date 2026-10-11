@@ -148,7 +148,7 @@ test("trusted issue /pi retry restarts a blocked job without manual label change
     id: 2,
     body: "/pi retry",
     author: "maintainer",
-    authorAssociation: "MEMBER",
+    authorAssociation: "OWNER",
     createdAt: "2999-01-01T00:00:00Z",
     url: null,
   };

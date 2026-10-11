@@ -80,6 +80,10 @@ test("loadConfig supports one instance profile per repository", () => {
   assert.deepEqual([...config.trustedAssociations], ["OWNER", "MEMBER"]);
 });
 
+test("loadConfig trusts only OWNER and COLLABORATOR associations by default", () => {
+  assert.deepEqual([...loadConfig(base).trustedAssociations], ["OWNER", "COLLABORATOR"]);
+});
+
 test("loadConfig validates and overrides the Pi model", () => {
   assert.equal(
     loadConfig({ ...base, PI_WORKER_MODEL: "openai/gpt-6.1-sol" }).model,

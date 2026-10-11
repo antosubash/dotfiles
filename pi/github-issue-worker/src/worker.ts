@@ -15,6 +15,7 @@ import { processPullRequestCi, processCiJob } from "./worker/ci-flow.js";
 import { processPullRequestConflicts } from "./worker/conflict-flow.js";
 import { processPendingEvidencePublications } from "./worker/evidence-recovery.js";
 import { processFeedbackJob, processPullRequestFeedback } from "./worker/feedback-flow.js";
+import { writableFeedback } from "./worker/feedback-trust.js";
 import {
   blockInitialIssue,
   handleInitialFailure,
@@ -24,7 +25,7 @@ import {
 } from "./worker/issue-flow.js";
 import { processPlanningIssues } from "./worker/planning-flow.js";
 import { processReadyPullRequests, startPullRequest } from "./worker/pull-request-adoption.js";
-import type { WorkerContext } from "./worker/shared.js";
+import { errorText, type WorkerContext } from "./worker/shared.js";
 import { admitTrigger } from "./worker/trigger-gate.js";
 
 export { isBlockedFinalOutput } from "./worker/shared.js";
@@ -107,11 +108,18 @@ export class IssueWorker {
   private async processBlockedIssueCommands(): Promise<void> {
     if (typeof this.ctx.github.listIssueCommands !== "function") return;
     for (const job of this.ctx.state.listBlocked()) {
-      const command = (await this.ctx.github.listIssueCommands(job.issueNumber))
+      const candidates = (await this.ctx.github.listIssueCommands(job.issueNumber))
         .filter((item) => item.createdAt > job.updatedAt && !this.ctx.state.hasProcessed(item.eventKey))
         .filter((item) => isActionableFeedback(item, this.ctx.config.trustedAssociations))
-        .filter((item) => parseWorkerCommand(item.body) === "retry")
-        .at(-1);
+        .filter((item) => parseWorkerCommand(item.body) === "retry");
+      let command;
+      try {
+        command = (await writableFeedback(this.ctx.trust, candidates)).at(-1);
+      } catch (error) {
+        // A failed permission lookup leaves the command unprocessed; skip this job so the next poll retries it.
+        console.error(`${new Date().toISOString()} write check for #${job.issueNumber} deferred: ${errorText(error)}`);
+        continue;
+      }
       if (!command) continue;
       // A deferred gate leaves the command unprocessed, so the next poll retries it.
       if (job.kind === "pull_request" && typeof this.ctx.github.getPullRequest === "function") {

@@ -548,7 +548,7 @@ Formal reviews and inline review comments are accepted automatically only from c
 /pi help
 ```
 
-Check `PI_WORKER_TRUSTED_ASSOCIATIONS` when a legitimate maintainer is ignored. Worker-authored comments contain a hidden marker and are always ignored to prevent loops.
+Check `PI_WORKER_TRUSTED_ASSOCIATIONS` when a legitimate maintainer is ignored. Prefilter only; the worker also checks write permission through the GitHub API. Add `MEMBER` if org teams grant write access. Worker-authored comments contain a hidden marker and are always ignored to prevent loops.
 
 For a PR the worker did not create, a `/pi` comment alone is intentionally insufficient: apply `pi-ready` to the PR to authorize adoption. Confirm it appears in:
 
