@@ -55,7 +55,7 @@ fi
 
 # 2. Profile for this repo?
 mkdir -p "$CONFIG_DIR"; chmod 700 "$CONFIG_DIR"
-profile_file="$(grep -lx "PI_WORKER_REPOSITORY=$repo" "$CONFIG_DIR"/*.env 2>/dev/null | head -1 || true)"
+profile_file="$(grep -lFx "PI_WORKER_REPOSITORY=$repo" "$CONFIG_DIR"/*.env 2>/dev/null | head -1 || true)"
 added=0
 if [ -z "$profile_file" ]; then
     gh repo view "$repo" --json name >/dev/null 2>&1 || fail "gh can't access $repo"
@@ -67,7 +67,7 @@ if [ -z "$profile_file" ]; then
     [ -n "$template" ] || template="$DOTFILES_DIR/pi/github-issue-worker/.env.example"
     step "adding profile $(basename "$profile_file") (from $(basename "$template"))"
     # Never inherit another repo's token or data directory.
-    sed -E 's/^(GH_TOKEN|PI_WORKER_DATA_DIR)=/# \1=/' "$template" > "$profile_file"
+    (umask 077; sed -E 's/^(GH_TOKEN|PI_WORKER_DATA_DIR)=/# \1=/' "$template" > "$profile_file")
     chmod 600 "$profile_file"
     set_kv() {  # replace KEY=… or a commented "# KEY=…", else append
         local key="$1" val="$2"

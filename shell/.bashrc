@@ -81,8 +81,17 @@ fi
 # bash-preexec is required for atuin's bash hooks.
 if command -v atuin > /dev/null 2>&1; then
     if [ ! -f "$HOME/.bash-preexec.sh" ]; then
-        curl -sL https://raw.githubusercontent.com/rcaloras/bash-preexec/master/bash-preexec.sh \
-            -o "$HOME/.bash-preexec.sh" 2>/dev/null
+        # Pinned to the 0.7.0 release commit and checked: this file is sourced
+        # into every shell, so never take whatever master serves.
+        _bp_tmp="$(mktemp)"
+        if curl -fsSL https://raw.githubusercontent.com/rcaloras/bash-preexec/d866eeefdb8dfce075cbd4e37dc73c4deb4b0bd2/bash-preexec.sh \
+                -o "$_bp_tmp" 2>/dev/null &&
+            echo "33de4e70ee84981d46e7d8a0e3105f1dd9affc9c4178594446cd96e7ef3b2752  $_bp_tmp" | sha256sum -c --status; then
+            mv "$_bp_tmp" "$HOME/.bash-preexec.sh"
+        else
+            rm -f "$_bp_tmp"
+        fi
+        unset _bp_tmp
     fi
     [ -f "$HOME/.bash-preexec.sh" ] && . "$HOME/.bash-preexec.sh"
     eval "$(atuin init bash)"

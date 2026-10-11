@@ -192,7 +192,7 @@ test("a conflict resolution is staged, committed and pushed, then verified", asy
 
 // `git merge --abort` restores the merge itself but keeps unstaged edits the agent made to auto-merged
 // files, and beginBaseMerge refuses to merge onto a dirty worktree — so once a resolution failed, every
-// retry died with "Cannot update from origin/dev with existing worktree changes" (IIASA.GeoWiki#501).
+// retry died with "Cannot update from origin/dev with existing worktree changes" (example-app#501).
 // Abandoning a resolution has to mean discarding it completely, ignored build outputs excepted.
 test("a failed conflict resolution is discarded from the worktree so a retry can merge again", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-merge-discard-"));

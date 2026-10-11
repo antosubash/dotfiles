@@ -199,7 +199,7 @@ test("repository manager merges a fresh base and commits an agent-resolved confl
     assert.deepEqual(merge.conflicts, ["shared.txt"]);
     // The agent may only edit the working tree — `git add` is policy-blocked — so the controller stages
     // the resolution itself, and does so BEFORE the QA gate: a verifier that sees `UU` entries in `git
-    // status` rightly fails its diff review, which is exactly how iiasa/IIASA.GeoWiki#501 was blocked.
+    // status` rightly fails its diff review, which is exactly how example/app#501 was blocked.
     await writeFile(join(worktree.path, "shared.txt"), "base and feature\n");
     await manager.stageBaseMerge(worktree.path, worktree.branch);
     const status = (await execFile("git", ["status", "--porcelain"], { cwd: worktree.path })).stdout;

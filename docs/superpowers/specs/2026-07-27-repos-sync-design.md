@@ -12,9 +12,9 @@ recur constantly and are tedious by hand:
 2. Removing agent worktrees under `<repo>/.claude/worktrees/` whose work has
    already landed.
 
-The default branch is not uniform: `IIASA.GeoWiki`, `geo-wiki-v2-app`,
+The default branch is not uniform: `example-app`, `app-v2`,
 `abp-react-tanstack` and `laco-wiki-v2` default to `dev`; `antosubash` and
-`IIASA.WEED.Web` to `master`; the rest to `main`. `GeoTrees` has no
+`another-app` to `master`; the rest to `main`. `legacy-app` has no
 `origin/HEAD` set at all.
 
 ## Goals
@@ -71,7 +71,7 @@ Phase 1 runs `git fetch --all --prune --prune-tags` across repos with up to
 detectable in phase 3. Phase 2 runs sequentially per repo:
 
 1. If `origin/HEAD` is unset, run `git remote set-head origin --auto`. This
-   repairs `GeoTrees`.
+   repairs `legacy-app`.
 2. Resolve `default` from `origin/HEAD`. If there is no `origin` remote,
    report `NO-REMOTE` and stop for this repo.
 3. If `git status --porcelain` is non-empty, report `SKIPPED (dirty)` and make

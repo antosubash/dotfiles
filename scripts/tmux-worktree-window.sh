@@ -97,7 +97,7 @@ issue_prompt() {
     subcmd="$3"
 
     if ! main_toplevel "$pane_path" >/dev/null 2>&1; then
-        tmux display-message "not a git repo"
+        tmux display-message -l "not a git repo"
         return 0
     fi
 
@@ -129,19 +129,19 @@ cmd_spawn() {
 
     sanitized=$(sanitize_name "$branch")
     if [ -z "$sanitized" ]; then
-        tmux display-message "invalid branch name"
+        tmux display-message -l "invalid branch name"
         return 0
     fi
 
     toplevel=$(main_toplevel "$pane_path") || {
-        tmux display-message "not a git repo"
+        tmux display-message -l "not a git repo"
         return 0
     }
 
     worktree_path="$toplevel/.worktrees/$sanitized"
 
     if ! err=$(ensure_worktree "$toplevel" "$branch" "$worktree_path" 2>&1); then
-        tmux display-message "$err"
+        tmux display-message -l "$err"
         return 0
     fi
 
@@ -188,22 +188,22 @@ cmd_spawn_pr() {
 
     case "$pr_num" in
         *[!0-9]*)
-            tmux display-message "invalid PR number: $pr_num"
+            tmux display-message -l "invalid PR number: $pr_num"
             return 0
             ;;
     esac
 
     toplevel=$(main_toplevel "$pane_path") || {
-        tmux display-message "not a git repo"
+        tmux display-message -l "not a git repo"
         return 0
     }
 
     if ! head_ref=$(gh_pr_head_ref "$pr_num" "$toplevel"); then
-        tmux display-message "gh pr view #$pr_num failed: $head_ref"
+        tmux display-message -l "gh pr view #$pr_num failed: $head_ref"
         return 0
     fi
     if [ -z "$head_ref" ]; then
-        tmux display-message "gh pr view #$pr_num returned no head ref"
+        tmux display-message -l "gh pr view #$pr_num returned no head ref"
         return 0
     fi
 
@@ -213,7 +213,7 @@ cmd_spawn_pr() {
     worktree_path="$toplevel/.worktrees/$branch"
 
     if ! err=$(ensure_pr_worktree "$toplevel" "$pr_num" "$branch" "$worktree_path" 2>&1); then
-        tmux display-message "$err"
+        tmux display-message -l "$err"
         return 0
     fi
 

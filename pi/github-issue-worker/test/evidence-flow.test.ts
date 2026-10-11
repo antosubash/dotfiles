@@ -44,7 +44,7 @@ async function fixture() {
   return { runDir, evidence, ctx, recorded, published, cleanup: () => rm(runDir, { recursive: true, force: true }) };
 }
 
-// iiasa/IIASA.GeoWiki#559 and #526 blocked on the unconditional GIF requirement.
+// example/app#559 and #526 blocked on the unconditional GIF requirement.
 test("a visual run with screenshots but no workflow GIF is valid and notes the omission", async () => {
   const f = await fixture();
   try {
@@ -55,7 +55,7 @@ test("a visual run with screenshots but no workflow GIF is valid and notes the o
   } finally { await f.cleanup(); }
 });
 
-// iiasa/IIASA.GeoWiki#558 blocked on an oversized workflow GIF.
+// example/app#558 blocked on an oversized workflow GIF.
 test("an oversized workflow GIF is omitted from a valid run and the published note says why", async () => {
   const f = await fixture();
   try {

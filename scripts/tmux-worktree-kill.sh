@@ -80,7 +80,7 @@ cmd_remove() {
     # Never force-remove or recursively delete a worktree. Git must confirm it
     # is registered and clean; otherwise preserve both its files and window.
     if ! err=$(git -C "$main_top" worktree remove "$worktree_path" 2>&1); then
-        tmux display-message "worktree remove refused: $err"
+        tmux display-message -l "worktree remove refused: $err"
         return 0
     fi
     tmux kill-window -t "$window_id"

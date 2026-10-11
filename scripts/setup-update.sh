@@ -178,7 +178,7 @@ EOF
     # Add to crontab (optional)
     if command -v crontab &> /dev/null; then
         if ! crontab -l 2>/dev/null | grep -q "update_reminder"; then
-            echo "0 10 * * 1 $HOME/.update_reminder" | crontab -
+            (crontab -l 2>/dev/null; echo "0 10 * * 1 $HOME/.update_reminder") | crontab -
             log "Weekly update reminder scheduled for Mondays at 10 AM"
         else
             log "Update reminder already in crontab"

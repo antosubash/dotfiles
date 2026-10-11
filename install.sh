@@ -19,6 +19,7 @@ echo "Detected OS: $OS_TYPE"
 
 # Create backup directory
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 
 # Function to backup and symlink
 backup_and_symlink() {

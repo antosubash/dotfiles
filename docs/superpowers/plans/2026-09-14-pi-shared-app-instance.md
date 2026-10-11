@@ -667,8 +667,8 @@ const running = (displayName: string, url: string) => ({ displayName, state: "Ru
 
 test("endpointsFromAspire maps manifest keys to running resources' first URL", () => {
   const { endpoints, missing } = endpointsFromAspire(
-    [running("geowiki-frontend", "http://localhost:3005"), { displayName: "geowiki-api", state: "Starting", urls: [] }, { displayName: "geowiki-frontend-installer", state: "Finished" }],
-    { frontend: "geowiki-frontend", api: "geowiki-api" },
+    [running("app-frontend", "http://localhost:3005"), { displayName: "app-api", state: "Starting", urls: [] }, { displayName: "app-frontend-installer", state: "Finished" }],
+    { frontend: "app-frontend", api: "app-api" },
     ["frontend", "api"],
   );
   assert.deepEqual(endpoints, { frontend: "http://localhost:3005" });
@@ -680,10 +680,10 @@ test("resolveEndpoints polls describe until every required key is running", asyn
   const describe = async () => {
     calls += 1;
     return calls < 3
-      ? [running("geowiki-frontend", "http://localhost:3005")]
-      : [running("geowiki-frontend", "http://localhost:3005"), running("geowiki-api", "https://localhost:44431")];
+      ? [running("app-frontend", "http://localhost:3005")]
+      : [running("app-frontend", "http://localhost:3005"), running("app-api", "https://localhost:44431")];
   };
-  const manifest = { version: 1 as const, aspire: { apphost: "App/App.csproj", resources: { frontend: "geowiki-frontend", api: "geowiki-api" } }, readiness: { resources: ["frontend", "api"] } };
+  const manifest = { version: 1 as const, aspire: { apphost: "App/App.csproj", resources: { frontend: "app-frontend", api: "app-api" } }, readiness: { resources: ["frontend", "api"] } };
   const endpoints = await resolveEndpoints(manifest, "/w", { describe, deadline: Date.now() + 5_000, intervalMs: 5, launcherExited: () => null });
   assert.deepEqual(endpoints, { frontend: "http://localhost:3005", api: "https://localhost:44431" });
   assert.equal(calls, 3);
@@ -1912,7 +1912,7 @@ git commit -m "docs(pi): app instance lifecycle, push-first conflicts, project m
 Claude-Session: https://claude.ai/code/session_01DphUtDUGMKTvXz8wHe5zmu"
 ```
 
-- [ ] **Step 4: Deploy and run live** — with the owner's go: `./scripts/setup-pi-issue-worker.sh && systemctl --user daemon-reload && systemctl --user restart pi-issue-worker-supervisor.service` (profiles idle first: `systemctl --user status pi-issue-worker-supervisor.service`). Merge `iiasa/IIASA.GeoWiki#580` so the manifest is on `dev`, post `/pi retry` on PR 501, watch `<data-dir>/instances/issue-501/*/launch.log` and `memory/instance-timing.md`; record the phase timings in the PR #19 description.
+- [ ] **Step 4: Deploy and run live** — with the owner's go: `./scripts/setup-pi-issue-worker.sh && systemctl --user daemon-reload && systemctl --user restart pi-issue-worker-supervisor.service` (profiles idle first: `systemctl --user status pi-issue-worker-supervisor.service`). Merge `example/app#580` so the manifest is on `dev`, post `/pi retry` on PR 501, watch `<data-dir>/instances/issue-501/*/launch.log` and `memory/instance-timing.md`; record the phase timings in the PR #19 description.
 
 ---
 
