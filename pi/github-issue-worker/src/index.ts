@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { cgroupController, ownCgroupPath } from "./agent/cgroup.js";
 import { loadConfig } from "./config.js";
 import { commandExists } from "./exec.js";
+import { REFUSED_EXIT_CODE, unsafeExposureReason } from "./exposure.js";
+import { createGhRunner } from "./github/gh.js";
 import { WorkerState } from "./state.js";
 import { IssueWorker } from "./worker.js";
 import { ProfileLock } from "./lock.js";
@@ -19,6 +21,12 @@ async function requireCommands(commands: readonly string[]): Promise<void> {
 async function main(): Promise<void> {
   const config = loadConfig();
   await requireCommands(["git", "gh"]);
+  const refusal = await unsafeExposureReason(createGhRunner(), config.repository, config.sandbox, process.env);
+  if (refusal) {
+    console.error(`${new Date().toISOString()} refusing to run: ${refusal}`);
+    process.exitCode = REFUSED_EXIT_CODE;
+    return;
+  }
   await mkdir(config.dataDir, { recursive: true });
   // A crash can leave a fenced bash call or app instance behind; their child cgroups are killed and removed here.
   for (const name of await cgroupController(ownCgroupPath()).sweepChildren(["bash-", "qa-"])) {

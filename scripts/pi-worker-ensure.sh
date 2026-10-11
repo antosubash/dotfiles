@@ -59,6 +59,10 @@ profile_file="$(grep -lFx "PI_WORKER_REPOSITORY=$repo" "$CONFIG_DIR"/*.env 2>/de
 added=0
 if [ -z "$profile_file" ]; then
     gh repo view "$repo" --json name >/dev/null 2>&1 || fail "gh can't access $repo"
+    # New profiles run unsandboxed (below); on a public repo anyone can file the issues it acts on
+    if [ "$(gh repo view "$repo" --json visibility -q .visibility)" = PUBLIC ]; then
+        fail "$repo is public: anyone can open issues there, and the worker would run them unsandboxed with your GitHub login. Not adding it."
+    fi
     base="$(gh repo view "$repo" --json defaultBranchRef -q .defaultBranchRef.name)"
     name="${repo#*/}"
     profile_file="$CONFIG_DIR/$name.env"
