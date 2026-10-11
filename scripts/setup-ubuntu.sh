@@ -188,6 +188,9 @@ fi
 # Install Oh My Zsh, plugins, and Powerlevel10k (repairs a custom/-only partial install)
 bash "$(dirname "${BASH_SOURCE[0]}")/setup-oh-my-zsh.sh"
 
+# Warn on every apt run if a kernel update leaves out the NVIDIA module
+bash "$(dirname "${BASH_SOURCE[0]}")/setup-nvidia-guard.sh"
+
 # Install Lazygit
 echo "Installing Lazygit..."
 if ! command -v lazygit &> /dev/null; then

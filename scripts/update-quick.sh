@@ -50,8 +50,10 @@ else
         log "APT updated"
         
         info "Upgrading packages..."
-        sudo apt upgrade -y
+        sudo apt full-upgrade -y
         log "Packages upgraded"
+
+        "$(dirname "${BASH_SOURCE[0]}")/nvidia-kernel-guard.sh" --fix
     fi
 fi
 
