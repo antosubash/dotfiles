@@ -8,7 +8,8 @@ SCRIPT="$(cd "$HERE/.." && pwd)/bt-own-address.sh"
 . "$HERE/lib.sh"
 
 # Fake btmgmt keeps the adapter address and power state in $BT_STATE and logs
-# every call. public-addr is rejected while powered, like the kernel does.
+# every call. public-addr is rejected while powered, like the kernel does, and
+# it hangs when stdin is /dev/null, like the real btmgmt under systemd.
 setup_fake_adapter() {
     export BT_STATE="$TMPDIR_ROOT/bt"
     export BT_LOG="$TMPDIR_ROOT/btmgmt.log"
@@ -20,6 +21,7 @@ setup_fake_adapter() {
 
     cat > "$FAKE_BIN/btmgmt" <<'EOF'
 #!/usr/bin/env bash
+[ "$(readlink /proc/self/fd/0)" = /dev/null ] && exec sleep 30
 shift 2  # --index N
 printf '%s\n' "$*" >> "$BT_LOG"
 case "$1" in
@@ -43,7 +45,8 @@ EOF
 }
 
 run_script() {
-    OUTPUT="$(bash "$SCRIPT" "$@" 2>&1)"
+    # systemd runs the service with stdin on /dev/null
+    OUTPUT="$(bash "$SCRIPT" "$@" 2>&1 < /dev/null)"
     STATUS=$?
 }
 

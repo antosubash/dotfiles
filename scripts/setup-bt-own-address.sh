@@ -34,7 +34,7 @@ if [ -r "$CONF" ]; then
     # shellcheck source=/dev/null
     . "$CONF"
 else
-    FACTORY_ADDRESS="$(sudo btmgmt --index 0 info | awk '$1 == "addr" { print toupper($2); exit }')"
+    FACTORY_ADDRESS="$(: | sudo btmgmt --index 0 info | awk '$1 == "addr" { print toupper($2); exit }')"
     if [ -z "$FACTORY_ADDRESS" ]; then
         echo "No Bluetooth adapter found (hci0)." >&2
         exit 1

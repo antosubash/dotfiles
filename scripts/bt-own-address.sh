@@ -28,8 +28,10 @@ derive_address() {
     printf '%s:%02X\n' "${factory%:*}" $((0x$last ^ 0x80))
 }
 
+# btmgmt never returns when stdin is /dev/null (as under systemd); an empty
+# pipe makes it run the command and exit.
 mgmt() {
-    timeout 10 btmgmt --index "$INDEX" "$@"
+    : | timeout 10 btmgmt --index "$INDEX" "$@"
 }
 
 current_address() {
