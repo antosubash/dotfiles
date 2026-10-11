@@ -180,7 +180,7 @@ PI_WORKER_MODEL=openai/gpt-6-sol
 PI_WORKER_THINKING_LEVEL=high
 PI_WORKER_MAX_CI_FIX_ATTEMPTS=3
 PI_WORKER_AGENT_TIMEOUT_MINUTES=60
-# Docker is automatic when the socket exists; set 0 to disable it.
+# Docker is off by default; set 1 to enable it (see "Docker access (opt-in)").
 # PI_WORKER_ALLOW_DOCKER=0
 # PI_WORKER_DOCKER_SOCKET=/var/run/docker.sock
 PI_WORKER_PUBLISH_EVIDENCE=1
@@ -252,7 +252,7 @@ inside it; until then set `PI_WORKER_SANDBOX=1` per profile to opt back in.
 What is enforced in both modes:
 
 - the agent policy: `gh`, git mutation, `sudo`, recursive deletion, secret files, CI workflows, protected
-  paths, Docker without an explicit grant, and any reference to a credential store under `$HOME` (Pi
+  paths, Docker unless the machine owner sets `PI_WORKER_ALLOW_DOCKER=1`, and any reference to a credential store under `$HOME` (Pi
   agent directory, worker profiles, SSH/AWS/GPG/netrc/npm/Docker credentials) are blocked at the
   tool-call level — a textual rule, so treat it as a tripwire rather than a wall;
 - the verifier may write only its private evidence directory, and its source is fingerprinted before and
@@ -445,12 +445,12 @@ server/browser workflow in one sandbox command so Playwright's daemon and socket
 browser temp directories older than 24 hours are removed before later agent runs. Every visual response
 includes a controller-generated artifact manifest, even when the model omits evidence paths from its prose.
 
-## Automatic Docker access
+## Docker access (opt-in)
 
-When `PI_WORKER_DOCKER_SOCKET` (default `/var/run/docker.sock`) exists and is accessible, Docker is
-available automatically to implementation, review, conflict, and CI-repair runs. Set
-`PI_WORKER_ALLOW_DOCKER=0` to disable it explicitly. The worker still blocks common privileged,
-host-namespace, device, host-mount, and socket-forwarding flags.
+Docker is off by default. The machine owner enables it per profile with `PI_WORKER_ALLOW_DOCKER=1`;
+`PI_WORKER_DOCKER_SOCKET` (default `/var/run/docker.sock`) must then be an accessible Unix socket or
+startup fails. When enabled, Docker is available to implementation, review, conflict, and CI-repair runs.
+The worker still blocks common privileged, host-namespace, device, host-mount, and socket-forwarding flags.
 
 This is **not normal sandboxing**. Docker daemon access can provide host-level control and bypass Sandbox
 Runtime filesystem/network boundaries; command filtering is not a security boundary. Run the worker only
@@ -501,9 +501,8 @@ feature PRs.
   paths, CI workflows, and configured protected paths. The controller checks paths again before commit.
   Explicit `BLOCKED` results are never committed; tracked, untracked, and ignored partial changes are
   cleared while ignored `.qa` evidence is retained.
-- Docker is automatically exposed when the configured daemon socket exists. It deliberately weakens the
-  sandbox and should be used only on a dedicated disposable worker host; set `PI_WORKER_ALLOW_DOCKER=0`
-  where that risk is unacceptable.
+- Docker is off by default and exposed only when the machine owner sets `PI_WORKER_ALLOW_DOCKER=1`. It
+  deliberately weakens the sandbox and should be used only on a dedicated disposable worker host.
 - Linux visual runs must permit Unix sockets because Chromium and Playwright require them. This is
   enabled only for explicitly requested visual verification or diagnosed browser CI failures; the sandbox hides the home directory and
   `/tmp` and `/var`, masks unrelated `/run` entries, and exposes only a unique private runtime temp

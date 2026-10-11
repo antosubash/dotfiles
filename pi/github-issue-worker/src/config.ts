@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { safeRepositoryPath } from "./qa-manifest.js";
@@ -170,18 +170,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     env.PI_WORKER_DOCKER_SOCKET?.trim() || "/var/run/docker.sock",
     home,
   );
-  const automaticDocker = (() => {
-    try {
-      if (!statSync(configuredDockerSocket).isSocket()) return false;
-      accessSync(configuredDockerSocket, constants.R_OK | constants.W_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-  const allowDocker = env.PI_WORKER_ALLOW_DOCKER === undefined
-    ? automaticDocker
-    : booleanFlag("PI_WORKER_ALLOW_DOCKER", env.PI_WORKER_ALLOW_DOCKER);
+  const allowDocker = booleanFlag("PI_WORKER_ALLOW_DOCKER", env.PI_WORKER_ALLOW_DOCKER ?? "0");
   let dockerSocket = allowDocker ? configuredDockerSocket : null;
   const evidenceBranch = env.PI_WORKER_EVIDENCE_BRANCH?.trim() || "pi-evidence";
   if (

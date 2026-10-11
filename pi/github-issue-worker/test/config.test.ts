@@ -27,7 +27,8 @@ test("loadConfig uses a hashed default when no legacy directory exists", () => {
     assert.equal(config.model, "openai/gpt-6-sol");
     assert.deepEqual(config.protectedPaths, [".git", ".github/workflows", ".pi", ".pi-worker"]);
     assert.equal(config.qaManifestPath, ".pi-worker/qa.json");
-    assert.equal(config.allowDocker, config.dockerSocket !== null);
+    assert.equal(config.allowDocker, false);
+    assert.equal(config.dockerSocket, null);
     assert.equal(config.publishEvidence, true);
     assert.equal(config.evidenceBranch, "pi-evidence");
   } finally {
@@ -111,7 +112,7 @@ test("loadConfig validates the CI repair attempt bound", () => {
   );
 });
 
-test("loadConfig automatically exposes an accessible Docker-style socket unless disabled", async () => {
+test("loadConfig enables Docker only when PI_WORKER_ALLOW_DOCKER=1", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pi-worker-socket-"));
   const socket = join(directory, "docker.sock");
   const server = createServer();
@@ -120,16 +121,16 @@ test("loadConfig automatically exposes an accessible Docker-style socket unless 
       server.once("error", reject);
       server.listen(socket, resolve);
     });
-    const automatic = loadConfig({ ...base, PI_WORKER_DOCKER_SOCKET: socket });
-    assert.equal(automatic.allowDocker, true);
-    assert.equal(automatic.dockerSocket, socket);
-    const disabled = loadConfig({
+    const byDefault = loadConfig({ ...base, PI_WORKER_DOCKER_SOCKET: socket });
+    assert.equal(byDefault.allowDocker, false);
+    assert.equal(byDefault.dockerSocket, null);
+    const enabled = loadConfig({
       ...base,
       PI_WORKER_DOCKER_SOCKET: socket,
-      PI_WORKER_ALLOW_DOCKER: "0",
+      PI_WORKER_ALLOW_DOCKER: "1",
     });
-    assert.equal(disabled.allowDocker, false);
-    assert.equal(disabled.dockerSocket, null);
+    assert.equal(enabled.allowDocker, true);
+    assert.equal(enabled.dockerSocket, socket);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(directory, { recursive: true, force: true });

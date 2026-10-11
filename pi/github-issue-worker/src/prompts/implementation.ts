@@ -87,7 +87,7 @@ of making a speculative change. Do not stage, commit, push, comment, or change b
 ${contentOnlyInstructions}
 ${visualInstructions(options.config, options.evidenceDir, options.gifRequested, options.qaManifest)}${memoryInstructions(options.memory)}
 ${options.dockerAccess ? `
-Docker access was explicitly granted by a trusted maintainer and enabled by the machine owner for this run.
+Docker is enabled for this worker by the machine owner (PI_WORKER_ALLOW_DOCKER=1).
 Use it only when repository-native non-Docker checks cannot verify the requested behavior. Never use privileged
 containers, host namespace/device access, host path mounts, or Docker socket forwarding. Docker daemon access
 weakens the OS sandbox boundary, so run the narrowest command and report exactly what was executed.

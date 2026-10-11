@@ -213,3 +213,19 @@ test("prompts render the project memory index and the saving rules", () => {
   assert.doesNotMatch(buildIssuePrompt({ config: cfg, issue, evidenceDir: null }), /Project memory/);
   assert.match(buildUiVerificationPrompt({ config: cfg, issueNumber: 1, prNumber: null, evidenceDir: ".qa/x", memory }), /Project memory/);
 });
+
+test("feedback prompt attributes Docker access to the machine owner, not a maintainer", () => {
+  const prompt = buildFeedbackPrompt({
+    config: { appUrl: null, playwrightState: null } as WorkerConfig,
+    issueNumber: 1,
+    prNumber: 2,
+    feedback: [],
+    evidenceDir: null,
+    gifRequested: false,
+    dockerAccess: true,
+  });
+  assert.match(prompt, /enabled for this worker by the machine owner \(PI_WORKER_ALLOW_DOCKER=1\)/);
+  // The prompt intro legitimately says "trusted maintainer feedback"; only the Docker claim must go.
+  assert.doesNotMatch(prompt, /Docker access was explicitly granted/);
+  assert.doesNotMatch(prompt, /granted by a trusted maintainer/);
+});

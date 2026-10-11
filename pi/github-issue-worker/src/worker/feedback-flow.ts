@@ -118,7 +118,7 @@ export async function handleFeedback(
     for (const item of feedback) ctx.state.markProcessed(job.issueNumber, item.eventKey);
     await ctx.github.commentPullRequest(
       job.prNumber!,
-      "Commands: `/pi fix <request>`, `/pi retry`, `/pi verify visual`, `/pi verify gif`, `/pi stop`. UI work receives screenshot/GIF evidence automatically, and Docker is available automatically when the configured daemon socket exists. Formal reviews and inline review comments from trusted maintainers are handled automatically.",
+      "Commands: `/pi fix <request>`, `/pi retry`, `/pi verify visual`, `/pi verify gif`, `/pi stop`. UI work receives screenshot/GIF evidence automatically, and Docker is available only when the machine owner sets PI_WORKER_ALLOW_DOCKER=1. Formal reviews and inline review comments from trusted maintainers are handled automatically.",
     );
     return;
   }
