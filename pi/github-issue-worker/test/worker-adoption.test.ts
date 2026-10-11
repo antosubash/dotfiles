@@ -8,7 +8,7 @@ import type { PiAgentRunner } from "../src/pi-agent.js";
 import type { RepositoryManager } from "../src/repository.js";
 import { WorkerState } from "../src/state.js";
 import type { GitHubPullRequest } from "../src/types.js";
-import { config, issue, TestIssueWorker as IssueWorker } from "./helpers/worker-fixtures.js";
+import { config, issue, TestIssueWorker as IssueWorker, trustingTrust } from "./helpers/worker-fixtures.js";
 
 test("worker adopts a pi-ready pull request into an isolated tracked worktree", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-worker-adopt-pr-"));
@@ -151,8 +151,8 @@ test("completed PR jobs recover evidence markers without duplicate comments", as
       github: {
         listReadyIssues: async () => [],
         listReadyPullRequests: async () => [],
-        hasPullRequestCommentMarker: async (_number: number, marker: string) =>
-          marker === "<!-- pi-worker-evidence:88:20260901T010101Z -->",
+        hasPullRequestCommentMarker: async (_number: number, marker: string, author: string) =>
+          author === "pi-worker" && marker === "<!-- pi-worker-evidence:88:20260901T010101Z -->",
         commentPullRequest: async (_number: number, body: string) => {
           comments.push(body);
         },
@@ -163,6 +163,57 @@ test("completed PR jobs recover evidence markers without duplicate comments", as
     await worker.tick();
     await worker.tick();
     assert.equal(comments.length, 0);
+    assert.equal(state.hasProcessed("evidence:88:20260901T010101Z"), true);
+  } finally {
+    state.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("unknown worker login treats evidence markers as absent and posts recovery", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-worker-null-viewer-evidence-"));
+  const state = new WorkerState(join(root, "state.sqlite"));
+  const pullRequest: GitHubPullRequest = {
+    ...issue,
+    number: 88,
+    url: "https://github.com/example/widgets/pull/88",
+    headRefName: "feature/adopt-me",
+    headRefOid: "head-88",
+    baseRefName: "main",
+    isCrossRepository: false,
+  };
+  state.adoptPullRequest(pullRequest, join(root, "worktrees", "pr-88"), false);
+  state.setStatus(88, "completed");
+  state.recordEvidenceRun(
+    88,
+    88,
+    "20260901T010101Z",
+    "published",
+    "\n\n![QA](https://example.invalid/qa.png)",
+  );
+  const comments: string[] = [];
+  let checked = false;
+  try {
+    const worker = new IssueWorker(config(root), state, {
+      github: {
+        listReadyIssues: async () => [],
+        listReadyPullRequests: async () => [],
+        hasPullRequestCommentMarker: async () => {
+          checked = true;
+          return true;
+        },
+        commentPullRequest: async (_number: number, body: string) => {
+          comments.push(body);
+        },
+      } as unknown as GitHubClient,
+      repository: {} as RepositoryManager,
+      agent: {} as PiAgentRunner,
+      trust: { ...trustingTrust, viewerLogin: async () => null },
+    });
+    await worker.tick();
+    await worker.tick();
+    assert.equal(checked, false);
+    assert.equal(comments.length, 1);
     assert.equal(state.hasProcessed("evidence:88:20260901T010101Z"), true);
   } finally {
     state.close();

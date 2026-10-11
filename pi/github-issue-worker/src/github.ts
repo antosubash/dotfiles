@@ -108,8 +108,8 @@ export class GitHubClient {
     return comments.commentPullRequest(this.gh, this.config, prNumber, body);
   }
 
-  hasPullRequestCommentMarker(prNumber: number, marker: string): Promise<boolean> {
-    return comments.hasPullRequestCommentMarker(this.gh, this.config, prNumber, marker);
+  hasPullRequestCommentMarker(prNumber: number, marker: string, author: string): Promise<boolean> {
+    return comments.hasPullRequestCommentMarker(this.gh, this.config, prNumber, marker, author);
   }
 
   findOpenPullRequest(branch: string): Promise<PullRequestInfo | null> {

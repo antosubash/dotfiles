@@ -60,15 +60,16 @@ export async function hasPullRequestCommentMarker(
   config: WorkerConfig,
   prNumber: number,
   marker: string,
+  author: string,
 ): Promise<boolean> {
-  const output = await gh([
-    "api",
-    "--paginate",
+  const items = await apiPages<RawFeedback>(
+    gh,
     `/repos/${config.repository}/issues/${prNumber}/comments?per_page=100`,
-    "--jq",
-    ".[].body // empty",
-  ]);
-  return output.includes(marker);
+  );
+  return items.some(
+    (item) =>
+      item.user?.login?.toLowerCase() === author.toLowerCase() && (item.body ?? "").includes(marker),
+  );
 }
 
 export async function listIssueCommands(
