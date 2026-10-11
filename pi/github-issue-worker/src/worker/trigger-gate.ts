@@ -2,8 +2,8 @@ import { TooManyEditsError, type TrustService } from "../github/trust.js";
 import { issueHash } from "../issue-plan.js";
 import { errorText, type WorkerContext } from "./shared.js";
 
-export interface TriggerItem { number: number; title: string; body: string; author?: { login: string } | null }
-export type TriggerResult = { ok: true; hash: string } | { ok: false; reason: string };
+interface TriggerItem { number: number; title: string; body: string; author?: { login: string } | null }
+type TriggerResult = { ok: true; hash: string } | { ok: false; reason: string };
 
 /** Only text written, edited and approved by users with write access, unchanged since approval, may start a run. */
 export async function checkTrigger(trust: TrustService, item: TriggerItem, label: string): Promise<TriggerResult> {

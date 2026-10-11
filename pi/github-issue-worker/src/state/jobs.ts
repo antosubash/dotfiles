@@ -10,7 +10,7 @@ export class JobStore {
     branch: string,
     worktreePath: string,
     visualRequested: boolean,
-    triggerHash: string | null = null,
+    triggerHash: string | null,
   ): IssueJob {
     const now = new Date().toISOString();
     this.database

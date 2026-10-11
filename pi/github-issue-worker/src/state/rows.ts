@@ -61,7 +61,7 @@ export function mapJob(row: JobRow): IssueJob {
     visualRequested: row.visual_requested === 1,
     ciAttempts: row.ci_attempts,
     ciHeadSha: row.ci_head_sha,
-    triggerHash: row.trigger_hash ?? null,
+    triggerHash: row.trigger_hash,
     lastError: row.last_error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
