@@ -42,7 +42,7 @@ description: Use when launching, restarting, or smoke-testing <repo> locally —
 |---|---|
 | Full stack | `…` |
 | Frontend / backend only | `…` |
-| Background worker | `…` |
+| Background worker | `…` (say which one, if any, runs the scheduler: there must be exactly one) |
 | Migrations / seed | `…` |
 
 ## Ready check
@@ -50,7 +50,8 @@ description: Use when launching, restarting, or smoke-testing <repo> locally —
 - App URL: `http://localhost:<port><main route>`  ·  Test login: <how to get one, no secrets>
 
 ## Stop / reset
-- `…` (and which ports to free)
+- `~/.claude/workflow-refs/stack.sh stop "$(~/.claude/workflow-refs/stack.sh tag)"` stops everything /qa and /vf started in this worktree, workers included.
+- `…` (anything started outside stack.sh, and which ports to free)
 
 ## Gotchas
 - <each failure hit and its fix>

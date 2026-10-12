@@ -51,6 +51,8 @@ User invoked with: `$ARGUMENTS`
 - **Recon, test and code-review agents always run on Sonnet** (`model: "sonnet"`) — high-volume work, never worth session-model tokens.
 - **Fan out in a single message.** All test agents (or all fix agents) go in ONE message so they run concurrently.
 - **Test agents are disposable.** If one crashes/times out, note it in the report and continue with the others' findings.
+- **Every process you launch goes through `stack.sh`.** API, workers, schedulers, UI: each is started with `~/.claude/workflow-refs/stack.sh start "$STACK_TAG" <name> <log> '<cmd>'` and stopped with `stack.sh stop "$STACK_TAG"`. Never use bare `nohup … &`, never write your own launcher script, never rely on a pidfile or a port to find what you started. Background workers have no port, and a pidfile misses prefork children; that's how orphaned worker sets piled up and held ~10 GiB for days. `$STACK_TAG` is per worktree, so `stop` also clears what earlier runs or crashed sessions left behind.
+- **One scheduler per stack.** Start at most one beat/cron/scheduler process (e.g. one `celery … --beat` worker or a separate `celery beat`). Every extra one re-dispatches every periodic job.
 
 ## Task Tracking (MANDATORY)
 
@@ -76,15 +78,27 @@ TaskUpdate each phase task to `in_progress` on entry and `completed` on exit. Ea
    QA_BASE="$(git rev-parse --absolute-git-dir 2>/dev/null || echo "${TMPDIR:-/tmp}/claude")/qa"
    RUN_ID="<value of --run-id, else run-$(date +%Y%m%d-%H%M%S)>"
    QA_DIR="$QA_BASE/$RUN_ID"
+   STACK=~/.claude/workflow-refs/stack.sh
+   STACK_TAG="$("$STACK" tag)"                # this worktree's git dir: shared by every run, so stop also clears older runs' leftovers
    mkdir -p "$QA_DIR/screenshots/iteration-1" "$QA_DIR/reports" "$QA_DIR/fixes"
    echo "$RUN_ID" > "$QA_BASE/latest-run"    # pointer /vf --qa-passed uses to find this run
    echo "1" > "$QA_DIR/current-iteration"
    ```
 2. **Target URL:** `--url` → use it, skip startup. `--no-start` → build URL from port + route. Otherwise auto-detect and start:
-   - Detect stack, start command, port, package manager from project files (package.json, pyproject.toml, *.csproj)
-   - Kill anything on the port
-   - Start the dev server in background → `$QA_DIR/server.log`, PID → `$QA_DIR/server.pid`
-   - Poll the health URL every 2s for up to 90s. On failure: dump the server log and STOP.
+   - Detect the stack, start command(s), port and package manager. Prefer the repo's `running-the-stack` skill; otherwise use project files (package.json, pyproject.toml, *.csproj). List every process the feature needs: server, UI, and any background workers or scheduler.
+   - **Stop anything already running for this worktree**, then free the port:
+     ```bash
+     "$STACK" stop "$STACK_TAG"
+     lsof -ti tcp:<port> | xargs -r kill -9
+     ```
+   - Start each process with its own name and log, and record what you started for later restarts:
+     ```bash
+     "$STACK" start "$STACK_TAG" server "$QA_DIR/server.log" 'cd <dir> && <server-cmd>'
+     "$STACK" start "$STACK_TAG" worker-default "$QA_DIR/worker-default.log" 'cd <dir> && <worker-cmd>'   # one per worker; only one carries the scheduler
+     ```
+     Write each `start` line you ran to `$QA_DIR/stack.cmds` so a restart replays exactly the same set.
+     Exit 3 from `start` means that name is still running; run `stop` first and never start a second copy.
+   - Poll the health URL every 2s for up to 90s, and wait for each worker's ready line in its log. On failure: dump the failing log, run `"$STACK" stop "$STACK_TAG"`, and STOP.
 3. Echo the plan:
    ```
    /qa cycle starting
@@ -189,12 +203,13 @@ ELSE → Phase 4 → Phase 5 → Phase 6 → back to Phase 1, RIGHT NOW. Do not 
 2. If `NEXT > max_iterations` → Phase 9 with remaining issues. Do NOT loop again.
 3. Otherwise TaskCreate the `Iteration {NEXT}: …` tasks (Reconnaissance, Parallel test execution, QA report, Fix agents, Code review).
 4. **Get the fixes running — hot reload first, restart only when needed.** Restart ONLY if:
-   1. **Server died** — health URL doesn't respond, or the PID in `$QA_DIR/server.pid` is gone.
+   1. **Server died** — the health URL doesn't respond, or `"$STACK" status "$STACK_TAG"` no longer lists a process you started.
    2. **Deps/config changed** — `git diff --name-only "$(cat "$QA_DIR/pre-fix-sha")" HEAD` matches `package.json`, `*lock*`, `*.config.*`, `.env*`, `*.csproj`, `pyproject.toml`, `requirements*.txt`, or `Dockerfile`.
    3. **No hot reload** — started with plain `dotnet run`, a compiled binary, or anything without a watcher (`dotnet watch`, `next dev`, `vite`, `uvicorn --reload` DO hot-reload).
+   4. **Background worker code changed** — the fixes touch code a worker runs (tasks, jobs, consumers, or modules they import). Workers never hot-reload.
 
    - **None hold (default):** leave the server running, but verify the reload didn't silently break the build: (a) one `curl` of the health URL; (b) tail `$QA_DIR/server.log` for compile errors since the fixes landed (`Failed to compile`, `error TS`, `SyntaxError`, `ImportError`/`ModuleNotFoundError`, `CS____` codes); (c) if a fast typecheck exists (`typecheck` script, `tsc --noEmit`, `mypy`/`pyright`), run it once — it catches type errors transpile-only dev servers serve past. Any failure = the fixes broke the build: fix it now (inline if trivial, else next fix round); do NOT re-test as if healthy.
-   - **Trigger 1 or 3:** `kill -9 $(cat $QA_DIR/server.pid 2>/dev/null) 2>/dev/null || true; lsof -ti tcp:<port> | xargs -r kill -9`, then `nohup <start-cmd> > $QA_DIR/server.log 2>&1 &` with PID → `$QA_DIR/server.pid`, poll health every 2s up to 90s; on failure STOP. No cache clear, no rebuild.
+   - **Trigger 1, 3 or 4:** restart the whole stack: `"$STACK" stop "$STACK_TAG"; lsof -ti tcp:<port> | xargs -r kill -9`, then re-run every `"$STACK" start …` line from `$QA_DIR/stack.cmds`. Poll health every 2s for up to 90s and wait for worker ready lines; on failure, stop the stack and STOP. No cache clear, no rebuild.
    - **Trigger 2:** same kill → restart → poll, but install changed deps FIRST (JS/TS `<pm> install` · Python `uv sync` / `pip install -r requirements*.txt` / `poetry install` · .NET `dotnet restore`) — otherwise the server still runs the old dependency tree. Nothing beyond that install.
    - **Stale-behavior fallback ONLY:** if a re-test shows old behavior for a bug whose fix is verifiably in the code, THEN clear build caches (JS/TS `rm -rf .next dist node_modules/.cache` · Python remove `__pycache__` · .NET `dotnet clean --nologo`), rebuild, restart, re-test once more. Never the loop default.
 5. **Go back to Phase 1 now**, then Phase 2, Phase 3 (with delta section), and apply the Phase 3 decision point.
@@ -203,10 +218,11 @@ ELSE → Phase 4 → Phase 5 → Phase 6 → back to Phase 1, RIGHT NOW. Do not 
 
 (Phases 7–8 intentionally don't exist — historical numbering.)
 
-1. **Stop the dev server** if you started it:
+1. **Stop everything you started** (skip if you ran with `--url` or `--no-start`, since that stack isn't yours). Do this on every exit path: clean, issues remaining, `--no-vf`, or a STOP after a failed start. `/vf` and the next `/ship` round start their own stack.
    ```bash
-   kill -9 $(cat $QA_DIR/server.pid 2>/dev/null) 2>/dev/null || true
+   "$STACK" stop "$STACK_TAG"
    lsof -ti tcp:<port> | xargs -r kill -9
+   "$STACK" status "$STACK_TAG"     # must print "nothing running"
    ```
 2. **Close the browser** (`browser_close`).
 3. **Finalize `$QA_DIR/result.json`** — `status` `clean` or `issues-remaining`, final counts, `remaining`, `artifact_url`. It must reflect the true end state.
