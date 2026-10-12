@@ -106,8 +106,10 @@ TaskUpdate each to `in_progress` on entry and `completed` on exit. Before stoppi
    ```bash
    VF_DIR="$(git rev-parse --absolute-git-dir)/verify"
    mkdir -p "$VF_DIR"
+   STACK=~/.claude/workflow-refs/stack.sh
+   STACK_TAG="$("$STACK" tag)"     # per worktree; the same tag /qa uses
    ```
-   `$VF_DIR` always means this absolute path.
+   `$VF_DIR` always means this absolute path. Every process /vf launches goes through `"$STACK" start` and is stopped with `"$STACK" stop "$STACK_TAG"`. Never use bare `nohup … &` or pidfiles: they miss worker children and leave orphans running.
 2. Check tools: `git --version`; `gh --version` + `gh auth status` if a PR is requested (unauthenticated → stop before pushing, tell the user to run `gh auth login`). If Stage 2 will run:
    - `@playwright/cli` (Stage 2a): if `playwright-cli --help` fails, `npm i -g @playwright/cli@latest`.
    - `@playwright/test` (2b/2c): use the project's e2e install; never install globally.
@@ -117,21 +119,24 @@ TaskUpdate each to `in_progress` on entry and `completed` on exit. Before stoppi
 
 ## Stage 1 — Start Application (skip if `--skip-browser`)
 
-1. Free the port: `lsof -ti tcp:<port> | xargs -r kill -9` (Windows: `npx kill-port <port>`).
+1. Stop whatever an earlier /qa or /vf run left for this worktree, then free the port:
+   ```bash
+   "$STACK" stop "$STACK_TAG"
+   lsof -ti tcp:<port> | xargs -r kill -9     # Windows: npx kill-port <port>
+   ```
 2. Start in the background:
    ```bash
-   nohup <start-cmd> > "$VF_DIR/server.log" 2>&1 &
-   echo $! > "$VF_DIR/server.pid"
+   "$STACK" start "$STACK_TAG" server "$VF_DIR/server.log" 'cd <dir> && <start-cmd>'
    ```
-3. Poll the health URL every 2s for up to **90s**; 200/302/401 = up. On timeout: kill the server, dump the last 50 lines of `server.log`, STOP.
+3. Poll the health URL every 2s for up to **90s**; 200/302/401 = up. On timeout: dump the last 50 lines of `server.log`, run `"$STACK" stop "$STACK_TAG"`, STOP.
 
 ## Stage 1b — Start Worker (only if needed per auto-detection)
 
-Read `~/.claude/workflow-refs/vf/worker.md` and follow it (backend check → start → `$VF_DIR/worker.{log,pid}` → 30s ready wait → on failure dump log, kill server, STOP).
+Read `~/.claude/workflow-refs/vf/worker.md` and follow it (backend check → `"$STACK" start` → `$VF_DIR/worker.log` → 30s ready wait → on failure dump log, stop the stack, STOP).
 
 ## Stage 2 — Browser Verification (skip if `--skip-browser`)
 
-When an e2e suite exists, tests belong there — no standalone verification scripts (they bit-rot and don't run in CI). Without one, the 2a smoke check IS the verification. On any failure in 2a/2b/2c: STOP, leave server (and worker) running for inspection, report what failed and where.
+When an e2e suite exists, tests belong there — no standalone verification scripts (they bit-rot and don't run in CI). Without one, the 2a smoke check IS the verification. On any failure in 2a/2b/2c: STOP, leave server (and worker) running for inspection, report what failed and where, and tell the user to stop it with `~/.claude/workflow-refs/stack.sh stop <literal STACK_TAG>` when done. The next /qa or /vf run in this worktree also stops it.
 
 ### 2a — Smoke check
 
@@ -151,9 +156,9 @@ Read `~/.claude/workflow-refs/vf/e2e.md`. 2b: write/extend the spec in the proje
 
 ## Stage 3 — Stop Server and Worker
 
-1. Worker first (lets final job writes flush): `kill -9 $(cat "$VF_DIR/worker.pid") 2>/dev/null || true` if the pid file exists.
-2. `kill -9 $(cat "$VF_DIR/server.pid") 2>/dev/null || true` if it exists.
-3. `lsof -ti tcp:<port> | xargs -r kill -9`.
+1. `"$STACK" stop "$STACK_TAG"`: sends TERM to the server, worker and all their children (so final job writes flush), then KILLs leftovers after 20s.
+2. `lsof -ti tcp:<port> | xargs -r kill -9`.
+3. `"$STACK" status "$STACK_TAG"` must print "nothing running".
 
 Required before Stage 4 — watchers (`dotnet watch`, `nodemon`, `uvicorn --reload`) holding file locks break builds.
 
@@ -169,7 +174,7 @@ Required before Stage 4 — watchers (`dotnet watch`, `nodemon`, `uvicorn --relo
 
 1. Run lint, typecheck, unit tests as **parallel Bash calls in one message**; on failure report every failing step from the batch, then stop. **.NET:** only lint + unit tests in parallel (no typecheck call); build runs afterward, never in the batch — `dotnet format` and `dotnet test` race on `obj/`/`bin/` and fail with spurious file locks.
 2. Then the build, sequentially.
-3. **Full e2e suite** — only if e2e was detected and not `--no-e2e`; otherwise mark `— (no e2e)` and never create a setup. It needs the app: restart the app (and worker if Stage 1b ran — builds may have cleared `dist/` or killed watchers), wait for health, run the **full** suite (prefer a smoke subset first if one exists, e.g. `npm run test:e2e:smoke`, `pytest -m smoke`), then stop app + worker again. Surface flaky-test retries.
+3. **Full e2e suite** — only if e2e was detected and not `--no-e2e`; otherwise mark `— (no e2e)` and never create a setup. It needs the app: restart the app (and worker if Stage 1b ran — builds may have cleared `dist/` or killed watchers), wait for health, run the **full** suite (prefer a smoke subset first if one exists, e.g. `npm run test:e2e:smoke`, `pytest -m smoke`), then stop app + worker again. Use `"$STACK" stop` / `"$STACK" start` for both; never `nohup`. Surface flaky-test retries.
 
 Print a results table (Lint / Typecheck / Unit tests / Build / E2E with ✓/✗). Any failure → surface output, STOP, no Stage 5.
 
@@ -206,5 +211,5 @@ At the end (success or failure):
 
 - TaskList audit — every task terminal (completed, or description says why skipped).
 - `playwright-cli -s=vf close 2>/dev/null || true`.
-- Kill the worker (`$VF_DIR/worker.pid`) and dev server (`$VF_DIR/server.pid`) if still running.
+- Stop the stack: `"$STACK" stop "$STACK_TAG"`. Skip this only on the 2a/2b/2c failure path, where it is left running for inspection.
 - Leave `$VF_DIR` in place as the audit trail (inside `.git/`; no `.gitignore` entry needed).
