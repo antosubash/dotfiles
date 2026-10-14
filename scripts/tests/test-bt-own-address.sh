@@ -14,8 +14,12 @@ setup_fake_adapter() {
     export BT_STATE="$TMPDIR_ROOT/bt"
     export BT_LOG="$TMPDIR_ROOT/btmgmt.log"
     export BT_OWN_ADDRESS_CONF="$TMPDIR_ROOT/bt-own-address.conf"
+    export BT_OWN_ADDRESS_MARKER="$TMPDIR_ROOT/bt-own-address.failed"
+    export BT_OWN_ADDRESS_WAIT=5
     mkdir -p "$BT_STATE"
     printf '%s\n' "$1" > "$BT_STATE/addr"
+    printf '%s\n' "$1" > "$BT_STATE/factory"
+    : > "$BT_STATE/stuck"
     printf '%s\n' "${2:-on}" > "$BT_STATE/power"
     : > "$BT_LOG"
 
@@ -37,11 +41,20 @@ case "$1" in
     power) printf '%s\n' "$2" > "$BT_STATE/power" ;;
     public-addr)
         [ "$(cat "$BT_STATE/power")" = off ] || { echo "Rejected"; exit 1; }
-        printf '%s\n' "$2" > "$BT_STATE/addr"
+        # A stuck adapter drops out of mgmt and never comes back
+        if [ -s "$BT_STATE/stuck" ]; then : > "$BT_STATE/addr"; else printf '%s\n' "$2" > "$BT_STATE/addr"; fi
         ;;
 esac
 EOF
     chmod +x "$FAKE_BIN/btmgmt"
+
+    # Reloading btusb brings the adapter back on its factory address
+    cat > "$FAKE_BIN/modprobe" <<'EOF'
+#!/usr/bin/env bash
+printf 'modprobe %s\n' "$*" >> "$BT_LOG"
+[ "$1" = -r ] || { cp "$BT_STATE/factory" "$BT_STATE/addr"; : > "$BT_STATE/stuck"; }
+EOF
+    chmod +x "$FAKE_BIN/modprobe"
 }
 
 run_script() {
@@ -114,7 +127,47 @@ test_rejects_invalid_address() {
     teardown_test
 }
 
+test_recovers_adapter_stuck_after_address_change() {
+    setup_test "stuck adapter"
+    setup_fake_adapter 00:1A:7D:DA:71:FE off
+    echo 1 > "$BT_STATE/stuck"
+    run_script 00:1A:7D:DA:71:7E
+    assert_eq 1 "$STATUS" "exit status"
+    assert_contains "$(cat "$BT_LOG")" "modprobe -r btusb" "driver unloaded"
+    assert_contains "$(cat "$BT_LOG")" "modprobe btusb" "driver reloaded"
+    assert_eq "00:1A:7D:DA:71:FE" "$(cat "$BT_STATE/addr")" "back on factory address"
+    assert_eq 1 "$([ -e "$BT_OWN_ADDRESS_MARKER" ] && echo 1)" "marker written"
+    assert_contains "$OUTPUT" "factory address" "message"
+    teardown_test
+}
+
+test_skips_after_failure_this_boot() {
+    setup_test "skips after failure"
+    setup_fake_adapter 00:1A:7D:DA:71:FE on
+    : > "$BT_OWN_ADDRESS_MARKER"
+    run_script 00:1A:7D:DA:71:7E
+    assert_eq 0 "$STATUS" "exit status"
+    assert_eq "00:1A:7D:DA:71:FE" "$(cat "$BT_STATE/addr")" "unchanged"
+    assert_not_contains "$(cat "$BT_LOG")" "public-addr" "no change attempted"
+    assert_contains "$OUTPUT" "factory address" "message"
+    teardown_test
+}
+
+test_waits_for_adapter_to_appear() {
+    setup_test "adapter appears late"
+    setup_fake_adapter "" off
+    (sleep 0.2; echo 00:1A:7D:DA:71:FE > "$BT_STATE/addr") &
+    run_script 00:1A:7D:DA:71:7E
+    wait
+    assert_eq 0 "$STATUS" "exit status"
+    assert_eq "00:1A:7D:DA:71:7E" "$(cat "$BT_STATE/addr")" "adapter address"
+    teardown_test
+}
+
 test_derive_flips_top_bit_of_last_octet
+test_recovers_adapter_stuck_after_address_change
+test_skips_after_failure_this_boot
+test_waits_for_adapter_to_appear
 test_sets_address_from_conf_on_powered_adapter
 test_leaves_unpowered_adapter_off
 test_noop_when_address_already_set
