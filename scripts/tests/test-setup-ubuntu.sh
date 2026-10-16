@@ -52,7 +52,7 @@ test_sections_are_idempotent_under_fakes() {
     chmod +x "$FAKE_BIN"/*
     # shellcheck disable=SC1090
     SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
-    SETUP_MACHINE=x86_64 run_sections cli > /dev/null 2>&1
+    PINNED_BIN_DIR="$FAKE_BIN" SETUP_MACHINE=x86_64 run_sections cli > /dev/null 2>&1
     assert_contains "${SECTION_RESULTS[*]}" "cli|ok" "cli ok"
     assert_not_contains "$(cat "$CALLS")" "install" "no install calls"
     teardown_test
@@ -73,7 +73,7 @@ test_cli_section_without_go_skips_curlie() {
     for t in mktemp rm; do ln -s "$(command -v "$t")" "$sys/$t"; done
     # shellcheck disable=SC1090
     SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
-    PATH="$FAKE_BIN:$sys" SETUP_MACHINE=x86_64 run_sections cli > "$TMPDIR_ROOT/out" 2>&1
+    PATH="$FAKE_BIN:$sys" PINNED_BIN_DIR="$FAKE_BIN" SETUP_MACHINE=x86_64 run_sections cli > "$TMPDIR_ROOT/out" 2>&1
     assert_contains "${SECTION_RESULTS[*]}" "cli|ok" "cli ok"
     assert_contains "$(cat "$TMPDIR_ROOT/out")" "skipping curlie" "says curlie was skipped"
     teardown_test

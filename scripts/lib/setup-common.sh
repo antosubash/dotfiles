@@ -470,6 +470,11 @@ setup_log() {
 # Call it as a plain command (see run_sections), e.g. `run_setup "$@"`.
 run_setup() {
     parse_section_args "$@"
+    # As root, $HOME, ~/.local, the login shell and group changes would all be root's.
+    if [ "$(id -u)" -eq 0 ]; then
+        echo "Run setup as your normal user; it uses sudo itself where needed." >&2
+        exit 1
+    fi
     if [ ! -r /etc/os-release ] || ! grep -qE '^ID(_LIKE)?=.*(debian|ubuntu)' /etc/os-release; then
         echo "ERROR: this script targets Debian/Ubuntu hosts." >&2
         exit 1

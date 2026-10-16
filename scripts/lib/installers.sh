@@ -232,33 +232,47 @@ install_pinned_go() {
     install_go
 }
 
+# _warn_if_shadowed TOOL DEST: warns when the TOOL on PATH isn't DEST, the
+# pinned copy, so the user would keep running another version. Deletes nothing.
+_warn_if_shadowed() {
+    local found
+    found="$(command -v "$1" 2>/dev/null)" || return 0
+    [ "$found" -ef "$2" ] && return 0
+    echo "WARNING: $1 at $found shadows the pinned one at $2; remove $found." >&2
+}
+
+# _install_pinned TOOL VERSION URL SHA256 MEMBER [VERSION_ARGS...]: installs TOOL
+# into /usr/local/bin ($PINNED_BIN_DIR in tests) unless that copy, not whichever
+# is first on PATH, already reports VERSION. MEMBER is the file to take from a
+# .tar.gz, or "".
+_install_pinned() {
+    local tool="$1" version="$2" url="$3" sha256="$4" member="$5"
+    local dest="${PINNED_BIN_DIR:-/usr/local/bin}/$tool"
+    shift 5
+    if needs_install "$dest" "$version" "$@"; then
+        install_verified_binary "$url" "$sha256" "$dest" "$member" || return 1
+    fi
+    _warn_if_shadowed "$tool" "$dest"
+}
+
 install_pinned_yq() {
     _pinned_ok yq || return 0
-    needs_install yq "$YQ_VERSION" || return 0
-    install_verified_binary "$YQ_URL" "$YQ_SHA256" /usr/local/bin/yq
+    _install_pinned yq "$YQ_VERSION" "$YQ_URL" "$YQ_SHA256" ""
 }
 
 install_pinned_git_tools() {
     _pinned_ok "lazygit and lazydocker" || return 0
     local status=0
-    if needs_install lazygit "$LAZYGIT_VERSION"; then
-        install_verified_binary "$LAZYGIT_URL" "$LAZYGIT_SHA256" /usr/local/bin/lazygit lazygit || status=1
-    fi
-    if needs_install lazydocker "$LAZYDOCKER_VERSION"; then
-        install_verified_binary "$LAZYDOCKER_URL" "$LAZYDOCKER_SHA256" /usr/local/bin/lazydocker lazydocker || status=1
-    fi
+    _install_pinned lazygit "$LAZYGIT_VERSION" "$LAZYGIT_URL" "$LAZYGIT_SHA256" lazygit || status=1
+    _install_pinned lazydocker "$LAZYDOCKER_VERSION" "$LAZYDOCKER_URL" "$LAZYDOCKER_SHA256" lazydocker || status=1
     return "$status"
 }
 
 install_pinned_k8s() {
     _pinned_ok "kubectl and helm" || return 0
     local status=0
-    if needs_install kubectl "$KUBECTL_VERSION" version --client; then
-        install_verified_binary "$KUBECTL_URL" "$KUBECTL_SHA256" /usr/local/bin/kubectl || status=1
-    fi
-    if needs_install helm "$HELM_VERSION" version; then
-        install_verified_binary "$HELM_URL" "$HELM_SHA256" /usr/local/bin/helm linux-amd64/helm || status=1
-    fi
+    _install_pinned kubectl "$KUBECTL_VERSION" "$KUBECTL_URL" "$KUBECTL_SHA256" "" version --client || status=1
+    _install_pinned helm "$HELM_VERSION" "$HELM_URL" "$HELM_SHA256" linux-amd64/helm version || status=1
     return "$status"
 }
 

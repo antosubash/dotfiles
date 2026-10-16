@@ -273,7 +273,47 @@ test_desktop_apps_opt_claude_desktop_out_of_its_own_repo() {
     end_test
 }
 
+# fake_tool DIR NAME VERSION: an executable printing "NAME version VERSION".
+fake_tool() {
+    mkdir -p "$1"; printf '#!/bin/sh\necho "%s version %s"\n' "$2" "$3" > "$1/$2"; chmod +x "$1/$2"
+}
+
+# The pinned copy lives in /usr/local/bin; a user's copy earlier on PATH (say
+# ~/.local/bin/lazydocker) must neither stop nor force its install, only be named.
+test_pinned_tools_check_their_destination() {
+    setup_test "pinned tools check the install destination"
+    setup_fakes
+    export PINNED_BIN_DIR="$TMPDIR_ROOT/pinned"
+    local shadow="$TMPDIR_ROOT/shadow" out
+    install_verified_binary() { echo "install $3" >> "$CALLS"; fake_tool "$(dirname "$3")" "$(basename "$3")" "new"; }
+    # Destination at the pin, an old copy ahead of it on PATH: no install, a warning.
+    fake_tool "$PINNED_BIN_DIR" lazydocker "$LAZYDOCKER_VERSION"
+    fake_tool "$PINNED_BIN_DIR" lazygit "$LAZYGIT_VERSION"
+    fake_tool "$shadow" lazydocker 0.1.0
+    out="$(PATH="$shadow:$PINNED_BIN_DIR:$PATH" SETUP_MACHINE=x86_64 install_pinned_git_tools 2>&1)"
+    assert_eq 0 $? "returns 0"
+    assert_not_contains "$(cat "$CALLS")" "install " "up-to-date destination is not reinstalled"
+    assert_contains "$out" "lazydocker at $shadow/lazydocker shadows the pinned one at $PINNED_BIN_DIR/lazydocker; remove $shadow/lazydocker" "names the shadowing copy"
+    assert_not_contains "$out" "lazygit at" "no warning for an unshadowed tool"
+    # Destination old, a copy at the pin ahead of it on PATH: still installs.
+    fake_tool "$PINNED_BIN_DIR" yq 4.0.0
+    fake_tool "$shadow" yq "$YQ_VERSION"
+    out="$(PATH="$shadow:$PINNED_BIN_DIR:$PATH" SETUP_MACHINE=x86_64 install_pinned_yq 2>&1)"
+    assert_contains "$(cat "$CALLS")" "install $PINNED_BIN_DIR/yq" "old destination is reinstalled"
+    assert_contains "$out" "yq at $shadow/yq shadows the pinned one at $PINNED_BIN_DIR/yq" "warns after installing"
+    # kubectl and helm use their own version arguments against the destination.
+    : > "$CALLS"
+    printf '#!/bin/sh\n[ "$*" = "version --client" ] && echo "Client Version: v%s"\n' "$KUBECTL_VERSION" > "$PINNED_BIN_DIR/kubectl"
+    printf '#!/bin/sh\n[ "$*" = version ] && echo "version.BuildInfo{Version:\\"v%s\\"}"\n' "$HELM_VERSION" > "$PINNED_BIN_DIR/helm"
+    chmod +x "$PINNED_BIN_DIR/kubectl" "$PINNED_BIN_DIR/helm"
+    out="$(PATH="$PINNED_BIN_DIR:$PATH" SETUP_MACHINE=x86_64 install_pinned_k8s 2>&1)"
+    assert_eq "" "$(cat "$CALLS")" "kubectl and helm at the pin: no install"
+    unset PINNED_BIN_DIR
+    end_test
+}
+
 test_apt_install_missing_installs_only_missing
+test_pinned_tools_check_their_destination
 test_desktop_apps_opt_claude_desktop_out_of_its_own_repo
 test_install_docker_keeps_ubuntu_docker_io
 test_snap_install_missing

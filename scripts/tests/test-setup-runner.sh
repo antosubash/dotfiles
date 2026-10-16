@@ -148,7 +148,25 @@ test_guards_honour_overrides() {
     teardown_test
 }
 
+# Run as root, $HOME, ~/.local and the shell setup would land in /root.
+test_run_setup_refuses_root() {
+    setup_test "run_setup refuses root"
+    load_lib
+    printf '#!/bin/sh\n[ "$1" = -u ] && echo 0 || /usr/bin/id "$@"\n' > "$FAKE_BIN/id"; chmod +x "$FAKE_BIN/id"
+    printf '#!/bin/sh\necho "sudo $*" >> "%s/calls"\n' "$TMPDIR_ROOT" > "$FAKE_BIN/sudo"; chmod +x "$FAKE_BIN/sudo"
+    local out status
+    out="$(XDG_STATE_HOME="$TMPDIR_ROOT/state" run_setup 2>&1)"; status=$?
+    assert_eq 1 "$status" "exit status"
+    assert_contains "$out" "Run setup as your normal user; it uses sudo itself where needed." "message"
+    assert_eq no "$([ -e "$TMPDIR_ROOT/ran" ] || [ -e "$TMPDIR_ROOT/calls" ] || [ -d "$TMPDIR_ROOT/state" ] && echo yes || echo no)" "no section, sudo or log"
+    out="$(run_setup --list 2>&1)"; status=$?
+    assert_eq 0 "$status" "--list still works as root"
+    assert_eq "$(printf 'one\ntwo\nthree')" "$out" "--list output"
+    teardown_test
+}
+
 test_list_prints_sections_in_order
+test_run_setup_refuses_root
 test_only_and_skip_select_sections
 test_unknown_section_is_an_error
 test_only_and_skip_need_a_value
