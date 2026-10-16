@@ -57,7 +57,8 @@ done
 # 5. CPU power limits: older BIOSes on 13th/14th-gen Intel K CPUs leave the
 #    short-term limit effectively unlimited (4095 W). Cap both limits at Intel's
 #    253 W spec at every boot; limits already at or below it are left alone.
-if [ -d /sys/class/powercap/intel-rapl:0 ]; then
+rapl="${DEV_TUNING_RAPL_DIR:-/sys/class/powercap/intel-rapl:0}"
+if [ -d "$rapl" ]; then
     echo "Installing cpu-power-limit.service (253 W cap)..."
     sudo tee /usr/local/sbin/cpu-power-limit > /dev/null <<'EOF'
 #!/bin/bash
@@ -95,8 +96,7 @@ EOF
     sudo systemctl daemon-reload
     sudo systemctl enable --now cpu-power-limit.service
     for i in 0 1; do
-        c=/sys/class/powercap/intel-rapl:0
-        echo "  $(cat $c/constraint_${i}_name): $(( $(cat $c/constraint_${i}_power_limit_uw) / 1000000 )) W"
+        echo "  $(cat "$rapl/constraint_${i}_name"): $(( $(cat "$rapl/constraint_${i}_power_limit_uw") / 1000000 )) W"
     done
 fi
 
