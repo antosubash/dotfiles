@@ -57,9 +57,6 @@ ensure_user_in_group() {
     echo "Added $user to the $group group; log out and back in for it to apply."
 }
 
-_os_codename() { (. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}"); }
-_os_family() { (. /etc/os-release && if [ "$ID" = debian ]; then echo debian; else echo ubuntu; fi); }
-
 # ---------- Vendor apt repositories ----------
 
 install_docker() {

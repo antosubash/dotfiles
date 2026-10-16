@@ -138,7 +138,7 @@ install_espanso() {
 }
 
 main() {
-    if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] || [[ "${XDG_CURRENT_DESKTOP:-}" != *GNOME* ]]; then
+    if ! in_gnome_session; then
         echo "Not in a GNOME session; skipping the keyboard setup."
         return 0
     fi

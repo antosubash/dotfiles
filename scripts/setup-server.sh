@@ -18,10 +18,7 @@ require_cmd() {
 }
 
 # This script targets Debian/Ubuntu — refuse to run elsewhere.
-if [ ! -r /etc/os-release ] || ! grep -qE '^ID(_LIKE)?=.*(debian|ubuntu)' /etc/os-release; then
-    echo "ERROR: this script targets Debian/Ubuntu hosts." >&2
-    exit 1
-fi
+require_debian_host
 
 require_cmd apt  "This script targets Debian/Ubuntu systems."
 require_cmd dpkg "dpkg should be present on Debian/Ubuntu."
@@ -122,7 +119,7 @@ else
             && sudo mv /opt/nvim.new /opt/nvim
         sudo ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim
         # Remove apt-installed nvim to avoid PATH conflicts.
-        if dpkg -l neovim 2>/dev/null | grep -q '^ii'; then
+        if _pkg_installed neovim; then
             sudo apt purge -y neovim || true
         fi
     else

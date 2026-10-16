@@ -8,6 +8,19 @@ SCRIPT="$(cd "$HERE/.." && pwd)/setup-ubuntu.sh"
 
 EXPECTED="base editor languages dotnet cli security ssh-firewall vpn shell git-tools docker node python k8s db-gis ollama apps keyboard fonts nvidia apt-hygiene"
 
+# Source the script's functions without running it.
+load_setup_ubuntu() {
+    # shellcheck disable=SC1090
+    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+}
+
+# Fake sudo (records its calls in $CALLS) and a dpkg-query that reports every package installed.
+fake_installed_system() {
+    export CALLS="$TMPDIR_ROOT/calls"; : > "$CALLS"
+    printf '#!/bin/sh\necho "sudo $*" >> "%s"\n' "$CALLS" > "$FAKE_BIN/sudo"
+    printf '#!/bin/sh\nprintf "install ok installed"\n' > "$FAKE_BIN/dpkg-query"
+}
+
 test_list_names_every_section() {
     setup_test "--list"
     assert_eq "$EXPECTED" "$(bash "$SCRIPT" --list | tr '\n' ' ' | sed 's/ $//')" "sections"
@@ -16,8 +29,7 @@ test_list_names_every_section() {
 
 test_every_section_has_a_function() {
     setup_test "section functions exist"
-    # shellcheck disable=SC1090
-    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+    load_setup_ubuntu
     local s
     for s in $EXPECTED; do
         assert_eq function "$(type -t "section_${s//-/_}")" "section_$s"
@@ -34,8 +46,7 @@ test_unknown_option_fails() {
 
 test_nvidia_section_skips_without_gpu() {
     setup_test "nvidia section without GPU"
-    # shellcheck disable=SC1090
-    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+    load_setup_ubuntu
     SYSFS_PCI_DEVICES="$TMPDIR_ROOT/none" run_sections nvidia > "$TMPDIR_ROOT/out" 2>&1
     assert_contains "${SECTION_RESULTS[*]}" "nvidia|skipped" "skipped"
     assert_contains "$(cat "$TMPDIR_ROOT/out")" "No NVIDIA GPU" "reason"
@@ -45,13 +56,10 @@ test_nvidia_section_skips_without_gpu() {
 test_sections_are_idempotent_under_fakes() {
     setup_test "cli section with everything installed"
     # Everything reports installed and at its pin, so the section must make no install calls.
-    export CALLS="$TMPDIR_ROOT/calls"; : > "$CALLS"
-    printf '#!/bin/sh\necho "sudo $*" >> "%s"\n' "$CALLS" > "$FAKE_BIN/sudo"
-    printf '#!/bin/sh\nprintf "install ok installed"\n' > "$FAKE_BIN/dpkg-query"
+    fake_installed_system
     for t in yq curlie bat; do printf '#!/bin/sh\necho "%s version 4.54.1"\n' "$t" > "$FAKE_BIN/$t"; done
     chmod +x "$FAKE_BIN"/*
-    # shellcheck disable=SC1090
-    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+    load_setup_ubuntu
     PINNED_BIN_DIR="$FAKE_BIN" SETUP_MACHINE=x86_64 run_sections cli > /dev/null 2>&1
     assert_contains "${SECTION_RESULTS[*]}" "cli|ok" "cli ok"
     assert_not_contains "$(cat "$CALLS")" "install" "no install calls"
@@ -62,17 +70,14 @@ test_sections_are_idempotent_under_fakes() {
 # curlie instead of failing.
 test_cli_section_without_go_skips_curlie() {
     setup_test "cli section without Go"
-    export CALLS="$TMPDIR_ROOT/calls"; : > "$CALLS"
-    printf '#!/bin/sh\necho "sudo $*" >> "%s"\n' "$CALLS" > "$FAKE_BIN/sudo"
-    printf '#!/bin/sh\nprintf "install ok installed"\n' > "$FAKE_BIN/dpkg-query"
+    fake_installed_system
     for t in yq bat; do printf '#!/bin/sh\necho "%s version 4.54.1"\n' "$t" > "$FAKE_BIN/$t"; done
     chmod +x "$FAKE_BIN"/*
     # Only the fakes and what the runner itself needs: no go, no curlie.
     local sys="$TMPDIR_ROOT/sys" t
     mkdir -p "$sys"
     for t in mktemp rm; do ln -s "$(command -v "$t")" "$sys/$t"; done
-    # shellcheck disable=SC1090
-    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+    load_setup_ubuntu
     PATH="$FAKE_BIN:$sys" PINNED_BIN_DIR="$FAKE_BIN" SETUP_MACHINE=x86_64 run_sections cli > "$TMPDIR_ROOT/out" 2>&1
     assert_contains "${SECTION_RESULTS[*]}" "cli|ok" "cli ok"
     assert_contains "$(cat "$TMPDIR_ROOT/out")" "skipping curlie" "says curlie was skipped"
@@ -91,8 +96,7 @@ test_base_section_installs_apt_source_prereqs_first() {
     } > "$FAKE_BIN/sudo"
     printf '#!/bin/sh\nexit 1\n' > "$FAKE_BIN/dpkg-query"
     chmod +x "$FAKE_BIN"/*
-    # shellcheck disable=SC1090
-    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+    load_setup_ubuntu
     run_sections base > "$TMPDIR_ROOT/out" 2>&1
     assert_contains "$(cat "$CALLS")" "apt-get install -y curl ca-certificates gnupg" "prereqs in their own call"
     assert_contains "$(cat "$TMPDIR_ROOT/out")" "WARNING: apt update" "a failed update is a warning"
@@ -115,8 +119,7 @@ test_update_sections_install_nothing_new_in_upgrade_only_mode() {
     local sys="$TMPDIR_ROOT/sys"
     mkdir -p "$sys" "$TMPDIR_ROOT/home" "$TMPDIR_ROOT/pinned"
     for t in mktemp rm; do ln -s "$(command -v "$t")" "$sys/$t"; done
-    # shellcheck disable=SC1090
-    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+    load_setup_ubuntu
     HOME="$TMPDIR_ROOT/home" PATH="$FAKE_BIN:$sys" PINNED_BIN_DIR="$TMPDIR_ROOT/pinned" SETUP_MACHINE=x86_64 \
         SETUP_UPGRADE_ONLY=1 run_sections cli git-tools k8s node > "$TMPDIR_ROOT/out" 2>&1
     for t in cli git-tools k8s node; do
@@ -132,8 +135,7 @@ test_update_sections_install_nothing_new_in_upgrade_only_mode() {
 # say it skipped rather than report ok.
 test_keyboard_section_skips_outside_gnome() {
     setup_test "keyboard section outside GNOME"
-    # shellcheck disable=SC1090
-    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+    load_setup_ubuntu
     DBUS_SESSION_BUS_ADDRESS="" XDG_CURRENT_DESKTOP=GNOME run_sections keyboard > "$TMPDIR_ROOT/out" 2>&1
     assert_contains "${SECTION_RESULTS[*]}" "keyboard|skipped" "no D-Bus session: skipped"
     assert_contains "$(cat "$TMPDIR_ROOT/out")" "not in a GNOME session" "reason"
@@ -149,8 +151,7 @@ test_tool_versions_find_ubuntus_keyd() {
     printf '#!/bin/sh\necho "keyd v2.5.0"\n' > "$FAKE_BIN/keyd.rvaiya"; chmod +x "$FAKE_BIN/keyd.rvaiya"
     local sys="$TMPDIR_ROOT/sys"
     mkdir -p "$sys"; ln -s "$(command -v head)" "$sys/head"
-    # shellcheck disable=SC1090
-    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+    load_setup_ubuntu
     local out
     out="$(PATH="$FAKE_BIN:$sys" print_tool_versions)"
     assert_contains "$out" "keyd        keyd v2.5.0" "keyd row shows keyd.rvaiya's version"

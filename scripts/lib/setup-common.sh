@@ -259,8 +259,8 @@ install_nodejs() {
 install_tailscale() {
     local distro codename
     # Debian uses Tailscale's debian tree; Ubuntu and its derivatives the ubuntu one.
-    distro="$(. /etc/os-release && if [ "$ID" = debian ]; then echo debian; else echo ubuntu; fi)"
-    codename="$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")"
+    distro="$(_os_family)"
+    codename="$(_os_codename)"
     add_apt_source tailscale "https://pkgs.tailscale.com/stable/$distro/$codename.gpg" \
         "$TAILSCALE_KEY_FINGERPRINT" "https://pkgs.tailscale.com/stable/$distro" "$codename" main \
         || return 1
@@ -308,6 +308,23 @@ PermitRootLogin no"
 
 # has_systemd: false in containers and WSL without systemd.
 has_systemd() { [ -d "${SYSTEMD_RUN_DIR:-/run/systemd/system}" ]; }
+
+# _os_codename / _os_family: the release codename, and debian or ubuntu, from /etc/os-release.
+_os_codename() { (. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}"); }
+_os_family() { (. /etc/os-release && if [ "$ID" = debian ]; then echo debian; else echo ubuntu; fi); }
+
+# require_debian_host: exits unless this is a Debian/Ubuntu host.
+require_debian_host() {
+    if [ ! -r /etc/os-release ] || ! grep -qE '^ID(_LIKE)?=.*(debian|ubuntu)' /etc/os-release; then
+        echo "ERROR: this script targets Debian/Ubuntu hosts." >&2
+        exit 1
+    fi
+}
+
+# in_gnome_session: true inside a GNOME desktop session with a session bus.
+in_gnome_session() {
+    [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [[ "${XDG_CURRENT_DESKTOP:-}" == *GNOME* ]]
+}
 
 # is_amd64: the pinned binaries above are x86_64 builds.
 is_amd64() { [ "${SETUP_MACHINE:-$(uname -m)}" = x86_64 ]; }
@@ -476,10 +493,7 @@ run_setup() {
         echo "Run setup as your normal user; it uses sudo itself where needed." >&2
         exit 1
     fi
-    if [ ! -r /etc/os-release ] || ! grep -qE '^ID(_LIKE)?=.*(debian|ubuntu)' /etc/os-release; then
-        echo "ERROR: this script targets Debian/Ubuntu hosts." >&2
-        exit 1
-    fi
+    require_debian_host
     setup_log "$(basename "$0" .sh)"
     start_sudo_keepalive
     setup_path

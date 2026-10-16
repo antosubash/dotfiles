@@ -142,7 +142,7 @@ section_apps() {
 
 section_keyboard() {
     # The same check as setup-keyboard.sh's main, which does nothing outside GNOME.
-    if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] || [[ "${XDG_CURRENT_DESKTOP:-}" != *GNOME* ]]; then
+    if ! in_gnome_session; then
         skip_section "not in a GNOME session"
     fi
     bash "$HERE/setup-keyboard.sh"
