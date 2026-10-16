@@ -322,7 +322,6 @@ test_upgrade_only_installs_nothing_new() {
     fake curl 'echo "curl $*" >> "$CALLS"; exit 1'
     fake npm 'echo "npm $*" >> "$CALLS"'
     install_verified_binary() { echo "install $3" >> "$CALLS"; }
-    add_apt_source() { echo "add_apt_source $1" >> "$CALLS"; }
     echo curl > "$INSTALLED"
     local out
     out="$(PATH="$FAKE_BIN:/usr/bin:/bin" SETUP_MACHINE=x86_64 bash -c '

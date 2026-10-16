@@ -316,7 +316,6 @@ cleanup() {
             sudo snap set system refresh.retain=2 || log_warning "snap retain setting failed"
         fi
 
-        # Old crash reports
         sudo find /var/crash -name '*.crash' -mtime +14 -delete 2>/dev/null || true
 
         # Information only

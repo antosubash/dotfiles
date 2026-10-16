@@ -97,7 +97,7 @@ alias upc='update --cleanup'
 if [[ "$OSTYPE" == "darwin"* ]]; then
     alias brew-up='brew update && brew upgrade && brew cleanup'
     alias mac-up='update'
-    # Linux global npm tools are pinned; `update` reconciles them
+    # Linux global npm tools are pinned and reconciled by `update`, so this alias is macOS only
     alias npm-up='npm update -g'
 else
     alias apt-up='sudo apt update && sudo apt full-upgrade -y && sudo apt autoremove -y && ~/dotfiles/scripts/nvidia-kernel-guard.sh --fix'

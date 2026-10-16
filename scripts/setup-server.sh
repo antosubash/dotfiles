@@ -289,11 +289,9 @@ else
     fi
 fi
 
-# Install Lazygit and Lazydocker
 echo "Installing Lazygit and Lazydocker..."
 install_pinned_git_tools
 
-# Install GitHub CLI, Docker, and add the user to the docker group
 echo "Installing GitHub CLI..."
 install_gh
 echo "Installing Docker..."

@@ -460,6 +460,7 @@ start_sudo_keepalive() {
 # setup_log NAME: copies all output to ~/.local/state/dotfiles/NAME-<time>.log.
 setup_log() {
     local dir="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles"
+    local SETUP_LOG_FILE
     mkdir -p "$dir"
     SETUP_LOG_FILE="$dir/$1-$(date +%Y%m%d-%H%M%S).log"
     exec > >(tee -a "$SETUP_LOG_FILE") 2>&1
