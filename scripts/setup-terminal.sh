@@ -11,6 +11,12 @@ readonly ZSH_DIR="$HOME/.oh-my-zsh"
 readonly ALACRITTY_CONFIG_DIR="$HOME/.config/alacritty"
 readonly FONT_MESLO="MesloLGS NF"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/setup-common.sh
+. "$SCRIPT_DIR/lib/setup-common.sh"
+# shellcheck source=lib/installers.sh
+. "$SCRIPT_DIR/lib/installers.sh"
+
 # Colors for output
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
@@ -94,8 +100,8 @@ check_dependencies() {
     print_status "Dependencies checked"
 }
 
-# Install required fonts for Powerlevel10k
-install_fonts() {
+# Install required fonts for Powerlevel10k (the Linux work is install_fonts in lib/installers.sh)
+setup_fonts() {
     print_info "Installing fonts for Powerlevel10k theme..."
     
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -110,34 +116,16 @@ install_fonts() {
             print_warning "Homebrew not found. Please install $FONT_MESLO manually"
             print_info "You can download fonts from: https://github.com/romkatv/powerlevel10k#fonts"
         fi
+        if command -v fc-cache &> /dev/null; then
+            print_info "Refreshing font cache..."
+            fc-cache -fv 2>/dev/null || true
+        fi
+    elif command -v apt-get &> /dev/null; then
+        # Pinned, sha256-verified Nerd Fonts and MesloLGS NF (scripts/lib/installers.sh).
+        install_fonts || print_warning "Some fonts failed to install; re-run to retry"
     else
-        # Linux font installation
-        FONT_DIR="$HOME/.local/share/fonts"
-        mkdir -p "$FONT_DIR"
-        
-        print_info "Downloading MesloLGS NF fonts for Linux..."
-        local font_urls=(
-            "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Regular.ttf"
-            "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold.ttf"
-            "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Italic.ttf"
-            "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold%20Italic.ttf"
-        )
-        
-        for url in "${font_urls[@]}"; do
-            local filename=$(basename "$url" | sed 's/%20/ /g')
-            if [[ ! -f "$FONT_DIR/$filename" ]]; then
-                if curl -fLo "$FONT_DIR/$filename" "$url" 2>/dev/null; then
-                    print_status "Downloaded $filename"
-                else
-                    print_warning "Failed to download $filename"
-                fi
-            fi
-        done
-    fi
-    
-    if command -v fc-cache &> /dev/null; then
-        print_info "Refreshing font cache..."
-        fc-cache -fv 2>/dev/null || true
+        print_warning "apt not found. Install $FONT_MESLO manually"
+        print_info "You can download fonts from: https://github.com/romkatv/powerlevel10k#fonts"
     fi
 }
 
@@ -265,9 +253,8 @@ install_essential_tools() {
                 print_status "$tool already installed"
             fi
         done
-    elif command -v apt &> /dev/null; then
-        print_info "For Linux, please install eza, bat, fd, and ripgrep using your package manager"
-        print_info "Example: sudo apt install eza bat fd-find ripgrep"
+    elif command -v apt-get &> /dev/null; then
+        install_cli_extras || print_warning "Some CLI tools failed to install; re-run to retry"
     else
         print_warning "Package manager not found. Please install tools manually"
     fi
@@ -314,7 +301,7 @@ main() {
         exit 1
     fi
     
-    install_fonts
+    setup_fonts
     configure_zsh
     install_alacritty
     configure_alacritty
