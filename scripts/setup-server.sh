@@ -4,6 +4,8 @@ set -e
 
 # shellcheck source=lib/setup-common.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/setup-common.sh"
+# shellcheck source=lib/installers.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/installers.sh"
 
 echo "Installing development & operations tools on Ubuntu Server (headless)..."
 
@@ -41,6 +43,10 @@ else
         exit 1
     fi
 fi
+
+# Every install directory (~/.local/bin, cargo, go, .NET, pnpm) on PATH for this
+# run; the dotfiles' shell files do the same for later sessions.
+setup_path
 
 # Update package manager
 echo "Updating package manager..."
@@ -91,10 +97,10 @@ if command -v nvim &> /dev/null; then
     INSTALLED_NVIM_VERSION=$(nvim --version | head -n1 | awk '{print $2}' | tr -d 'v')
 fi
 
-NVIM_LATEST=$(curl -s "https://api.github.com/repos/neovim/neovim/releases/latest" | grep -Po '"tag_name": "v\K[^"]*' | head -1)
+NVIM_LATEST=$(curl -fsSL "https://api.github.com/repos/neovim/neovim/releases/latest" | grep -Po '"tag_name": "v\K[^"]*' | head -1 || true)
 if [ -z "$NVIM_LATEST" ]; then
     echo "Could not query latest Neovim version; falling back to apt."
-    sudo apt install -y neovim
+    apt_install_missing neovim
 elif [ "$INSTALLED_NVIM_VERSION" = "$NVIM_LATEST" ]; then
     echo "Neovim $NVIM_LATEST already installed."
 else
@@ -104,10 +110,10 @@ else
     NVIM_TARBALL="nvim-linux-${NVIM_ARCH}.tar.gz"
     NVIM_URL="https://github.com/neovim/neovim/releases/download/v${NVIM_LATEST}/${NVIM_TARBALL}"
     TMP_NVIM=$(mktemp -d)
-    if curl -sL "$NVIM_URL" -o "$TMP_NVIM/$NVIM_TARBALL"; then
-        sudo rm -rf /opt/nvim
-        sudo tar -C /opt -xzf "$TMP_NVIM/$NVIM_TARBALL"
-        sudo mv "/opt/nvim-linux-${NVIM_ARCH}" /opt/nvim
+    # Extract into the temp dir first; /opt/nvim is replaced only once tar succeeded.
+    if curl -fsSL "$NVIM_URL" -o "$TMP_NVIM/$NVIM_TARBALL" \
+        && tar -C "$TMP_NVIM" -xzf "$TMP_NVIM/$NVIM_TARBALL"; then
+        sudo rm -rf /opt/nvim && sudo mv "$TMP_NVIM/nvim-linux-${NVIM_ARCH}" /opt/nvim
         sudo ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim
         # Remove apt-installed nvim to avoid PATH conflicts.
         if dpkg -l neovim 2>/dev/null | grep -q '^ii'; then
@@ -115,7 +121,7 @@ else
         fi
     else
         echo "Failed to download Neovim binary; falling back to apt."
-        sudo apt install -y neovim
+        apt_install_missing neovim
     fi
     rm -rf "$TMP_NVIM"
 fi
@@ -145,51 +151,13 @@ else
 fi
 
 echo "Installing .NET SDKs (7, 8, 9, 10)..."
-DOTNET_INSTALL="$(mktemp)"
-curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$DOTNET_INSTALL"
-chmod +x "$DOTNET_INSTALL"
-for channel in 7.0 8.0 9.0 10.0; do
-    echo "Installing .NET $channel..."
-    "$DOTNET_INSTALL" --channel "$channel" --install-dir "$HOME/.dotnet"
-done
-rm -f "$DOTNET_INSTALL"
-export DOTNET_ROOT="$HOME/.dotnet"
-export PATH="$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools"
-for rc in ~/.zshrc ~/.bashrc; do
-    if [ -f "$rc" ] && ! grep -q 'DOTNET_ROOT' "$rc"; then
-        echo 'export DOTNET_ROOT=$HOME/.dotnet' >> "$rc"
-        echo 'export PATH=$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools' >> "$rc"
-    fi
-done
+install_dotnet 7.0 8.0 9.0 10.0
 
 echo "Installing Go..."
-if ! command -v go &> /dev/null; then
-    install_go
-    if ! grep -q 'export PATH=$PATH:/usr/local/go/bin' ~/.zshrc 2>/dev/null; then
-        echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.zshrc
-    fi
-    if ! grep -q 'export PATH=$PATH:/usr/local/go/bin' ~/.bashrc 2>/dev/null; then
-        echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-    fi
-    export PATH=$PATH:/usr/local/go/bin
-else
-    echo "Go is already installed."
-fi
+install_pinned_go
 
 echo "Installing Rust..."
-if ! command -v rustc &> /dev/null; then
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    # shellcheck source=/dev/null
-    source ~/.cargo/env
-    if ! grep -q 'source ~/.cargo/env' ~/.zshrc 2>/dev/null; then
-        echo 'source ~/.cargo/env' >> ~/.zshrc
-    fi
-    if ! grep -q 'source ~/.cargo/env' ~/.bashrc 2>/dev/null; then
-        echo 'source ~/.cargo/env' >> ~/.bashrc
-    fi
-else
-    echo "Rust is already installed."
-fi
+install_rust
 
 # Install API and testing CLI tools
 echo "Installing API/CLI tools..."
@@ -198,20 +166,9 @@ if ! command -v http &> /dev/null || ! command -v jq &> /dev/null; then
 else
     echo "httpie and jq are already installed."
 fi
-if ! command -v yq &> /dev/null; then
-    install_verified_binary "$YQ_URL" "$YQ_SHA256" /usr/local/bin/yq
-else
-    echo "yq is already installed."
-fi
+install_pinned_yq
 if ! command -v curlie &> /dev/null && command -v go &> /dev/null; then
     go install github.com/rs/curlie@v1.6.0
-    if ! grep -q 'export PATH=$PATH:~/go/bin' ~/.zshrc 2>/dev/null; then
-        echo 'export PATH=$PATH:~/go/bin' >> ~/.zshrc
-    fi
-    if ! grep -q 'export PATH=$PATH:~/go/bin' ~/.bashrc 2>/dev/null; then
-        echo 'export PATH=$PATH:~/go/bin' >> ~/.bashrc
-    fi
-    export PATH=$PATH:~/go/bin
 fi
 
 # Install security tools
@@ -234,25 +191,17 @@ if ! command -v tshark &> /dev/null; then
 else
     echo "tshark is already installed."
 fi
-if ! command -v ufw &> /dev/null; then
-    sudo apt install -y ufw
-else
-    echo "UFW is already installed."
-fi
+apt_install_missing ufw
 
 # Configure and enable UFW with safe defaults (SSH allowed, deny incoming,
-# allow outgoing). Only touch it while inactive to avoid clobbering existing rules.
-if command -v ufw &> /dev/null && ! sudo ufw status | grep -q "Status: active"; then
-    echo "Configuring UFW defaults (allow SSH) and enabling it..."
-    sudo ufw default deny incoming
-    sudo ufw default allow outgoing
-    sudo ufw allow OpenSSH
-    # Also allow sshd on any non-default port, so enabling UFW can't cut off SSH.
+# allow outgoing). configure_ufw leaves an already-active firewall alone.
+# Also allow sshd on any non-default port first, so enabling UFW can't cut off SSH.
+if ! sudo ufw status | grep -q "Status: active"; then
     for port in $(sudo sshd -T 2>/dev/null | awk '$1 == "port" && $2 != 22 { print $2 }'); do
         sudo ufw allow "$port/tcp"
     done
-    sudo ufw --force enable
 fi
+configure_ufw
 
 # Install VPN tools
 echo "Installing VPN tools..."
@@ -301,29 +250,25 @@ bash "$(dirname "${BASH_SOURCE[0]}")/setup-oh-my-zsh.sh"
 
 # Install tmux plugin manager (tpm) — required for .tmux.conf plugins.
 echo "Installing tmux plugin manager..."
-if [ ! -d "$HOME/.tmux/plugins/tpm" ]; then
-    git clone --depth=1 https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
-    # Headlessly install plugins listed in .tmux.conf.
-    if [ -f "$HOME/.tmux.conf" ]; then
-        "$HOME/.tmux/plugins/tpm/bin/install_plugins" >/dev/null 2>&1 || \
-            echo "Note: tpm plugin install had issues — open tmux and press 'prefix + I' to retry."
-    fi
-else
-    echo "tpm already installed."
-fi
+install_tpm
 
-# Install atuin (fuzzy shell history) from official GitHub release binary.
+# Install atuin (fuzzy shell history): the apt package where the release has
+# one, else the official GitHub release binary (verified against its checksum).
 echo "Installing atuin..."
-if ! command -v atuin &> /dev/null; then
-    ATUIN_VERSION=$(curl -s "https://api.github.com/repos/atuinsh/atuin/releases/latest" | grep -Po '"tag_name":\s*"v\K[^"]+' | head -1)
+if command -v atuin &> /dev/null; then
+    echo "atuin is already installed."
+elif apt-cache show atuin &> /dev/null; then
+    apt_install_missing atuin
+else
+    ATUIN_VERSION=$(curl -fsSL "https://api.github.com/repos/atuinsh/atuin/releases/latest" | grep -Po '"tag_name":\s*"v\K[^"]+' | head -1 || true)
     if [ -n "$ATUIN_VERSION" ]; then
         ATUIN_ARCH="x86_64"
         [ "$(uname -m)" = "aarch64" ] && ATUIN_ARCH="aarch64"
         ATUIN_TARBALL="atuin-${ATUIN_ARCH}-unknown-linux-gnu.tar.gz"
         ATUIN_URL="https://github.com/atuinsh/atuin/releases/download/v${ATUIN_VERSION}/${ATUIN_TARBALL}"
         TMP_ATUIN=$(mktemp -d)
-        if curl -sLo "$TMP_ATUIN/$ATUIN_TARBALL" "$ATUIN_URL" \
-            && curl -sLo "$TMP_ATUIN/$ATUIN_TARBALL.sha256" "$ATUIN_URL.sha256" \
+        if curl -fsSLo "$TMP_ATUIN/$ATUIN_TARBALL" "$ATUIN_URL" \
+            && curl -fsSLo "$TMP_ATUIN/$ATUIN_TARBALL.sha256" "$ATUIN_URL.sha256" \
             && (cd "$TMP_ATUIN" && sha256sum -c "$ATUIN_TARBALL.sha256") >/dev/null 2>&1; then
             tar -C "$TMP_ATUIN" -xzf "$TMP_ATUIN/$ATUIN_TARBALL"
             sudo install -m 755 "$TMP_ATUIN/atuin-${ATUIN_ARCH}-unknown-linux-gnu/atuin" /usr/local/bin/atuin
@@ -333,58 +278,17 @@ if ! command -v atuin &> /dev/null; then
         fi
         rm -rf "$TMP_ATUIN"
     fi
-else
-    echo "atuin is already installed."
 fi
 
-# Install Lazygit
-echo "Installing Lazygit..."
-if ! command -v lazygit &> /dev/null; then
-    install_verified_binary "$LAZYGIT_URL" "$LAZYGIT_SHA256" /usr/local/bin/lazygit lazygit
-else
-    echo "Lazygit is already installed."
-fi
+# Install Lazygit and Lazydocker
+echo "Installing Lazygit and Lazydocker..."
+install_pinned_git_tools
 
-# Install Lazydocker
-echo "Installing Lazydocker..."
-if ! command -v lazydocker &> /dev/null; then
-    install_verified_binary "$LAZYDOCKER_URL" "$LAZYDOCKER_SHA256" /usr/local/bin/lazydocker lazydocker
-else
-    echo "Lazydocker is already installed."
-fi
-
-# Install GitHub CLI
+# Install GitHub CLI, Docker, and add the user to the docker group
 echo "Installing GitHub CLI..."
-if ! command -v gh &> /dev/null; then
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-    sudo apt update
-    sudo apt install -y gh
-else
-    echo "GitHub CLI is already installed."
-fi
-
-# Install Docker
+install_gh
 echo "Installing Docker..."
-if ! command -v docker &> /dev/null; then
-    sudo mkdir -p /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    sudo apt update
-    sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-else
-    echo "Docker is already installed."
-fi
-
-# Ensure 'docker' group exists and current user is a member (idempotent on re-runs).
-if getent group docker > /dev/null; then
-    if id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
-        echo "$USER is already in the docker group."
-    else
-        sudo usermod -aG docker "$USER"
-        echo "Added $USER to docker group. Log out and back in (or run 'newgrp docker') for it to take effect."
-    fi
-fi
+install_docker
 
 # Install Node.js and pnpm
 echo "Installing Node.js..."
@@ -395,47 +299,15 @@ else
 fi
 
 echo "Installing pnpm..."
-if ! command -v pnpm &> /dev/null; then
-    curl -fsSL https://get.pnpm.io/install.sh | sh -
-    export PNPM_HOME="$HOME/.local/share/pnpm"
-    export PATH="$PNPM_HOME:$PATH"
-    if ! grep -q 'PNPM_HOME' ~/.zshrc 2>/dev/null; then
-        echo 'export PNPM_HOME="$HOME/.local/share/pnpm"' >> ~/.zshrc
-        echo 'export PATH="$PNPM_HOME:$PATH"' >> ~/.zshrc
-    fi
-    if ! grep -q 'PNPM_HOME' ~/.bashrc 2>/dev/null; then
-        echo 'export PNPM_HOME="$HOME/.local/share/pnpm"' >> ~/.bashrc
-        echo 'export PATH="$PNPM_HOME:$PATH"' >> ~/.bashrc
-    fi
-else
-    echo "pnpm is already installed."
-fi
+install_pnpm
 
 # Install uv (fast Python package manager)
 echo "Installing uv..."
-if ! command -v uv &> /dev/null; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.cargo/bin:$PATH"
-    if ! grep -q 'export PATH="$HOME/.cargo/bin:$PATH"' ~/.zshrc 2>/dev/null; then
-        echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
-    fi
-else
-    echo "uv is already installed."
-fi
+install_uv
 
 # Install Kubernetes CLI tools
-echo "Installing kubectl..."
-if ! command -v kubectl &> /dev/null; then
-    install_verified_binary "$KUBECTL_URL" "$KUBECTL_SHA256" /usr/local/bin/kubectl
-else
-    echo "kubectl is already installed."
-fi
-
-if ! command -v helm &> /dev/null; then
-    install_verified_binary "$HELM_URL" "$HELM_SHA256" /usr/local/bin/helm linux-amd64/helm
-else
-    echo "Helm is already installed."
-fi
+echo "Installing kubectl and helm..."
+install_pinned_k8s
 
 # Install database clients
 echo "Installing database clients..."
