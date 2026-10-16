@@ -9,7 +9,8 @@
 # pass the arguments were built from. One index that is no longer there makes
 # OpenRGB reject the whole call ("Error: Empty device ID") and change nothing.
 # So: detect and apply in one call, up to 3 times; if every try fails, turn the
-# devices off one call each and count what worked.
+# devices from the last detection that found any off one call each, and count
+# what worked. Each call is killed 5 s after its timeout if it ignores SIGTERM.
 #
 # Exit status: 0 when at least one device was turned off, 1 when none was.
 # RGB_OFF_RETRY_SLEEP overrides the pause between tries (for tests).
@@ -19,11 +20,14 @@ retry_sleep="${RGB_OFF_RETRY_SLEEP:-5}"
 list=""
 # One entry per device, e.g. "--device 0 --mode off".
 devices=()
+# The last detection that found devices, for the one-device-at-a-time fallback.
+found=()
+found_list=""
 
 # Fill $list and $devices from a fresh detection pass.
 detect() {
     devices=()
-    list="$(timeout 60 openrgb --noautoconnect --list-devices 2>/dev/null)"
+    list="$(timeout -k 5 60 openrgb --noautoconnect --list-devices 2>/dev/null)"
     # Device headers look like "0: Name"; the mode list like "  Modes: [Direct] Off Static".
     # OpenRGB can print an HTML warning on stdout ahead of the first header, so
     # match headers anywhere on an unindented line, and never emit an empty index.
@@ -39,9 +43,10 @@ detect() {
         /^ *Modes:/ && idx != "" {sub(/^ *Modes: */, ""); print idx, $0}' <<< "$list")
 }
 
+# print_list TEXT: the device list a decision was made from.
 print_list() {
     echo "rgb-off: device list was:" >&2
-    echo "$list" >&2
+    echo "$1" >&2
 }
 
 for attempt in 1 2 3; do
@@ -52,34 +57,36 @@ for attempt in 1 2 3; do
         echo "rgb-off: try $attempt: no devices detected" >&2
         continue
     fi
+    found=("${devices[@]}")
+    found_list="$list"
     read -ra args <<< "${devices[*]}"
     echo "rgb-off: try $attempt: openrgb ${args[*]}" >&2
-    timeout 60 openrgb --noautoconnect "${args[@]}" && exit 0
+    timeout -k 5 60 openrgb --noautoconnect "${args[@]}" && exit 0
     echo "rgb-off: try $attempt failed (exit $?)" >&2
 done
 
-if [ ${#devices[@]} -eq 0 ]; then
+if [ ${#found[@]} -eq 0 ]; then
     echo "rgb-off: OpenRGB found no RGB devices." >&2
-    print_list
+    print_list "$list"
     exit 1
 fi
 
 echo "rgb-off: every combined call failed; turning devices off one at a time" >&2
 failed=0
-for spec in "${devices[@]}"; do
+for spec in "${found[@]}"; do
     read -ra args <<< "$spec"
     echo "rgb-off: openrgb ${args[*]}" >&2
-    if ! timeout 30 openrgb --noautoconnect "${args[@]}"; then
+    if ! timeout -k 5 30 openrgb --noautoconnect "${args[@]}"; then
         failed=$((failed + 1))
     fi
 done
 
-if [ "$failed" -eq ${#devices[@]} ]; then
+if [ "$failed" -eq ${#found[@]} ]; then
     echo "rgb-off: no device could be turned off." >&2
-    print_list
+    print_list "$found_list"
     exit 1
 fi
 if [ "$failed" -gt 0 ]; then
-    echo "rgb-off: $failed of ${#devices[@]} devices could not be turned off" >&2
+    echo "rgb-off: $failed of ${#found[@]} devices could not be turned off" >&2
 fi
 exit 0

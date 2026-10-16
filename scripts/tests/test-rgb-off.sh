@@ -180,7 +180,48 @@ test_fails_when_no_devices_detected() {
     teardown_test
 }
 
+test_fallback_uses_last_detected_devices() {
+    # Tries 1-2 see devices and fail; try 3 detects nothing. The per-device
+    # fallback must still run with the devices from the last detection that found any.
+    setup_test "last detection empty: fallback uses the earlier devices"
+    setup_fake_openrgb
+    write_list "$RGB_FAKE/list.1" 2
+    write_list "$RGB_FAKE/list.2" 2
+    write_list "$RGB_FAKE/list" 0
+    set_counts 1
+    run_rgb_off
+    assert_eq 0 "$STATUS" "exit status"
+    assert_eq 3 "$LIST_CALLS" "detection passes"
+    assert_eq 4 "$APPLY_CALLS" "2 combined + 2 per-device calls"
+    assert_eq "0 " "$APPLIED" "devices turned off"
+    assert_contains "$OUTPUT" "1 of 2" "failure count reported"
+    teardown_test
+}
+
+test_openrgb_calls_are_killed_after_their_timeout() {
+    # A hung openrgb that ignores SIGTERM must still end, so every call gets -k.
+    setup_test "every openrgb call has a kill timeout"
+    setup_fake_openrgb
+    cat > "$FAKE_BIN/timeout" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$RGB_FAKE/timeouts"
+while [[ "$1" == -* ]]; do if [ "$1" = -k ]; then shift 2; else shift; fi; done
+shift
+exec "$@"
+EOF
+    chmod +x "$FAKE_BIN/timeout"
+    write_list "$RGB_FAKE/list" 2
+    set_counts 1
+    run_rgb_off
+    assert_eq 0 "$STATUS" "exit status"
+    assert_eq 8 "$(wc -l < "$RGB_FAKE/timeouts")" "3 detections, 3 combined and 2 per-device calls"
+    assert_eq "" "$(grep -v '^-k 5 [0-9]* openrgb ' "$RGB_FAKE/timeouts")" "each starts with -k 5"
+    teardown_test
+}
+
 test_stable_devices_use_one_call
+test_fallback_uses_last_detected_devices
+test_openrgb_calls_are_killed_after_their_timeout
 test_retry_redetects_after_count_drop
 test_per_device_fallback_after_combined_calls_fail
 test_fails_when_no_device_turned_off

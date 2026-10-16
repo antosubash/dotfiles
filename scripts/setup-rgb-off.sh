@@ -36,9 +36,9 @@ After=systemd-modules-load.service systemd-udev-settle.service
 [Service]
 # exec, not oneshot: device detection takes ~10 s and nothing should wait on it.
 Type=exec
-# rgb-off puts a timeout on every openrgb call, so 3 detect-and-apply tries plus
-# the one-device-at-a-time fallback finish within 10 minutes even if every call
-# hangs; RuntimeMaxSec is the backstop. With Type=exec, TimeoutStartSec only
+# rgb-off puts a timeout on every openrgb call, and RuntimeMaxSec bounds the
+# whole run. With many devices the per-device fallback can hit that limit;
+# devices already turned off stay off. With Type=exec, TimeoutStartSec only
 # covers starting the script, not the run itself.
 TimeoutStartSec=180
 RuntimeMaxSec=600
