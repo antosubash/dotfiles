@@ -467,7 +467,6 @@ setup_path() {
 
 # start_sudo_keepalive: one password prompt up front, refreshed until exit.
 start_sudo_keepalive() {
-    [ "$(id -u)" -eq 0 ] && return 0
     sudo -v || { echo "ERROR: this script needs sudo." >&2; exit 1; }
     ( while kill -0 "$$" 2>/dev/null; do sudo -n true 2>/dev/null; sleep 50; done ) &
     SUDO_KEEPALIVE_PID=$!
