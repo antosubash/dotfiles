@@ -255,6 +255,7 @@ install_essential_tools() {
         done
     elif command -v apt-get &> /dev/null; then
         install_cli_extras || print_warning "Some CLI tools failed to install; re-run to retry"
+        install_fd_ripgrep || print_warning "fd/ripgrep failed to install; re-run to retry"
     else
         print_warning "Package manager not found. Please install tools manually"
     fi

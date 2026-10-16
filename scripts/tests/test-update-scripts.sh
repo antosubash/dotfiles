@@ -120,6 +120,8 @@ test_pinned_tool_failure_is_recorded() {
         > "$HOME/dotfiles/scripts/setup-ubuntu.sh"
     load_update_all
     # shellcheck disable=SC2034  # read by the sourced update-all.sh
+    SETUP_UBUNTU_SCRIPT="$HOME/dotfiles/scripts/setup-ubuntu.sh"
+    # shellcheck disable=SC2034  # read by the sourced update-all.sh
     OS=linux
     FAILED_STEPS=()
     run_step pinned-tools reconcile_pinned_tools > "$TMPDIR_ROOT/out" 2>&1
@@ -146,6 +148,22 @@ test_pinned_tool_failure_is_recorded() {
     teardown_test
 }
 
+# Without an override the script is found next to update-all.sh, wherever the repo is cloned.
+test_pinned_tools_script_is_found_next_to_update_all() {
+    setup_test "pinned tools script location"
+    export HOME="$TMPDIR_ROOT/home"; mkdir -p "$HOME" "$TMPDIR_ROOT/scripts"
+    printf '#!/usr/bin/env bash\necho "$*" > "%s/setup.args"\n' "$TMPDIR_ROOT" > "$TMPDIR_ROOT/scripts/setup-ubuntu.sh"
+    load_update_all
+    unset SETUP_UBUNTU_SCRIPT
+    # shellcheck disable=SC2034  # read by the sourced update-all.sh
+    SCRIPT_DIR="$TMPDIR_ROOT/scripts"
+    # shellcheck disable=SC2034  # read by the sourced update-all.sh
+    OS=linux
+    reconcile_pinned_tools > "$TMPDIR_ROOT/out" 2>&1
+    assert_contains "$(cat "$TMPDIR_ROOT/setup.args" 2>/dev/null)" "--only languages,cli,git-tools,k8s,node" "ran the sibling script, not ~/dotfiles"
+    teardown_test
+}
+
 test_pinned_tools_skipped_as_root() {
     setup_test "pinned tools as root"
     export HOME="$TMPDIR_ROOT/home"
@@ -154,6 +172,8 @@ test_pinned_tools_skipped_as_root() {
         > "$HOME/dotfiles/scripts/setup-ubuntu.sh"
     printf '#!/usr/bin/env bash\necho 0\n' > "$FAKE_BIN/id"; chmod +x "$FAKE_BIN/id"
     load_update_all
+    # shellcheck disable=SC2034  # read by the sourced update-all.sh
+    SETUP_UBUNTU_SCRIPT="$HOME/dotfiles/scripts/setup-ubuntu.sh"
     # shellcheck disable=SC2034  # read by the sourced update-all.sh
     OS=linux
     FAILED_STEPS=()
@@ -250,6 +270,7 @@ test_failed_pull_is_a_warning
 test_cleanup_never_prunes_volumes
 test_failing_step_is_recorded
 test_pinned_tool_failure_is_recorded
+test_pinned_tools_script_is_found_next_to_update_all
 test_pinned_tools_skipped_as_root
 test_passing_step_is_not_recorded
 test_summary_reports_failures

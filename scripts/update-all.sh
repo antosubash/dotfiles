@@ -270,7 +270,7 @@ update_dotfiles() {
 
 # Re-run the pinned-tool sections of setup-ubuntu.sh so versions follow the repo
 reconcile_pinned_tools() {
-    local setup="$HOME/dotfiles/scripts/setup-ubuntu.sh"
+    local setup="${SETUP_UBUNTU_SCRIPT:-$SCRIPT_DIR/setup-ubuntu.sh}"
 
     [[ "$OS" == "linux" && -f "$setup" ]] || return 0
 

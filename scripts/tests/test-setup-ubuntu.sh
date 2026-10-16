@@ -146,6 +146,36 @@ test_keyboard_section_skips_outside_gnome() {
     teardown_test
 }
 
+# Only the snaps need systemd: the apt apps (Chrome, Claude Desktop...) install anyway.
+test_apps_section_without_systemd_skips_only_the_snaps() {
+    setup_test "apps section without systemd"
+    export CALLS="$TMPDIR_ROOT/calls"; : > "$CALLS"
+    printf '#!/bin/sh\necho "sudo $*" >> "%s"\n' "$CALLS" > "$FAKE_BIN/sudo"
+    printf '#!/bin/sh\nexit 1\n' > "$FAKE_BIN/dpkg-query"
+    printf '#!/bin/sh\nexit 1\n' > "$FAKE_BIN/snap"
+    printf '#!/bin/sh\nexit 0\n' > "$FAKE_BIN/apt-cache"
+    chmod +x "$FAKE_BIN"/*
+    export APT_SOURCES_DIR="$TMPDIR_ROOT/sources" CLAUDE_DESKTOP_DEFAULT_FILE="$TMPDIR_ROOT/claude-desktop"
+    mkdir -p "$APT_SOURCES_DIR" "$TMPDIR_ROOT/run-systemd"
+    : > "$APT_SOURCES_DIR/google-chrome.sources"
+    load_setup_ubuntu
+    add_apt_source() { echo "add_apt_source $1" >> "$CALLS"; }
+    SYSTEMD_RUN_DIR="$TMPDIR_ROOT/missing" run_sections apps > "$TMPDIR_ROOT/out" 2>&1
+    assert_contains "${SECTION_RESULTS[*]}" "apps|ok" "recorded ok, not skipped"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "No systemd; skipping snaps" "says why"
+    assert_not_contains "$(cat "$CALLS")" "snap install" "no snap installs"
+    assert_contains "$(cat "$CALLS")" "vlc thunderbird" "apt apps attempted"
+    assert_contains "$(cat "$CALLS")" "google-chrome-stable" "Chrome attempted"
+    assert_contains "$(cat "$CALLS")" "claude-desktop" "Claude Desktop attempted"
+    : > "$CALLS"; SECTION_RESULTS=()
+    SYSTEMD_RUN_DIR="$TMPDIR_ROOT/run-systemd" run_sections apps > "$TMPDIR_ROOT/out" 2>&1
+    for s in slack discord zoom-client brave; do
+        assert_contains "$(cat "$CALLS")" "snap install $s" "$s installed with systemd"
+    done
+    unset APT_SOURCES_DIR CLAUDE_DESKTOP_DEFAULT_FILE
+    teardown_test
+}
+
 # Ubuntu's keyd package installs the binary as keyd.rvaiya.
 test_tool_versions_find_ubuntus_keyd() {
     setup_test "print_tool_versions finds keyd.rvaiya"
@@ -160,6 +190,7 @@ test_tool_versions_find_ubuntus_keyd() {
     teardown_test
 }
 
+test_apps_section_without_systemd_skips_only_the_snaps
 test_list_names_every_section
 test_keyboard_section_skips_outside_gnome
 test_tool_versions_find_ubuntus_keyd

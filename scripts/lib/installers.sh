@@ -91,8 +91,10 @@ install_nvidia_container_toolkit() {
         "$NVIDIA_CONTAINER_KEY_FINGERPRINT" \
         "https://nvidia.github.io/libnvidia-container/stable/deb/$(dpkg --print-architecture)" / "" || return 1
     apt_install_missing nvidia-container-toolkit || return 1
-    if ! grep -q nvidia /etc/docker/daemon.json 2>/dev/null; then
-        sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+    if ! grep -q nvidia "${DOCKER_DAEMON_JSON:-/etc/docker/daemon.json}" 2>/dev/null; then
+        sudo nvidia-ctk runtime configure --runtime=docker || return 1
+        # Restart only a Docker that can be running: it needs systemd, and may not be installed.
+        if has_systemd && command -v docker > /dev/null 2>&1; then sudo systemctl restart docker; fi
     fi
 }
 
@@ -113,9 +115,17 @@ claude_desktop_skip_package_repo() {
     fi
 }
 
+# install_desktop_snaps: the snap-packaged desktop apps; snapd needs systemd.
+install_desktop_snaps() {
+    if ! has_systemd; then
+        echo "No systemd; skipping snaps."
+        return 0
+    fi
+    snap_install_missing slack discord zoom-client brave
+}
+
 install_desktop_apps() {
     local status=0 sources="${APT_SOURCES_DIR:-/etc/apt/sources.list.d}"
-    snap_install_missing brave || status=1
     # Chrome's package keeps its own google-chrome.sources up to date (rewriting
     # it on each update), so only bootstrap the repository when it isn't there.
     if [ ! -e "$sources/google-chrome.sources" ] && [ ! -e "$sources/google-chrome.list" ]; then
@@ -212,6 +222,15 @@ install_tpm() {
     if [ -f "$HOME/.tmux.conf" ]; then
         "$dir/bin/install_plugins" > /dev/null 2>&1 \
             || echo "Note: tpm plugin install had issues; in tmux press prefix + I to retry."
+    fi
+}
+
+# install_fd_ripgrep: ripgrep and fd (Ubuntu ships fd as `fdfind`; the shell config expects `fd`).
+install_fd_ripgrep() {
+    apt_install_missing ripgrep fd-find || return 1
+    if ! command -v fd > /dev/null 2>&1 && command -v fdfind > /dev/null 2>&1; then
+        mkdir -p "$HOME/.local/bin"
+        ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
     fi
 }
 
@@ -341,7 +360,8 @@ install_fonts() {
 configure_ufw() {
     has_systemd || { echo "No systemd; leaving the firewall alone."; return 0; }
     apt_install_missing ufw || return 1
-    sudo ufw allow OpenSSH > /dev/null
+    # Without an OpenSSH profile (no openssh-server), fall back to the port.
+    sudo ufw allow OpenSSH > /dev/null 2>&1 || sudo ufw allow 22/tcp > /dev/null || return 1
     local ufw_status
     # Captured first: `ufw status | grep -q` can fail with SIGPIPE under pipefail.
     ufw_status="$(sudo ufw status)" || ufw_status=""

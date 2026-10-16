@@ -77,12 +77,8 @@ section_vpn() {
 }
 
 section_shell() {
-    apt_install_missing tmux fzf ripgrep fd-find zsh
-    # Ubuntu ships fd as `fdfind`; the shell config and tools expect `fd`.
-    if ! command -v fd > /dev/null 2>&1; then
-        mkdir -p "$HOME/.local/bin"
-        ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
-    fi
+    apt_install_missing tmux fzf zsh
+    install_fd_ripgrep
     local zsh_path
     zsh_path="$(command -v zsh)"
     [ "$(getent passwd "$USER" | cut -d: -f7)" = "$zsh_path" ] || sudo chsh -s "$zsh_path" "$USER"
@@ -142,9 +138,11 @@ section_apps() {
     else
         apt_install_missing chrome-gnome-shell
     fi
-    has_systemd || skip_section "no systemd (snaps unavailable)"
-    snap_install_missing slack discord zoom-client
-    install_desktop_apps
+    # Only the snaps need systemd; a failed snap must not skip the apt-based desktop apps.
+    local status=0
+    install_desktop_snaps || status=1
+    install_desktop_apps || status=1
+    return "$status"
 }
 
 section_keyboard() {

@@ -97,6 +97,57 @@ test_nvidia_toolkit_skips_without_gpu() {
     end_test
 }
 
+# Restarting Docker needs systemd and an installed docker; without either it is skipped.
+test_nvidia_toolkit_restarts_docker_only_with_systemd_and_docker() {
+    setup_test "nvidia toolkit docker restart"
+    setup_fakes
+    local pci="$TMPDIR_ROOT/pci/0000:01:00.0"
+    mkdir -p "$pci" "$TMPDIR_ROOT/run-systemd"
+    echo 0x10de > "$pci/vendor"; echo 0x030000 > "$pci/class"
+    echo nvidia-container-toolkit > "$INSTALLED"
+    fake nvidia-ctk 'echo "nvidia-ctk $*" >> "$CALLS"'
+    fake systemctl 'echo "systemctl $*" >> "$CALLS"'
+    add_apt_source() { :; }
+    export SYSFS_PCI_DEVICES="$TMPDIR_ROOT/pci" DOCKER_DAEMON_JSON="$TMPDIR_ROOT/none.json"
+    # A PATH with the fakes and the few tools they need, but no real docker.
+    local sys="$TMPDIR_ROOT/sys" t nodocker
+    mkdir -p "$sys"
+    for t in env bash grep cat; do ln -s "$(command -v "$t")" "$sys/$t"; done
+    nodocker="$FAKE_BIN:$sys"
+    rm -f "$FAKE_BIN/docker"
+    # systemd present, docker missing: configured, not restarted.
+    SYSTEMD_RUN_DIR="$TMPDIR_ROOT/run-systemd" PATH="$nodocker" install_nvidia_container_toolkit > /dev/null 2>&1
+    assert_eq 0 $? "returns 0 without docker"
+    assert_contains "$(cat "$CALLS")" "nvidia-ctk runtime configure" "configured"
+    assert_not_contains "$(cat "$CALLS")" "systemctl restart docker" "no restart without docker"
+    # docker present but no systemd: not restarted.
+    fake docker 'true'
+    : > "$CALLS"
+    SYSTEMD_RUN_DIR="$TMPDIR_ROOT/missing" PATH="$nodocker" install_nvidia_container_toolkit > /dev/null 2>&1
+    assert_eq 0 $? "returns 0 without systemd"
+    assert_contains "$(cat "$CALLS")" "nvidia-ctk runtime configure" "configured without systemd"
+    assert_not_contains "$(cat "$CALLS")" "systemctl restart docker" "no restart without systemd"
+    # both: restarted.
+    : > "$CALLS"
+    SYSTEMD_RUN_DIR="$TMPDIR_ROOT/run-systemd" PATH="$nodocker" install_nvidia_container_toolkit > /dev/null 2>&1
+    assert_contains "$(cat "$CALLS")" "systemctl restart docker" "restarted with systemd and docker"
+    unset SYSFS_PCI_DEVICES DOCKER_DAEMON_JSON
+    end_test
+}
+
+# Ubuntu ships fd as fdfind; install_fd_ripgrep installs both packages and links `fd`.
+test_install_fd_ripgrep_links_fdfind() {
+    setup_test "install_fd_ripgrep"
+    setup_fakes
+    export HOME="$TMPDIR_ROOT/home"; mkdir -p "$HOME"
+    fake fdfind 'true'
+    PATH="$FAKE_BIN:/usr/bin:/bin" install_fd_ripgrep > /dev/null 2>&1
+    assert_eq 0 $? "returns 0"
+    assert_contains "$(cat "$CALLS")" "apt-get install -y ripgrep fd-find" "installs both"
+    assert_eq "$FAKE_BIN/fdfind" "$(readlink "$HOME/.local/bin/fd")" "fd links to fdfind"
+    end_test
+}
+
 test_pinned_tools_skip_on_non_amd64() {
     setup_test "pinned tools on aarch64"
     setup_fakes
@@ -356,6 +407,8 @@ test_snap_install_missing
 test_ensure_user_in_group
 test_install_dotnet_only_missing_channels
 test_nvidia_toolkit_skips_without_gpu
+test_nvidia_toolkit_restarts_docker_only_with_systemd_and_docker
+test_install_fd_ripgrep_links_fdfind
 test_pinned_tools_skip_on_non_amd64
 test_install_pnpm_restores_rc_symlinks
 test_install_fonts_skips_installed_fonts
