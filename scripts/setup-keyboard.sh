@@ -51,7 +51,7 @@ configure_shortcuts() {
 }
 
 configure_workspaces() {
-    local i
+    local i switch move
     gsettings set org.gnome.mutter dynamic-workspaces false
     gsettings set org.gnome.desktop.wm.preferences num-workspaces 6
     # The Ubuntu dock binds Super+1..9 (and Super+Shift+N, and Super+Q for its
@@ -60,20 +60,31 @@ configure_workspaces() {
         gsettings set org.gnome.shell.extensions.dash-to-dock hot-keys false
     fi
     for i in 1 2 3 4 5 6; do
+        switch="'<Super>$i'" move="'<Super><Shift>$i'"
+        # Workspace 1 keeps GNOME's stock Super+Home and Super+Shift+Home too.
+        if [ "$i" = 1 ]; then switch="$switch, '<Super>Home'" move="$move, '<Super><Shift>Home'"; fi
         gsettings set org.gnome.shell.keybindings "switch-to-application-$i" "[]"
-        gsettings set "$WM_KEYS" "switch-to-workspace-$i" "['<Super>$i']"
-        gsettings set "$WM_KEYS" "move-to-workspace-$i" "['<Super><Shift>$i']"
+        gsettings set "$WM_KEYS" "switch-to-workspace-$i" "[$switch]"
+        gsettings set "$WM_KEYS" "move-to-workspace-$i" "[$move]"
     done
 }
 
 configure_keyd() {
+    local changed=0
     apt_install_missing keyd || return 1
     if ! cmp -s "$DOTFILES_DIR/config/keyd/default.conf" "$KEYD_CONF"; then
         sudo install -D -m 0644 "$DOTFILES_DIR/config/keyd/default.conf" "$KEYD_CONF" || return 1
-        # Debian names the binary keyd.rvaiya, so restart the unit rather than `keyd reload`.
-        if has_systemd; then
-            sudo systemctl enable keyd && sudo systemctl restart keyd
-        fi
+        changed=1
+    fi
+    has_systemd || return 0
+    # Checked on every run, so a failed enable or start is retried even when
+    # the config is already in place. Debian names the binary keyd.rvaiya, so
+    # a changed config restarts the unit rather than calling `keyd reload`.
+    systemctl is-enabled --quiet keyd || sudo systemctl enable keyd || return 1
+    if [ "$changed" -eq 1 ]; then
+        sudo systemctl restart keyd
+    else
+        systemctl is-active --quiet keyd || sudo systemctl start keyd
     fi
 }
 
@@ -81,7 +92,9 @@ install_ulauncher() {
     if needs_install ulauncher "$ULAUNCHER_VERSION"; then
         install_verified_deb "$ULAUNCHER_URL" "$ULAUNCHER_SHA256" || return 1
     fi
-    # Start hidden at login. Ulauncher 5 positions its window correctly only under XWayland.
+    # Start hidden at login. Ulauncher 5 positions its window correctly only under
+    # XWayland. This .desktop file is the only launcher: the packaged
+    # ulauncher.service user unit stays disabled so it can't start a second copy.
     mkdir -p "$HOME/.config/autostart"
     cat > "$HOME/.config/autostart/ulauncher.desktop" <<'EOF'
 [Desktop Entry]
@@ -112,28 +125,6 @@ install_gpaste() {
     gnome-extensions enable "$uuid" || echo "WARNING: could not enable $uuid on this GNOME version."
 }
 
-# configure_espanso_layout: espanso on Wayland assumes a US layout unless told
-# otherwise, so a ":" typed on a German keyboard never matches a trigger. Sets
-# keyboard_layout from the first xkb input source, once, if it isn't us.
-configure_espanso_layout() {
-    local conf="$HOME/.config/espanso/config/default.yml" src layout variant
-    grep -q '^keyboard_layout:' "$conf" 2>/dev/null && return 0
-    src="$(gsettings get org.gnome.desktop.input-sources sources 2>/dev/null \
-        | grep -o "('xkb', '[^']*')" | head -1 | cut -d"'" -f4)"
-    layout="${src%%+*}"
-    [ -n "$layout" ] && [ "$layout" != us ] || return 0
-    variant=""
-    [[ "$src" == *+* ]] && variant="${src#*+}"
-    mkdir -p "$(dirname "$conf")"
-    {
-        echo "# Added by scripts/setup-keyboard.sh: the first GNOME input source."
-        echo "keyboard_layout:"
-        echo "  layout: \"$layout\""
-        [ -n "$variant" ] && echo "  variant: \"$variant\""
-    } >> "$conf"
-    echo "espanso: set keyboard_layout to $src in $conf"
-}
-
 install_espanso() {
     if needs_install espanso "$ESPANSO_VERSION"; then
         install_verified_deb "$ESPANSO_URL" "$ESPANSO_SHA256" || return 1
@@ -142,7 +133,6 @@ install_espanso() {
     bin="$(command -v espanso)" || { echo "ERROR: espanso is not on PATH." >&2; return 1; }
     # The Wayland build reads input devices directly and needs this capability.
     getcap "$bin" 2>/dev/null | grep -q cap_dac_override || sudo setcap "cap_dac_override+p" "$bin" || return 1
-    configure_espanso_layout
     espanso service register > /dev/null 2>&1 || true
     espanso status > /dev/null 2>&1 || espanso start
 }

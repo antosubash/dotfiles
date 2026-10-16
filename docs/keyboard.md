@@ -13,8 +13,8 @@ safe to re-run: custom shortcuts live at fixed paths, so a re-run never adds dup
 | Super+Space | Switch input source (de ↔ us) | unchanged | `switch-input-source` is `['<Super>space', 'XF86Keyboard']` |
 | Caps Lock (tap) | Esc | keyd, `/etc/keyd/default.conf` | Caps Lock |
 | Caps Lock (hold) | Ctrl | keyd, `/etc/keyd/default.conf` | Caps Lock |
-| Super+1..6 | Switch to workspace 1..6 | `switch-to-workspace-N` | Super+N launched the Nth dock app; workspace 1 was Super+Home |
-| Super+Shift+1..6 | Move the window to workspace 1..6 | `move-to-workspace-N` | Super+Shift+N opened a new window of the Nth dock app; move to 1 was Super+Shift+Home |
+| Super+1..6 | Switch to workspace 1..6 (Super+Home still goes to 1) | `switch-to-workspace-N` | Super+N launched the Nth dock app; workspace 1 was Super+Home only |
+| Super+Shift+1..6 | Move the window to workspace 1..6 (Super+Shift+Home still moves to 1) | `move-to-workspace-N` | Super+Shift+N opened a new window of the Nth dock app; move to 1 was Super+Shift+Home only |
 | Super+Return | Alacritty | custom shortcut `dotfiles-terminal` → `alacritty` | unbound |
 | Super+B | Web browser | media-keys `www` | unbound |
 | Super+E | Files (home folder) | media-keys `home` | unbound |
@@ -38,10 +38,17 @@ which `install.sh` links to `~/.config/espanso/match/base.yml`.
 | `:mail` | `git config --global user.email` |
 | `:shrug` | `¯\_(ツ)_/¯` |
 
-espanso on Wayland can't read the active layout and assumes US. If your first GNOME input source isn't
-`us`, the script writes it to `~/.config/espanso/config/default.yml` as `keyboard_layout` (here: `de`).
-espanso uses that one layout, so triggers typed while the `us` source is active may not match.
-Change the file and run `espanso restart` to use another layout.
+espanso follows the active GNOME input source: it reads `org.gnome.desktop.input-sources mru-sources`
+and reloads when you switch with Super+Space, so triggers match on both `de` and `us`. The script
+doesn't set a layout. Only if detection fails (triggers don't fire, or the wrong characters come out),
+set one by hand in `~/.config/espanso/config/default.yml` and run `espanso restart`:
+
+```yaml
+keyboard_layout:
+  layout: "de"
+```
+
+That fixes espanso to the one layout, so leave it out unless you need it.
 
 ## What the script changes, and how to undo it
 
@@ -53,9 +60,9 @@ value). Undo one with `gsettings reset <schema> <key>`.
 | `org.gnome.desktop.wm.keybindings` | `switch-input-source` | not changed | `['<Super>space', 'XF86Keyboard']` |
 | `org.gnome.desktop.wm.keybindings` | `activate-window-menu` | `[]` | `['<Alt>space']` |
 | `org.gnome.desktop.wm.keybindings` | `close` | `['<Super>q', '<Alt>F4']` | `['<Alt>F4']` |
-| `org.gnome.desktop.wm.keybindings` | `switch-to-workspace-1` | `['<Super>1']` | `['<Super>Home']` |
+| `org.gnome.desktop.wm.keybindings` | `switch-to-workspace-1` | `['<Super>1', '<Super>Home']` | `['<Super>Home']` |
 | `org.gnome.desktop.wm.keybindings` | `switch-to-workspace-2`..`6` | `['<Super>N']` | `@as []` |
-| `org.gnome.desktop.wm.keybindings` | `move-to-workspace-1` | `['<Super><Shift>1']` | `['<Super><Shift>Home']` |
+| `org.gnome.desktop.wm.keybindings` | `move-to-workspace-1` | `['<Super><Shift>1', '<Super><Shift>Home']` | `['<Super><Shift>Home']` |
 | `org.gnome.desktop.wm.keybindings` | `move-to-workspace-2`..`6` | `['<Super><Shift>N']` | `@as []` |
 | `org.gnome.desktop.wm.preferences` | `num-workspaces` | `6` | `4` |
 | `org.gnome.mutter` | `dynamic-workspaces` | `false` | `true` |
@@ -103,10 +110,9 @@ paths with `gsettings set $mk custom-keybindings "[...]"` instead.
 |---|---|
 | keyd installed, `/etc/keyd/default.conf` written, `keyd.service` enabled | `sudo rm /etc/keyd/default.conf && sudo systemctl restart keyd` (or `sudo apt remove keyd`) |
 | Ulauncher 5.16.2 `.deb` (pinned and verified) | `sudo apt remove ulauncher` |
-| `~/.config/autostart/ulauncher.desktop` (starts Ulauncher hidden, under XWayland) | delete the file |
+| `~/.config/autostart/ulauncher.desktop` (starts Ulauncher hidden, under XWayland; the only launcher, the packaged `ulauncher.service` user unit stays disabled) | delete the file |
 | `gpaste-2` and `gnome-shell-extension-gpaste` installed, extension enabled | `gnome-extensions disable GPaste@gnome-shell-extensions.gnome.org`, then `sudo apt remove gpaste-2 gnome-shell-extension-gpaste` |
 | espanso 2.4.1 Wayland `.deb` (pinned and verified), with `cap_dac_override+p` set on `/usr/bin/espanso` | `espanso service unregister && sudo apt remove espanso` |
-| `~/.config/espanso/config/default.yml` `keyboard_layout` (non-US layouts only) | delete those lines |
 | `~/.config/espanso/match/base.yml` symlink (from `install.sh`) | delete the symlink |
 
 On Debian and Ubuntu the keyd binary is named `keyd.rvaiya` (it clashes with another package's `keyd`),
@@ -114,10 +120,11 @@ so use `keyd.rvaiya monitor` or `keyd.rvaiya reload`. The service is still `keyd
 
 ## Notes
 
-- Ulauncher 5 runs under XWayland (`GDK_BACKEND=x11`): it can't grab keys or place its window under
-  Wayland itself, so GNOME's Alt+Space shortcut opens it through `ulauncher-toggle`. Its own hotkey
-  setting (Ctrl+Space by default) only fires while an XWayland window has focus. Clear it in
-  Ulauncher's preferences if it gets in the way of Ctrl+Space in those apps.
+- Ulauncher's own hotkey setting is ignored under Wayland; Alt+Space works through the GNOME custom
+  shortcut. On first start it may show a notification asking you to bind `ulauncher-toggle`, which is
+  already done. Ulauncher runs under XWayland (`GDK_BACKEND=x11`) so its window is placed correctly,
+  and it starts at login from `~/.config/autostart/ulauncher.desktop` only; the packaged
+  `ulauncher.service` user unit isn't enabled.
 - The GPaste extension only appears after you log out and back in. The script sets Super+V on its
   first run, but it can enable the extension only once the extension is visible, so re-run the script
   after the next login.

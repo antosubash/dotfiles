@@ -29,6 +29,12 @@ case "$cmd" in
   list-schemas) exit 0 ;;
 esac'
     fake sudo 'echo "sudo $*" >> "$CALLS"'
+    # keyd's unit is enabled/active when $TMPDIR_ROOT/keyd-enabled / keyd-active exist.
+    fake systemctl 'case "$1" in
+  is-enabled) [ -e "$TMPDIR_ROOT/keyd-enabled" ] ;;
+  is-active) [ -e "$TMPDIR_ROOT/keyd-active" ] ;;
+  *) echo "systemctl $*" >> "$CALLS" ;;
+esac'
     fake dpkg-query 'printf "install ok installed"'
     export HOME="$TMPDIR_ROOT/home"
     mkdir -p "$HOME"
@@ -78,6 +84,8 @@ test_workspaces() {
     assert_eq false "$(gs_get org.gnome.mutter dynamic-workspaces)" "fixed workspaces"
     assert_eq 6 "$(gs_get org.gnome.desktop.wm.preferences num-workspaces)" "six of them"
     assert_eq "['<Super>3']" "$(gs_get org.gnome.desktop.wm.keybindings switch-to-workspace-3)" "switch"
+    assert_eq "['<Super>1', '<Super>Home']" "$(gs_get org.gnome.desktop.wm.keybindings switch-to-workspace-1)" "switch 1 keeps Super+Home"
+    assert_eq "['<Super><Shift>1', '<Super><Shift>Home']" "$(gs_get org.gnome.desktop.wm.keybindings move-to-workspace-1)" "move 1 keeps Super+Shift+Home"
     assert_eq "['<Super><Shift>6']" "$(gs_get org.gnome.desktop.wm.keybindings move-to-workspace-6)" "move"
     assert_eq "[]" "$(gs_get org.gnome.shell.keybindings switch-to-application-1)" "dash shortcuts freed"
     assert_eq false "$(gs_get org.gnome.shell.extensions.dash-to-dock hot-keys)" "dock hot keys off"
@@ -130,11 +138,29 @@ test_keyd_installs_config_and_restarts_unit() {
     assert_contains "$(cat "$CALLS")" "install -D -m 0644 $REPO/config/keyd/default.conf $TMPDIR_ROOT/etc/keyd/default.conf" "installs the config"
     assert_contains "$(cat "$CALLS")" "systemctl restart keyd" "restarts keyd"
     assert_not_contains "$(cat "$CALLS")" "keyd reload" "no keyd reload"
-    # Same config already in place: no sudo at all.
+    assert_contains "$(cat "$CALLS")" "sudo systemctl enable keyd" "enables keyd"
+    # Same config in place and the unit enabled and running: no sudo at all.
     mkdir -p "$TMPDIR_ROOT/etc/keyd"; cp "$REPO/config/keyd/default.conf" "$TMPDIR_ROOT/etc/keyd/default.conf"
+    touch "$TMPDIR_ROOT/keyd-enabled" "$TMPDIR_ROOT/keyd-active"
     : > "$CALLS"
     KEYD_CONF="$TMPDIR_ROOT/etc/keyd/default.conf" SYSTEMD_RUN_DIR="$TMPDIR_ROOT/systemd" configure_keyd > /dev/null
     assert_eq "" "$(cat "$CALLS")" "nothing on a re-run"
+    end_test
+}
+
+# A run whose enable/restart failed leaves the config in place; the next run
+# must still enable and start the unit, without a restart.
+test_keyd_retries_service_when_config_unchanged() {
+    setup_test "keyd service retry"
+    setup_fakes
+    mkdir -p "$TMPDIR_ROOT/systemd" "$TMPDIR_ROOT/etc/keyd"
+    cp "$REPO/config/keyd/default.conf" "$TMPDIR_ROOT/etc/keyd/default.conf"
+    KEYD_CONF="$TMPDIR_ROOT/etc/keyd/default.conf" SYSTEMD_RUN_DIR="$TMPDIR_ROOT/systemd" configure_keyd > /dev/null
+    assert_eq 0 $? "status"
+    assert_not_contains "$(cat "$CALLS")" "sudo install" "config left alone"
+    assert_contains "$(cat "$CALLS")" "sudo systemctl enable keyd" "enables keyd"
+    assert_contains "$(cat "$CALLS")" "sudo systemctl start keyd" "starts keyd"
+    assert_not_contains "$(cat "$CALLS")" "restart" "no restart"
     end_test
 }
 
@@ -170,28 +196,6 @@ test_gpaste_sets_super_v_before_extension_is_visible() {
     end_test
 }
 
-test_espanso_layout_follows_first_input_source() {
-    setup_test "espanso keyboard layout"
-    setup_fakes
-    echo "org.gnome.desktop.input-sources sources [('xkb', 'de+nodeadkeys'), ('xkb', 'us')]" > "$TMPDIR_ROOT/gs"
-    configure_espanso_layout > /dev/null
-    configure_espanso_layout > /dev/null
-    local conf="$HOME/.config/espanso/config/default.yml"
-    assert_eq 1 "$(grep -c '^keyboard_layout:' "$conf")" "written once"
-    assert_contains "$(cat "$conf")" 'layout: "de"' "layout"
-    assert_contains "$(cat "$conf")" 'variant: "nodeadkeys"' "variant"
-    end_test
-}
-
-test_espanso_layout_left_alone_for_us() {
-    setup_test "espanso keyboard layout, US"
-    setup_fakes
-    echo "org.gnome.desktop.input-sources sources [('xkb', 'us'), ('xkb', 'de')]" > "$TMPDIR_ROOT/gs"
-    configure_espanso_layout > /dev/null
-    assert_eq "" "$(cat "$HOME/.config/espanso/config/default.yml" 2>/dev/null)" "no config written"
-    end_test
-}
-
 test_custom_shortcut_is_not_duplicated
 test_custom_shortcut_appends_to_existing_list
 test_workspaces
@@ -199,9 +203,8 @@ test_shortcuts
 test_skips_without_gnome
 test_keyd_config_maps_capslock
 test_keyd_installs_config_and_restarts_unit
+test_keyd_retries_service_when_config_unchanged
 test_keyd_without_systemd_succeeds
 test_gpaste_without_schema_warns
 test_gpaste_sets_super_v_before_extension_is_visible
-test_espanso_layout_follows_first_input_source
-test_espanso_layout_left_alone_for_us
 summary
