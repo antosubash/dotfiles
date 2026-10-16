@@ -35,7 +35,24 @@ pwsh -ExecutionPolicy Bypass -File .\install.ps1
 
 ```bash
 ./scripts/setup-ubuntu.sh
+./scripts/setup-ubuntu.sh --list                # show the sections
+./scripts/setup-ubuntu.sh --only cli,fonts      # run just these sections
+./scripts/setup-ubuntu.sh --skip ollama,apps    # run everything except these
 ```
+
+Safe to re-run: each section installs only what is missing or below its pinned
+version, so a second run installs nothing, and a failing section doesn't stop
+the others (the run ends with a summary and a non-zero exit if any failed).
+Every run is logged to `~/.local/state/dotfiles/` (one file per run, named with
+the time). The NVIDIA steps (kernel-update guard, container toolkit) run only
+when an NVIDIA display GPU is detected, so other machines skip them.
+
+On a GNOME desktop the `keyboard` section also runs
+`./scripts/setup-keyboard.sh`: Ulauncher on Alt+Space, Caps Lock as Esc (tap) /
+Ctrl (hold) via keyd, workspace and launch shortcuts, GPaste clipboard history
+and espanso text expansion. Run it alone with `bash scripts/setup-keyboard.sh`;
+see [docs/keyboard.md](docs/keyboard.md) for the shortcut table and how to undo
+each change.
 
 #### Ubuntu Server (headless)
 
@@ -92,11 +109,28 @@ lazydocker, kubectl, helm, pmtiles, DuckDB) are pinned and checked against a
 sha256 in `scripts/lib/setup-common.sh`; to bump one, update its version and
 hash there and run `VERIFY_DOWNLOADS=1 bash scripts/tests/test-setup-common.sh`.
 
+Optional extras for an always-on Ubuntu desktop (all idempotent, run after
+`setup-ubuntu.sh`):
+
+```bash
+./scripts/setup-dev-tuning.sh    # raise inotify limits, rotate Docker logs, trim kdump and idle services, cut boot time
+./scripts/setup-always-on.sh     # never suspend or hibernate, Wake-on-LAN, smartd disk health monitoring
+./scripts/setup-rgb-off.sh       # turn off all OpenRGB lighting now and at every boot (systemd service)
+```
+
 ### 4. Install Update Commands
 
 ```bash
 ./scripts/setup-update.sh
 ```
+
+### Upgrading an existing machine
+
+After pulling these dotfiles on a machine set up with an older version, re-run
+`bash scripts/setup-update.sh`. It regenerates `~/.update_aliases` and replaces
+the old `~/.local/bin/update-manager` helper with `dotfiles-update`. Also note
+that on Linux `install.sh` now runs `setup-terminal.sh`, which uses `sudo` to
+install the fonts and CLI extras (eza, bat, zoxide, atuin).
 
 ## 📁 Structure
 
@@ -108,6 +142,10 @@ dotfiles/
 │   ├── setup-macos.sh      # macOS full development setup
 │   ├── setup-ubuntu.sh     # Ubuntu desktop development setup
 │   ├── setup-server.sh     # Ubuntu Server (headless) setup
+│   ├── setup-keyboard.sh   # GNOME keyboard layer (see docs/keyboard.md)
+│   ├── setup-dev-tuning.sh # Always-on desktop tuning (inotify, Docker logs, boot)
+│   ├── setup-always-on.sh  # Never suspend, Wake-on-LAN, disk health
+│   ├── setup-rgb-off.sh    # Keep RGB lighting off across reboots
 │   ├── setup-windows.ps1   # Windows development setup (winget + scoop)
 │   ├── setup-windows-terminal.ps1 # Windows Terminal + oh-my-posh + Alacritty
 │   ├── update-windows.ps1  # Update winget + scoop + modules + WSL distros
@@ -297,7 +335,7 @@ Per-machine tweaks (font size on a HiDPI screen, opacity) go in an untracked `~/
 # Available commands after installation:
 update          # Full system update
 update-quick    # Fast daily update
-update-manager  # Interactive manager
+dotfiles-update  # Interactive manager
 ```
 
 ## 🎯 Available Commands
@@ -307,7 +345,7 @@ update-manager  # Interactive manager
 ```bash
 update              # Full update of all tools
 update-quick        # Fast daily updates (package managers only)
-update-manager      # Interactive update interface
+dotfiles-update      # Interactive update interface
 update --cleanup    # Clean caches and old files
 
 # Aliases
@@ -372,8 +410,12 @@ Use Nordic color scheme in `config/terminal-colors.md` for consistency.
 update-quick
 
 # Check what's outdated
-update-manager status
+dotfiles-update status
 ```
+
+`dotfiles-update` (installed by `setup-update.sh`; it was called
+`update-manager`, which clashed with Ubuntu's Software Updater) is the
+interactive front end for the update scripts.
 
 ### Weekly Maintenance
 
@@ -384,6 +426,11 @@ update
 # Clean up system
 update --cleanup
 ```
+
+On Ubuntu, `update` also reconciles the pinned tools (Go, yq, lazygit,
+kubectl, helm, Node, ...) by running
+`setup-ubuntu.sh --only languages,cli,git-tools,k8s,node`, so a version bump
+in `scripts/lib/setup-common.sh` reaches every machine on its next update.
 
 ### Manual Updates
 
@@ -462,7 +509,7 @@ sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.
 #### Update Manager
 
 ```bash
-update-manager help  # Show all update options
+dotfiles-update help  # Show all update options
 ```
 
 #### Script Help
@@ -475,7 +522,7 @@ update-manager help  # Show all update options
 #### Check Versions
 
 ```bash
-update-manager status  # Check all tool versions
+dotfiles-update status  # Check all tool versions
 ```
 
 ## 📚 Advanced Usage

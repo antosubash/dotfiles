@@ -1,8 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Tune an always-on Ubuntu desktop for development. Idempotent; each step is
 # independent and reversible.
+#
+# Usage: setup-dev-tuning.sh             detect a desktop from the DMI chassis type
+#        setup-dev-tuning.sh --desktop   treat this machine as a desktop anyway
 set -e
+
+desktop=0
+[ "${1:-}" = --desktop ] && desktop=1
 
 # 1. File watchers: the default 65536 watches / 128 instances run out with
 #    VS Code, JetBrains, vite/webpack/jest watchers, and tsserver on big repos.
@@ -19,7 +25,7 @@ if command -v docker &> /dev/null; then
     echo "Configuring Docker log rotation and live-restore..."
     defaults='{"log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}, "live-restore": true}'
     sudo mkdir -p /etc/docker
-    if sudo test -f /etc/docker/daemon.json; then
+    if sudo test -s /etc/docker/daemon.json; then
         merged="$(sudo cat /etc/docker/daemon.json | jq --argjson d "$defaults" '. * $d')"
     else
         merged="$(jq -n --argjson d "$defaults" '$d')"
@@ -51,7 +57,8 @@ done
 # 5. CPU power limits: older BIOSes on 13th/14th-gen Intel K CPUs leave the
 #    short-term limit effectively unlimited (4095 W). Cap both limits at Intel's
 #    253 W spec at every boot; limits already at or below it are left alone.
-if [ -d /sys/class/powercap/intel-rapl:0 ]; then
+rapl="${DEV_TUNING_RAPL_DIR:-/sys/class/powercap/intel-rapl:0}"
+if [ -d "$rapl" ]; then
     echo "Installing cpu-power-limit.service (253 W cap)..."
     sudo tee /usr/local/sbin/cpu-power-limit > /dev/null <<'EOF'
 #!/bin/bash
@@ -89,9 +96,33 @@ EOF
     sudo systemctl daemon-reload
     sudo systemctl enable --now cpu-power-limit.service
     for i in 0 1; do
-        c=/sys/class/powercap/intel-rapl:0
-        echo "  $(cat $c/constraint_${i}_name): $(( $(cat $c/constraint_${i}_power_limit_uw) / 1000000 )) W"
+        echo "  $(cat "$rapl/constraint_${i}_name"): $(( $(cat "$rapl/constraint_${i}_power_limit_uw") / 1000000 )) W"
     done
+fi
+
+# 6. Boot chain: docker.service wants network-online.target, which waits ~7.7 s
+#    for NetworkManager-wait-online. A desktop with no network mounts has
+#    nothing that needs the network up first, so skip the wait there. Desktop
+#    SMBIOS chassis types: desktop, low-profile, pizza box, mini tower, tower,
+#    all-in-one, space-saving, lunch box, sealed-case PC, mini PC.
+case "$(cat "${DEV_TUNING_CHASSIS_FILE:-/sys/class/dmi/id/chassis_type}" 2> /dev/null)" in
+    3|4|5|6|7|13|15|16|24|35) desktop=1 ;;
+esac
+# Network mounts (NFS, CIFS, or anything marked _netdev) do need the network up first.
+if [ "$desktop" = 1 ] && grep -Eqs '^[^#]*([[:space:]](nfs4?|cifs|smb3|smbfs|sshfs|fuse\.sshfs)[[:space:]]|_netdev)' "${DEV_TUNING_FSTAB:-/etc/fstab}"; then
+    echo "Network mounts in fstab; leaving NetworkManager-wait-online enabled."
+    desktop=0
+fi
+if [ "$desktop" = 1 ]; then
+    if systemctl is-enabled --quiet NetworkManager-wait-online.service 2> /dev/null; then
+        echo "Disabling NetworkManager-wait-online (desktop: boot need not wait for the network)..."
+        echo "docker.service boot chain before the change:"
+        systemd-analyze critical-chain docker.service || true
+        sudo systemctl disable NetworkManager-wait-online.service
+        echo "To revert: sudo systemctl enable NetworkManager-wait-online.service"
+    else
+        echo "NetworkManager-wait-online is not enabled (already disabled or not installed)."
+    fi
 fi
 
 echo ""

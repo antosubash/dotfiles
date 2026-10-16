@@ -164,15 +164,15 @@ if command -v atuin > /dev/null 2>&1; then
     eval "$(atuin init zsh)"
 fi
 
+# zoxide — `z <dir>` jumps to frecent directories, `zi` picks one with fzf.
+if command -v zoxide > /dev/null 2>&1; then
+    eval "$(zoxide init zsh)"
+fi
+
 # Load local overrides LAST so they can override anything above
 if [[ -f "${ZSHRC_LOCAL:-$HOME/.zshrc.local}" ]]; then
     source "${ZSHRC_LOCAL:-$HOME/.zshrc.local}"
 fi
-# The following lines have been added by Docker Desktop to enable Docker CLI completions.
-fpath=(/Volumes/ext1/.docker/completions $fpath)
-autoload -Uz compinit
-compinit
-# End of Docker CLI completions
 
 # Added by get-aspire-cli.sh
 export PATH="$HOME/.aspire/bin:$PATH"

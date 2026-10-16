@@ -29,5 +29,11 @@ if command -v "$TOOL_FZF" &> /dev/null; then
     
     # Integrate with zsh
     [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+
+    # Debian/Ubuntu's fzf package ships its zsh widgets here (Ctrl-T, Alt-C;
+    # Ctrl-R is taken over by atuin when it's installed, see .zshrc).
+    for f in /usr/share/doc/fzf/examples/key-bindings.zsh /usr/share/doc/fzf/examples/completion.zsh; do
+        [ -f "$f" ] && source "$f"
+    done
 fi
 

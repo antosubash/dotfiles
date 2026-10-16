@@ -34,6 +34,14 @@ EOF
 #!/usr/bin/env bash
 printf 'sudo %s\n' "$*" >> "$CALLS"
 [ "$*" = "mkdir -p /run/sshd" ] && exit 0
+while [[ "$1" == [A-Z_]*=* ]]; do export "${1?}"; shift; done
+if [ "$1" = install ]; then  # drop -o/-g owner flags, which need root
+    args=()
+    while [ $# -gt 0 ]; do
+        case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac
+    done
+    set -- "${args[@]}"
+fi
 "$@"
 EOF
     cat > "$FAKE_BIN/sshd" <<'EOF'
@@ -74,7 +82,7 @@ test_every_pin_is_https_with_a_sha256() {
         assert_eq "yes" "$([[ ${!sha_var:-} =~ ^[0-9a-f]{64}$ ]] && echo yes)" "$sha_var is a sha256"
         count=$((count + 1))
     done
-    assert_eq 8 "$count" "number of pinned downloads"
+    assert_eq 16 "$count" "number of pinned downloads"
     teardown_test
 }
 
@@ -163,6 +171,200 @@ test_harden_sshd_backs_out_when_sshd_rejects_config() {
     teardown_test
 }
 
+# Fake apt and dpkg, and apt paths under $TMPDIR_ROOT. gpg runs in a temporary
+# GNUPGHOME so the tests never touch ~/.gnupg.
+setup_apt_fakes() {
+    setup_fakes
+    export APT_SOURCES_DIR="$TMPDIR_ROOT/sources" APT_KEYRINGS_DIR="$TMPDIR_ROOT/keyrings"
+    export GNUPGHOME="$TMPDIR_ROOT/gnupg"
+    mkdir -p "$APT_SOURCES_DIR" "$APT_KEYRINGS_DIR" "$GNUPGHOME"
+    chmod 700 "$GNUPGHOME"
+    printf '#!/bin/sh\necho "apt $*" >> "%s"\n' "$CALLS" > "$FAKE_BIN/apt"; chmod +x "$FAKE_BIN/apt"
+    printf '#!/bin/sh\necho "apt-get $*" >> "%s"\n' "$CALLS" > "$FAKE_BIN/apt-get"; chmod +x "$FAKE_BIN/apt-get"
+    printf '#!/bin/sh\necho amd64\n' > "$FAKE_BIN/dpkg"; chmod +x "$FAKE_BIN/dpkg"
+}
+
+teardown_apt_fakes() {
+    local home
+    for home in "$GNUPGHOME" "$TMPDIR_ROOT"/gnupg-*; do
+        [ -d "$home" ] && gpgconf --homedir "$home" --kill all 2>/dev/null
+    done
+    unset GNUPGHOME APT_SOURCES_DIR APT_KEYRINGS_DIR
+    teardown_test
+}
+
+primary_fprs() {  # primary_fprs KEYRING -> one primary-key fingerprint per line
+    gpg --batch --show-keys --with-colons "$1" 2>/dev/null \
+        | awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }'
+}
+
+make_key() {  # make_key NAME -> armored public key in $FIXTURES/NAME.asc, prints fingerprint
+    local home="$TMPDIR_ROOT/gnupg-$1"; mkdir -p "$home"; chmod 700 "$home"
+    GNUPGHOME="$home" gpg --batch --quiet --pinentry-mode loopback --passphrase '' \
+        --quick-gen-key "$1 <$1@test>" ed25519 sign never 2>/dev/null
+    GNUPGHOME="$home" gpg --batch --armor --export > "$FIXTURES/$1.asc"
+    GNUPGHOME="$home" gpg --batch --export > "$FIXTURES/$1.gpg"
+    GNUPGHOME="$home" gpg --batch --with-colons --list-keys 2>/dev/null | awk -F: '$1=="fpr"{print $10; exit}'
+    gpgconf --homedir "$home" --kill all 2>/dev/null
+}
+
+test_add_apt_source_accepts_binary_and_multi_key_files() {
+    setup_test "add_apt_source key formats"
+    setup_apt_fakes
+    local a b
+    a="$(make_key alpha)"; b="$(make_key beta)"
+    cat "$FIXTURES/alpha.asc" "$FIXTURES/beta.asc" > "$FIXTURES/multi.asc"
+    add_apt_source multi https://x.test/multi.asc "$b" https://repo.test/deb stable main > /dev/null; assert_eq 0 $? "second key of a multi-key file"
+    assert_eq "$b" "$(primary_fprs "$APT_KEYRINGS_DIR/multi.gpg")" "keyring holds only the pinned key"
+    add_apt_source bin https://x.test/alpha.gpg "$a" https://repo.test/deb stable main > /dev/null; assert_eq 0 $? "binary key"
+    assert_eq "$a" "$(primary_fprs "$APT_KEYRINGS_DIR/bin.gpg")" "binary key's keyring holds the pinned key"
+    add_apt_source flat https://x.test/alpha.asc "$a" https://repo.test/deb/amd64 / "" > /dev/null; assert_eq 0 $? "flat repo"
+    assert_not_contains "$(cat "$APT_SOURCES_DIR/flat.sources")" "Components:" "flat repo has no Components"
+    assert_contains "$(cat "$APT_SOURCES_DIR/flat.sources")" "Suites: /" "flat suite"
+    assert_contains "$(cat "$APT_SOURCES_DIR/multi.sources")" "Components: main" "components"
+    assert_contains "$(cat "$APT_SOURCES_DIR/multi.sources")" "Signed-By: $APT_KEYRINGS_DIR/multi.gpg" "signed-by"
+    add_apt_source bad https://x.test/alpha.asc "$b" https://repo.test/deb stable main 2>/dev/null; assert_eq 1 $? "wrong fingerprint rejected"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/bad.sources" ] || [ -e "$APT_KEYRINGS_DIR/bad.gpg" ] && echo yes || echo no)" "nothing written for a wrong key"
+    # A subkey's fingerprint doesn't vouch for the file: only primary keys count.
+    local home="$TMPDIR_ROOT/gnupg-alpha" sub
+    GNUPGHOME="$home" gpg --batch --quiet --pinentry-mode loopback --passphrase '' \
+        --quick-add-key "$a" cv25519 encr never 2>/dev/null
+    GNUPGHOME="$home" gpg --batch --armor --export > "$FIXTURES/alphasub.asc"
+    sub="$(GNUPGHOME="$home" gpg --batch --with-colons --list-keys 2>/dev/null | awk -F: '$1=="sub"{s=1;next} $1=="fpr"&&s{print $10; exit}')"
+    add_apt_source sub https://x.test/alphasub.asc "$sub" https://repo.test/deb stable main 2>/dev/null; assert_eq 1 $? "subkey fingerprint rejected"
+    teardown_apt_fakes
+}
+
+test_add_apt_source_is_quiet_when_unchanged() {
+    setup_test "add_apt_source idempotent"
+    setup_apt_fakes
+    local a; a="$(make_key alpha)"
+    echo "deb [signed-by=/x] https://repo.test/deb stable main" > "$APT_SOURCES_DIR/vend.list"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main
+    assert_eq 0 $? "first run succeeds"
+    assert_eq 1 "$(grep -c '^apt-get update' "$CALLS")" "first run updates"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/vend.list" ] && echo yes || echo no)" "legacy .list removed"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main
+    assert_eq 0 $? "second run succeeds"
+    assert_eq 1 "$(grep -c '^apt-get update' "$CALLS")" "second run does not update"
+    teardown_apt_fakes
+}
+
+# fake_apt_get_update FAIL_WHEN: apt-get logs its arguments and, for an update,
+# exits 100 when FAIL_WHEN is "always" or, for "global", when the update reads
+# every source (a broken unrelated repository) instead of just one file.
+fake_apt_get_update() {
+    cat > "$FAKE_BIN/apt-get" <<EOF
+#!/bin/sh
+echo "apt-get \$*" >> "$CALLS"
+[ "\$1" = update ] || exit 0
+case "$1:\$*" in
+    always:*) exit 100 ;;
+    global:*"Dir::Etc::sourceparts=-"*) exit 0 ;;
+    global:*) exit 100 ;;
+esac
+EOF
+    chmod +x "$FAKE_BIN/apt-get"
+    # A global `apt update` fails the same way.
+    printf '#!/bin/sh\necho "apt $*" >> "%s"\n[ "$1" = update ] && exit 100\nexit 0\n' "$CALLS" > "$FAKE_BIN/apt"
+    chmod +x "$FAKE_BIN/apt"
+}
+
+# One broken third-party repository makes a global apt update exit 100; that
+# must not undo a vendor source whose own refresh works.
+test_add_apt_source_ignores_an_unrelated_broken_repo() {
+    setup_test "add_apt_source with an unrelated broken repo"
+    setup_apt_fakes
+    fake_apt_get_update global
+    local a; a="$(make_key alpha)"
+    echo "deb [signed-by=/x] https://broken.test/deb stable main" > "$APT_SOURCES_DIR/broken.list"
+    echo "deb [signed-by=/x] https://repo.test/deb stable main" > "$APT_SOURCES_DIR/vend.list"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main > "$TMPDIR_ROOT/out" 2>&1
+    assert_eq 0 $? "succeeds"
+    assert_contains "$(cat "$CALLS")" "apt-get update -o Dir::Etc::sourcelist=$APT_SOURCES_DIR/vend.sources -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0" "refreshes only the new source"
+    assert_eq yes "$([ -e "$APT_SOURCES_DIR/vend.sources" ] && echo yes || echo no)" "new source kept"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/vend.list" ] && echo yes || echo no)" "legacy .list replaced"
+    assert_eq "deb [signed-by=/x] https://broken.test/deb stable main" "$(cat "$APT_SOURCES_DIR/broken.list")" "unrelated .list untouched"
+    teardown_apt_fakes
+}
+
+# If the new source itself can't be refreshed, the old working .list stays.
+test_add_apt_source_keeps_legacy_list_when_refresh_fails() {
+    setup_test "add_apt_source keeps the legacy .list when its refresh fails"
+    setup_apt_fakes
+    fake_apt_get_update always
+    local a; a="$(make_key alpha)"
+    echo "deb [signed-by=/x] https://repo.test/deb stable main" > "$APT_SOURCES_DIR/vend.list"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main > "$TMPDIR_ROOT/out" 2>&1
+    assert_eq 1 $? "fails"
+    assert_eq "deb [signed-by=/x] https://repo.test/deb stable main" "$(cat "$APT_SOURCES_DIR/vend.list" 2>/dev/null)" "legacy .list restored"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/vend.sources" ] && echo yes || echo no)" "new source removed"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "kept $APT_SOURCES_DIR/vend.list" "says the old source was kept"
+    teardown_apt_fakes
+}
+
+# The package re-creates its .list on upgrade: the next run removes it again,
+# after checking the unchanged .sources still refreshes.
+test_add_apt_source_removes_a_recreated_list() {
+    setup_test "add_apt_source removes a re-created .list"
+    setup_apt_fakes
+    local a; a="$(make_key alpha)"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main > /dev/null
+    echo "deb [signed-by=/y] https://repo.test/deb stable main" > "$APT_SOURCES_DIR/vend.list"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main > /dev/null
+    assert_eq 0 $? "succeeds"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/vend.list" ] && echo yes || echo no)" "re-created .list removed"
+    assert_eq yes "$([ -e "$APT_SOURCES_DIR/vend.sources" ] && echo yes || echo no)" "source kept"
+    teardown_apt_fakes
+}
+
+test_add_apt_source_needs_a_fingerprint() {
+    setup_test "add_apt_source without a fingerprint"
+    setup_apt_fakes
+    add_apt_source vend https://x.test/alpha.asc "" https://repo.test/deb stable main > "$TMPDIR_ROOT/out" 2>&1
+    assert_eq 1 $? "fails"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "no key fingerprint" "says why"
+    assert_eq "" "$(cat "$CALLS")" "downloads and writes nothing"
+    teardown_apt_fakes
+}
+
+test_add_apt_source_retries_after_a_failed_update() {
+    setup_test "add_apt_source retries after a failed apt update"
+    setup_apt_fakes
+    # The source's refresh fails the first time only.
+    cat > "$FAKE_BIN/apt-get" <<EOF
+#!/bin/sh
+echo "apt-get \$*" >> "$CALLS"
+[ "\$1" = update ] || exit 0
+[ -e "$TMPDIR_ROOT/apt-failed" ] && exit 0
+touch "$TMPDIR_ROOT/apt-failed"
+exit 100
+EOF
+    local a; a="$(make_key alpha)"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main 2>/dev/null
+    assert_eq 1 $? "failed update fails"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/vend.sources" ] && echo yes || echo no)" "source removed for a retry"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main
+    assert_eq 0 $? "re-run succeeds"
+    assert_eq 2 "$(grep -c '^apt-get update' "$CALLS")" "re-run updates again"
+    assert_eq yes "$([ -e "$APT_SOURCES_DIR/vend.sources" ] && echo yes || echo no)" "source in place"
+    teardown_apt_fakes
+}
+
+test_install_verified_deb() {
+    setup_test "install_verified_deb"
+    setup_apt_fakes
+    printf 'deb\n' > "$FIXTURES/pkg_1.0_all.deb"
+    install_verified_deb https://x.test/pkg_1.0_all.deb "$(sha "$FIXTURES/pkg_1.0_all.deb")"
+    assert_eq 0 $? "succeeds"
+    assert_contains "$(cat "$CALLS")" "apt-get install -y /" "installs the downloaded file"
+    : > "$CALLS"
+    install_verified_deb https://x.test/pkg_1.0_all.deb "$(printf '0%.0s' {1..64})" 2>/dev/null
+    assert_eq 1 $? "bad hash fails"
+    assert_not_contains "$(cat "$CALLS")" "apt-get" "nothing installed on bad hash"
+    teardown_apt_fakes
+}
+
 test_pinned_downloads_match() {
     setup_test "pinned downloads match their sha256"
     load_lib
@@ -181,12 +383,56 @@ test_pinned_downloads_match() {
     teardown_test
 }
 
+test_os_family_and_codename() {
+    setup_test "os family"
+    load_lib
+    local f="$TMPDIR_ROOT/os-release"
+    check() {  # name family codename, with the os-release body on stdin
+        cat > "$f"
+        export OS_RELEASE_FILE="$f"
+        assert_eq "$2" "$(_os_family)" "$1 family"
+        assert_eq "$3" "$(_os_codename)" "$1 codename"
+    }
+    check ubuntu ubuntu noble <<'EOF'
+ID=ubuntu
+ID_LIKE=debian
+VERSION_CODENAME=noble
+UBUNTU_CODENAME=noble
+EOF
+    check mint ubuntu noble <<'EOF'
+ID=linuxmint
+ID_LIKE="ubuntu debian"
+VERSION_CODENAME=wilma
+UBUNTU_CODENAME=noble
+EOF
+    check debian debian bookworm <<'EOF'
+ID=debian
+VERSION_CODENAME=bookworm
+EOF
+    check kali debian kali-rolling <<'EOF'
+ID=kali
+ID_LIKE=debian
+VERSION_CODENAME=kali-rolling
+EOF
+    unset OS_RELEASE_FILE
+    teardown_test
+}
+
 test_every_pin_is_https_with_a_sha256
 test_download_verified_accepts_match_and_rejects_mismatch
 test_install_verified_binary_handles_each_format
 test_harden_sshd_skips_without_authorized_keys
 test_harden_sshd_writes_validates_and_reloads
 test_harden_sshd_backs_out_when_sshd_rejects_config
+test_add_apt_source_accepts_binary_and_multi_key_files
+test_add_apt_source_is_quiet_when_unchanged
+test_add_apt_source_retries_after_a_failed_update
+test_add_apt_source_ignores_an_unrelated_broken_repo
+test_add_apt_source_keeps_legacy_list_when_refresh_fails
+test_add_apt_source_removes_a_recreated_list
+test_add_apt_source_needs_a_fingerprint
+test_os_family_and_codename
+test_install_verified_deb
 [ "${VERIFY_DOWNLOADS:-0}" = 1 ] && test_pinned_downloads_match
 
 summary

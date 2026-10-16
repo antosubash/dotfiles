@@ -52,7 +52,7 @@ export TOOL_FD="fd"
 export TOOL_RIPGREP="rg"
 export TOOL_FZF="fzf"
 export TOOL_HTOP="htop"
-export TOOL_NEOFETCH="neofetch"
+export TOOL_NEOFETCH="fastfetch"
 export TOOL_FORTUNE="fortune"
 export TOOL_COWSAY="cowsay"
 
