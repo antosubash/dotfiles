@@ -97,20 +97,21 @@ alias upc='update --cleanup'
 if [[ "$OSTYPE" == "darwin"* ]]; then
     alias brew-up='brew update && brew upgrade && brew cleanup'
     alias mac-up='update'
+    # Linux global npm tools are pinned; `update` reconciles them
+    alias npm-up='npm update -g'
 else
     alias apt-up='sudo apt update && sudo apt full-upgrade -y && sudo apt autoremove -y && ~/dotfiles/scripts/nvidia-kernel-guard.sh --fix'
     alias linux-up='update'
 fi
 
 # Language specific updates
-alias npm-up='npm update -g'
 alias rust-up='rustup update'
 alias dotnet-up='dotnet tool list --global | tail -n +3 | awk "{print $1}" | xargs -I {} dotnet tool update --global {}'
 
 # Dev tools updates
 alias ohmy-up='omz update'
 alias gh-up='gh extension upgrade --all'
-alias docker-up='docker system prune -f'
+alias docker-up='docker image prune -f && docker builder prune -f --filter until=168h'
 EOF
     
     log "Update aliases created in ~/.update_aliases"

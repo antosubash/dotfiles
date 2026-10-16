@@ -84,6 +84,8 @@ if [[ -d "$HOME/dotfiles" ]]; then
     info "Updating dotfiles..."
     if [[ -n "$(git -C "$HOME/dotfiles" status --porcelain 2>/dev/null)" ]]; then
         warn "dotfiles has local changes; skipping git pull"
+    elif [[ "$(git -C "$HOME/dotfiles" symbolic-ref --short -q HEAD)" != "main" ]]; then
+        warn "dotfiles is on branch $(git -C "$HOME/dotfiles" symbolic-ref --short -q HEAD || echo 'detached HEAD'), not main; skipping git pull"
     elif git -C "$HOME/dotfiles" pull --ff-only origin main --quiet; then
         log "Dotfiles updated"
     else

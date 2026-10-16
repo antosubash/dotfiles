@@ -231,7 +231,7 @@ update_security_tools() {
 
 # Update dotfiles
 update_dotfiles() {
-    local repo="$HOME/dotfiles" before after
+    local repo="$HOME/dotfiles" before after branch
     log_section "Updating Dotfiles"
 
     if [[ ! -d "$repo" ]]; then
@@ -248,6 +248,12 @@ update_dotfiles() {
         log_warning "dotfiles is not a git repository; skipping"
         return 0
     }
+
+    branch="$(git -C "$repo" symbolic-ref --short -q HEAD)" || branch="(detached HEAD)"
+    if [[ "$branch" != "main" ]]; then
+        log_warning "dotfiles is on branch $branch, not main; skipping git pull"
+        return 0
+    fi
 
     log_info "Updating dotfiles repository..."
     if git -C "$repo" pull --ff-only origin main; then
@@ -270,8 +276,7 @@ reconcile_pinned_tools() {
 
     log_section "Reconciling Pinned Tools"
     bash "$setup" --only languages,cli,git-tools,k8s,node \
-        || log_warning "some pinned tools failed to update"
-    return 0
+        || { log_warning "some pinned tools failed to update"; return 1; }
 }
 
 # Clean up (best effort: failures here are warnings, never a failed run)

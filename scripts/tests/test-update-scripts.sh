@@ -41,6 +41,21 @@ test_dirty_dotfiles_is_not_pulled() {
     teardown_test
 }
 
+test_non_main_branch_is_not_pulled() {
+    setup_test "non-main branch"
+    export HOME="$TMPDIR_ROOT/home"
+    make_repo "$HOME/dotfiles"
+    git -C "$HOME/dotfiles" checkout -q -b feature
+    # A pull attempt would warn "could not" (no origin), so its absence proves skipping.
+    load_update_all
+    local out rc
+    out="$(update_dotfiles 2>&1)"; rc=$?
+    assert_eq 0 "$rc" "returns 0"
+    assert_contains "$out" "on branch feature, not main; skipping git pull" "names the branch"
+    assert_not_contains "$out" "could not" "never attempted the pull"
+    teardown_test
+}
+
 test_failed_pull_is_a_warning() {
     setup_test "no remote"
     export HOME="$TMPDIR_ROOT/home"
@@ -97,6 +112,38 @@ test_failing_step_is_recorded() {
     teardown_test
 }
 
+test_pinned_tool_failure_is_recorded() {
+    setup_test "pinned tools failure"
+    export HOME="$TMPDIR_ROOT/home"
+    mkdir -p "$HOME/dotfiles/scripts"
+    printf '#!/usr/bin/env bash\necho "$*" > "%s/setup.args"\nexit 1\n' "$TMPDIR_ROOT" \
+        > "$HOME/dotfiles/scripts/setup-ubuntu.sh"
+    load_update_all
+    # shellcheck disable=SC2034  # read by the sourced update-all.sh
+    OS=linux
+    FAILED_STEPS=()
+    run_step pinned-tools reconcile_pinned_tools > "$TMPDIR_ROOT/out" 2>&1
+    assert_eq "pinned-tools" "${FAILED_STEPS[*]-}" "step recorded"
+    assert_contains "$(cat "$TMPDIR_ROOT/setup.args")" "--only languages,cli,git-tools,k8s,node" "sections"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "some pinned tools failed to update" "warns"
+    local out
+    out="$(generate_summary 2>&1)"
+    assert_contains "$out" "completed with failures: pinned-tools" "summary"
+    assert_not_contains "$out" "completed successfully" "no false success"
+    # Exit code: a full run with this failure must exit 1 (steps mocked out).
+    out="$(
+        # shellcheck disable=SC1090
+        UPDATE_ALL_SOURCE_ONLY=1 . "$SCRIPT"; set +e
+        OS=linux
+        detect_os() { :; }
+        update_dotfiles() { :; }; update_package_managers() { :; }
+        update_cli_tools() { :; }; update_security_tools() { :; }; cleanup() { :; }
+        ( main ) > /dev/null 2>&1; echo "exit=$?"
+    )"
+    assert_contains "$out" "exit=1" "main exits 1"
+    teardown_test
+}
+
 test_passing_step_is_not_recorded() {
     setup_test "passing step"
     load_update_all
@@ -142,6 +189,8 @@ test_setup_update_has_no_stale_aliases() {
     assert_eq 0 "$(grep -c -- '--full' "$SCRIPTS/setup-update.sh")" "no --full"
     assert_eq 0 "$(grep -cE 'go-up|pip-up' "$SCRIPTS/setup-update.sh")" "no go-up/pip-up"
     assert_eq 0 "$(grep -c 'update_shell_configs' "$SCRIPTS/setup-update.sh")" "no rc writer"
+    assert_eq 0 "$(grep -c 'system prune' "$SCRIPTS/setup-update.sh")" "no system prune alias"
+    assert_contains "$(grep 'docker-up' "$SCRIPTS/setup-update.sh")" "docker image prune -f && docker builder prune -f --filter until=168h" "docker-up"
     teardown_test
 }
 
@@ -161,6 +210,9 @@ test_setup_update_renames_manager() {
     bash "$SCRIPTS/setup-update.sh" > /dev/null 2>&1
     assert_eq yes "$([ -e "$HOME/.local/bin/update-manager" ] && echo yes || echo no)" "foreign one kept"
     assert_not_contains "$(cat "$HOME/.update_aliases")" "--full" "aliases have no --full"
+    # npm-up is generated for macOS only
+    assert_eq no "$(awk '/^else/{l=1} /^fi/{l=0} l&&/npm-up/{f=1} END{print f?"yes":"no"}' "$HOME/.update_aliases")" "no npm-up in linux branch"
+    assert_contains "$(grep -c 'npm-up' "$HOME/.update_aliases")" "1" "npm-up defined once"
     teardown_test
 }
 
@@ -173,9 +225,11 @@ test_update_quick_leaves_npm_alone_on_linux() {
 }
 
 test_dirty_dotfiles_is_not_pulled
+test_non_main_branch_is_not_pulled
 test_failed_pull_is_a_warning
 test_cleanup_never_prunes_volumes
 test_failing_step_is_recorded
+test_pinned_tool_failure_is_recorded
 test_passing_step_is_not_recorded
 test_summary_reports_failures
 test_dry_run_changes_nothing
