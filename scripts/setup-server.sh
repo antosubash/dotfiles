@@ -34,7 +34,7 @@ require_cmd id
 if [ "$(id -u)" -eq 0 ]; then
     if ! command -v sudo &> /dev/null; then
         echo "Running as root; aliasing 'sudo' to direct execution."
-        sudo() { "$@"; }
+        sudo() { env "$@"; }
     fi
 else
     require_cmd sudo "Install sudo (apt install sudo) and add your user to the sudo group."
@@ -113,7 +113,13 @@ else
     # Extract into the temp dir first; /opt/nvim is replaced only once tar succeeded.
     if curl -fsSL "$NVIM_URL" -o "$TMP_NVIM/$NVIM_TARBALL" \
         && tar -C "$TMP_NVIM" -xzf "$TMP_NVIM/$NVIM_TARBALL"; then
-        sudo rm -rf /opt/nvim && sudo mv "$TMP_NVIM/nvim-linux-${NVIM_ARCH}" /opt/nvim
+        # Stage next to the target (root-owned, same filesystem), then swap, so a
+        # failed copy never leaves /opt/nvim half-written.
+        sudo rm -rf /opt/nvim.new
+        sudo mv "$TMP_NVIM/nvim-linux-${NVIM_ARCH}" /opt/nvim.new \
+            && sudo chown -R root:root /opt/nvim.new \
+            && sudo rm -rf /opt/nvim \
+            && sudo mv /opt/nvim.new /opt/nvim
         sudo ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim
         # Remove apt-installed nvim to avoid PATH conflicts.
         if dpkg -l neovim 2>/dev/null | grep -q '^ii'; then
@@ -194,7 +200,8 @@ fi
 apt_install_missing ufw
 
 # Configure and enable UFW with safe defaults (SSH allowed, deny incoming,
-# allow outgoing). configure_ufw leaves an already-active firewall alone.
+# allow outgoing). configure_ufw always runs `ufw allow OpenSSH`; the default
+# policies, the tailscale0 allow rule and enabling happen only while UFW is inactive.
 # Also allow sshd on any non-default port first, so enabling UFW can't cut off SSH.
 if ! sudo ufw status | grep -q "Status: active"; then
     for port in $(sudo sshd -T 2>/dev/null | awk '$1 == "port" && $2 != 22 { print $2 }'); do
@@ -277,6 +284,8 @@ else
             echo "atuin download or checksum verification failed — skipping."
         fi
         rm -rf "$TMP_ATUIN"
+    else
+        echo "Could not query the latest atuin release; skipping atuin."
     fi
 fi
 

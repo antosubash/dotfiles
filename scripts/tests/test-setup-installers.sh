@@ -219,7 +219,29 @@ test_configure_ufw_leaves_active_firewall_under_pipefail() {
     end_test
 }
 
+test_install_docker_keeps_ubuntu_docker_io() {
+    setup_test "install_docker with docker.io present"
+    setup_fakes
+    echo docker.io > "$INSTALLED"
+    mkdir -p "$TMPDIR_ROOT/systemd"
+    fake getent '[ "$2" = docker ] && echo "docker:x:999:"'
+    fake id 'echo "anto sudo"'
+    fake curl 'echo "curl $*" >> "$CALLS"'
+    fake systemctl 'echo "systemctl $*" >> "$CALLS"'
+    add_apt_source() { echo "add_apt_source $*" >> "$CALLS"; }
+    USER=anto SYSTEMD_RUN_DIR="$TMPDIR_ROOT/systemd" install_docker > "$TMPDIR_ROOT/out" 2>&1
+    assert_eq 0 $? "returns 0"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "docker.io (Ubuntu's Docker) is installed; leaving it in place" "message"
+    assert_not_contains "$(cat "$CALLS")" "add_apt_source" "no repo added"
+    assert_not_contains "$(cat "$CALLS")" "curl" "no download"
+    assert_not_contains "$(cat "$CALLS")" "docker-ce" "no docker-ce"
+    assert_contains "$(cat "$CALLS")" "usermod -aG docker anto" "user added to group"
+    assert_contains "$(cat "$CALLS")" "systemctl enable --now docker" "service enabled"
+    end_test
+}
+
 test_apt_install_missing_installs_only_missing
+test_install_docker_keeps_ubuntu_docker_io
 test_snap_install_missing
 test_ensure_user_in_group
 test_install_dotnet_only_missing_channels

@@ -52,6 +52,13 @@ _os_family() { (. /etc/os-release && if [ "$ID" = debian ]; then echo debian; el
 # ---------- Vendor apt repositories ----------
 
 install_docker() {
+    if _pkg_installed docker.io; then
+        # docker-ce conflicts with Ubuntu's docker.io; don't swap one for the other.
+        echo "docker.io (Ubuntu's Docker) is installed; leaving it in place instead of switching to Docker CE."
+        ensure_user_in_group docker || return 1
+        if has_systemd; then sudo systemctl enable --now docker; fi
+        return 0
+    fi
     local family; family="$(_os_family)"
     add_apt_source docker "https://download.docker.com/linux/$family/gpg" "$DOCKER_KEY_FINGERPRINT" \
         "https://download.docker.com/linux/$family" "$(_os_codename)" stable || return 1
