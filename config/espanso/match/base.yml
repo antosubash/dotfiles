@@ -1,0 +1,28 @@
+# Starter espanso matches, linked to ~/.config/espanso/match/base.yml by install.sh.
+matches:
+  - trigger: ":date"
+    replace: "{{date}}"
+    vars:
+      - name: date
+        type: date
+        params: { format: "%d.%m.%Y" }
+  - trigger: ":isodate"
+    replace: "{{date}}"
+    vars:
+      - name: date
+        type: date
+        params: { format: "%Y-%m-%d" }
+  - trigger: ":time"
+    replace: "{{time}}"
+    vars:
+      - name: time
+        type: date
+        params: { format: "%H:%M" }
+  - trigger: ":mail"
+    replace: "{{mail}}"
+    vars:
+      - name: mail
+        type: shell
+        params: { cmd: "git config --global user.email" }
+  - trigger: ":shrug"
+    replace: "¯\\_(ツ)_/¯"

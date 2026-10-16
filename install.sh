@@ -90,6 +90,12 @@ if [ -f "$DOTFILES_DIR/config/.p10k.zsh" ]; then
     echo "Powerlevel10k configuration installed"
 fi
 
+# espanso text expansion matches
+if [ "$(uname)" = Linux ]; then
+    mkdir -p "$HOME/.config/espanso/match"
+    backup_and_symlink "$DOTFILES_DIR/config/espanso/match/base.yml" "$HOME/.config/espanso/match/base.yml"
+fi
+
 # Claude Code — settings, agents, and commands
 if [ -f "$DOTFILES_DIR/scripts/setup-claude.sh" ]; then
     bash "$DOTFILES_DIR/scripts/setup-claude.sh"
