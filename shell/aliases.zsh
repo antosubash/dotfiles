@@ -175,7 +175,7 @@ fi
 
 UPDATE_BIN="$LOCAL_BIN_DIR/update"
 UPDATE_QUICK_BIN="$LOCAL_BIN_DIR/update-quick"
-UPDATE_MANAGER_BIN="$LOCAL_BIN_DIR/update-manager"
+UPDATE_MANAGER_BIN="$LOCAL_BIN_DIR/dotfiles-update"
 UPDATE_SCRIPT="$DOTFILES_DIR/scripts/update-all.sh"
 UPDATE_QUICK_SCRIPT="$DOTFILES_DIR/scripts/update-quick.sh"
 
@@ -195,7 +195,7 @@ alias upd="update-quick"
 alias upf="update"
 
 if [[ -x "$UPDATE_MANAGER_BIN" ]]; then
-    alias update-manager="$UPDATE_MANAGER_BIN"
+    alias dotfiles-update="$UPDATE_MANAGER_BIN"
 fi
 
 # Repo workspace sync — fetch every repo under ~/Repos, put it back on its

@@ -297,7 +297,7 @@ Per-machine tweaks (font size on a HiDPI screen, opacity) go in an untracked `~/
 # Available commands after installation:
 update          # Full system update
 update-quick    # Fast daily update
-update-manager  # Interactive manager
+dotfiles-update  # Interactive manager
 ```
 
 ## 🎯 Available Commands
@@ -307,7 +307,7 @@ update-manager  # Interactive manager
 ```bash
 update              # Full update of all tools
 update-quick        # Fast daily updates (package managers only)
-update-manager      # Interactive update interface
+dotfiles-update      # Interactive update interface
 update --cleanup    # Clean caches and old files
 
 # Aliases
@@ -372,7 +372,7 @@ Use Nordic color scheme in `config/terminal-colors.md` for consistency.
 update-quick
 
 # Check what's outdated
-update-manager status
+dotfiles-update status
 ```
 
 ### Weekly Maintenance
@@ -462,7 +462,7 @@ sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.
 #### Update Manager
 
 ```bash
-update-manager help  # Show all update options
+dotfiles-update help  # Show all update options
 ```
 
 #### Script Help
@@ -475,7 +475,7 @@ update-manager help  # Show all update options
 #### Check Versions
 
 ```bash
-update-manager status  # Check all tool versions
+dotfiles-update status  # Check all tool versions
 ```
 
 ## 📚 Advanced Usage

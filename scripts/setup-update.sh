@@ -85,12 +85,12 @@ create_alias_file() {
 alias update='~/.local/bin/update'
 alias update-all='~/.local/bin/update'
 alias update-quick='~/.local/bin/update-quick'
-alias update-full='~/.local/bin/update --full'
+alias update-full='~/.local/bin/update'
 alias update-clean='~/.local/bin/update --cleanup'
 
 # Convenience aliases
 alias upd='update-quick'
-alias upf='update --full'
+alias upf='update'
 alias upc='update --cleanup'
 
 # Package manager specific updates
@@ -104,9 +104,7 @@ fi
 
 # Language specific updates
 alias npm-up='npm update -g'
-alias pip-up='pip3 list --outdated --format=freeze | grep -v "^\-e" | cut -d "=" -f 1 | xargs -n1 pip3 install -U'
 alias rust-up='rustup update'
-alias go-up='go install -a all'
 alias dotnet-up='dotnet tool list --global | tail -n +3 | awk "{print $1}" | xargs -I {} dotnet tool update --global {}'
 
 # Dev tools updates
@@ -116,28 +114,6 @@ alias docker-up='docker system prune -f'
 EOF
     
     log "Update aliases created in ~/.update_aliases"
-}
-
-# Update shell configurations
-update_shell_configs() {
-    info "Updating shell configurations..."
-    
-    # .zshrc needs nothing: shell/aliases.zsh already sources ~/.update_aliases
-    # and defines the update aliases with a fallback to the repo scripts.
-
-    # Update .bashrc if it exists
-    if [[ -f "$HOME/dotfiles/shell/.bashrc" ]]; then
-        if ! grep -qF '.update_aliases' "$HOME/dotfiles/shell/.bashrc"; then
-            cat >> "$HOME/dotfiles/shell/.bashrc" << 'EOF'
-
-# Update command aliases
-if [ -f "$HOME/.update_aliases" ]; then
-    source "$HOME/.update_aliases"
-fi
-EOF
-            log "Updated .bashrc with update aliases"
-        fi
-    fi
 }
 
 # Create update schedule setup
@@ -188,11 +164,17 @@ EOF
     log "Update reminder created"
 }
 
-# Create update manager script
+# Create update manager script (named dotfiles-update; formerly update-manager)
 create_manager() {
-    info "Creating update manager..."
-    
-    cat > "$BIN_DIR/update-manager" << 'EOF'
+    info "Creating dotfiles-update..."
+
+    # Remove the old name, but only if this installer created it
+    if [[ -f "$BIN_DIR/update-manager" ]] && grep -q dotfiles "$BIN_DIR/update-manager"; then
+        rm -f "$BIN_DIR/update-manager"
+        log "Removed old update-manager (now dotfiles-update)"
+    fi
+
+    cat > "$BIN_DIR/dotfiles-update" << 'EOF'
 #!/bin/bash
 # Update Manager - GUI for update commands
 
@@ -207,11 +189,11 @@ show_help() {
 5) Help             - Show this help
 
 Usage:
-  update-manager          # Interactive mode
-  update-manager quick    # Run quick update
-  update-manager full     # Run full update
-  update-manager clean    # Run cleanup
-  update-manager status   # Check status
+  dotfiles-update          # Interactive mode
+  dotfiles-update quick    # Run quick update
+  dotfiles-update full     # Run full update
+  dotfiles-update clean    # Run cleanup
+  dotfiles-update status   # Check status
 
 Examples:
   update                # Alias for full update
@@ -305,8 +287,8 @@ else
 fi
 EOF
     
-    chmod +x "$BIN_DIR/update-manager"
-    log "Update manager created"
+    chmod +x "$BIN_DIR/dotfiles-update"
+    log "dotfiles-update created"
 }
 
 # Main installer
@@ -329,7 +311,6 @@ main() {
     create_update_command
     create_quick_update_command
     create_alias_file
-    update_shell_configs
     setup_cron_jobs
     create_manager
     
@@ -339,7 +320,7 @@ main() {
     echo "📋 Available Commands:"
     echo "  update         - Full update of all tools"
     echo "  update-quick   - Fast daily updates"
-    echo "  update-manager - Interactive update manager"
+    echo "  dotfiles-update - Interactive update manager"
     echo "  update --cleanup - Clean caches and old files"
     echo ""
     echo "🎭 Aliases:"
@@ -351,7 +332,7 @@ main() {
     echo "  update              # Full update"
     echo "  update-quick        # Quick daily update"
     echo "  update --cleanup    # Cleanup only"
-    echo "  update-manager      # Interactive mode"
+    echo "  dotfiles-update      # Interactive mode"
     echo ""
     warn "💡 Restart your terminal or run 'source ~/.zshrc' to enable commands"
 }
