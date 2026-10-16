@@ -146,6 +146,24 @@ test_pinned_tool_failure_is_recorded() {
     teardown_test
 }
 
+test_pinned_tools_skipped_as_root() {
+    setup_test "pinned tools as root"
+    export HOME="$TMPDIR_ROOT/home"
+    mkdir -p "$HOME/dotfiles/scripts"
+    printf '#!/usr/bin/env bash\necho called > "%s/setup.called"\nexit 1\n' "$TMPDIR_ROOT" \
+        > "$HOME/dotfiles/scripts/setup-ubuntu.sh"
+    printf '#!/usr/bin/env bash\necho 0\n' > "$FAKE_BIN/id"; chmod +x "$FAKE_BIN/id"
+    load_update_all
+    # shellcheck disable=SC2034  # read by the sourced update-all.sh
+    OS=linux
+    FAILED_STEPS=()
+    run_step pinned-tools reconcile_pinned_tools > "$TMPDIR_ROOT/out" 2>&1
+    assert_eq "" "${FAILED_STEPS[*]-}" "not recorded as failed"
+    assert_eq "no" "$([ -e "$TMPDIR_ROOT/setup.called" ] && echo yes || echo no)" "setup-ubuntu.sh not run"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "Running as root; skipping pinned-tool reconcile" "says why"
+    teardown_test
+}
+
 test_passing_step_is_not_recorded() {
     setup_test "passing step"
     load_update_all
@@ -232,6 +250,7 @@ test_failed_pull_is_a_warning
 test_cleanup_never_prunes_volumes
 test_failing_step_is_recorded
 test_pinned_tool_failure_is_recorded
+test_pinned_tools_skipped_as_root
 test_passing_step_is_not_recorded
 test_summary_reports_failures
 test_dry_run_changes_nothing

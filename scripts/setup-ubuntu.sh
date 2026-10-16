@@ -21,8 +21,15 @@ section_base() {
     sudo apt update || echo "WARNING: apt update reported errors; continuing with the package lists apt has."
     # In their own call, so a package missing from this release's archive can't hold them back.
     apt_install_missing curl ca-certificates gnupg
-    apt_install_missing wget git htop btop fastfetch vim nano build-essential cmake \
+    apt_install_missing wget git htop btop vim nano build-essential cmake \
         net-tools openssl unzip bc sqlite3 shellcheck ffmpeg python-is-python3
+    # fastfetch is only in the archives from Ubuntu 24.10; on 24.04 one unknown
+    # name would make apt skip every package in the call above.
+    if apt-cache show fastfetch > /dev/null 2>&1; then
+        apt_install_missing fastfetch
+    else
+        echo "WARNING: fastfetch isn't in this release's apt archive; skipping it." >&2
+    fi
 }
 
 section_editor() { apt_install_missing neovim; }

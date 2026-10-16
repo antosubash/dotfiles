@@ -95,6 +95,7 @@ test_base_section_installs_apt_source_prereqs_first() {
         printf 'case "$*" in *fastfetch*) exit 100 ;; esac\n'
     } > "$FAKE_BIN/sudo"
     printf '#!/bin/sh\nexit 1\n' > "$FAKE_BIN/dpkg-query"
+    printf '#!/bin/sh\nexit 0\n' > "$FAKE_BIN/apt-cache"
     chmod +x "$FAKE_BIN"/*
     load_setup_ubuntu
     run_sections base > "$TMPDIR_ROOT/out" 2>&1

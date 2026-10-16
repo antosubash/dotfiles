@@ -108,6 +108,11 @@ fi
 case "$(cat "${DEV_TUNING_CHASSIS_FILE:-/sys/class/dmi/id/chassis_type}" 2> /dev/null)" in
     3|4|5|6|7|13|15|16|24|35) desktop=1 ;;
 esac
+# Network mounts (NFS, CIFS, or anything marked _netdev) do need the network up first.
+if [ "$desktop" = 1 ] && grep -Eqs '^[^#]*([[:space:]](nfs4?|cifs|smb3|smbfs|sshfs|fuse\.sshfs)[[:space:]]|_netdev)' "${DEV_TUNING_FSTAB:-/etc/fstab}"; then
+    echo "Network mounts in fstab; leaving NetworkManager-wait-online enabled."
+    desktop=0
+fi
 if [ "$desktop" = 1 ]; then
     if systemctl is-enabled --quiet NetworkManager-wait-online.service 2> /dev/null; then
         echo "Disabling NetworkManager-wait-online (desktop: boot need not wait for the network)..."

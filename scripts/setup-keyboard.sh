@@ -126,6 +126,10 @@ install_gpaste() {
 }
 
 install_espanso() {
+    if ! is_amd64; then
+        echo "Skipping espanso: the pinned .deb is x86_64 only."
+        return 0
+    fi
     if needs_install espanso "$ESPANSO_VERSION"; then
         install_verified_deb "$ESPANSO_URL" "$ESPANSO_SHA256" || return 1
     fi

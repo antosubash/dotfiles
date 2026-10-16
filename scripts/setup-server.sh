@@ -197,14 +197,9 @@ fi
 apt_install_missing ufw
 
 # Configure and enable UFW with safe defaults (SSH allowed, deny incoming,
-# allow outgoing). configure_ufw always runs `ufw allow OpenSSH`; the default
-# policies, the tailscale0 allow rule and enabling happen only while UFW is inactive.
-# Also allow sshd on any non-default port first, so enabling UFW can't cut off SSH.
-if ! sudo ufw status | grep -q "Status: active"; then
-    for port in $(sudo sshd -T 2>/dev/null | awk '$1 == "port" && $2 != 22 { print $2 }'); do
-        sudo ufw allow "$port/tcp"
-    done
-fi
+# allow outgoing). configure_ufw always runs `ufw allow OpenSSH`; while UFW is
+# inactive it also allows sshd's non-default ports, sets the default policies and
+# the tailscale0 allow rule, and enables UFW.
 configure_ufw
 
 # Install VPN tools

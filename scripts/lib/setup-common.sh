@@ -309,9 +309,21 @@ PermitRootLogin no"
 # has_systemd: false in containers and WSL without systemd.
 has_systemd() { [ -d "${SYSTEMD_RUN_DIR:-/run/systemd/system}" ]; }
 
-# _os_codename / _os_family: the release codename, and debian or ubuntu, from /etc/os-release.
-_os_codename() { (. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}"); }
-_os_family() { (. /etc/os-release && if [ "$ID" = debian ]; then echo debian; else echo ubuntu; fi); }
+# _os_codename / _os_family: the release codename, and debian or ubuntu, from
+# ${OS_RELEASE_FILE:-/etc/os-release}. Ubuntu and its derivatives (ID_LIKE has ubuntu)
+# are ubuntu; everything else, Debian derivatives included, is debian.
+# shellcheck disable=SC1090  # overridable path
+_os_codename() { (. "${OS_RELEASE_FILE:-/etc/os-release}" && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}"); }
+_os_family() {
+    (
+        # shellcheck disable=SC1090
+        . "${OS_RELEASE_FILE:-/etc/os-release}"
+        case " ${ID:-} ${ID_LIKE:-} " in
+            *" ubuntu "*) echo ubuntu ;;
+            *) echo debian ;;
+        esac
+    )
+}
 
 # require_debian_host: exits unless this is a Debian/Ubuntu host.
 require_debian_host() {
@@ -468,7 +480,9 @@ setup_path() {
 # start_sudo_keepalive: one password prompt up front, refreshed until exit.
 start_sudo_keepalive() {
     sudo -v || { echo "ERROR: this script needs sudo." >&2; exit 1; }
-    ( while kill -0 "$$" 2>/dev/null; do sudo -n true 2>/dev/null; sleep 50; done ) &
+    # Detached from the log pipe: killing the loop leaves its `sleep` running, and
+    # a sleep holding that pipe would keep tee (and any caller reading us) waiting.
+    ( while kill -0 "$$" 2>/dev/null; do sudo -n true 2>/dev/null; sleep 50; done ) > /dev/null 2>&1 &
     SUDO_KEEPALIVE_PID=$!
     trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null' EXIT
 }

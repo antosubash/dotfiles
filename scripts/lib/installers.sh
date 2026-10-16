@@ -50,9 +50,11 @@ snap_install_missing() {
 
 # ensure_user_in_group GROUP: adds the invoking user to GROUP if it exists.
 ensure_user_in_group() {
-    local group="$1" user="${SUDO_USER:-$USER}"
+    local group="$1" user="${SUDO_USER:-$USER}" groups_now
     getent group "$group" > /dev/null || return 0
-    id -nG "$user" | tr ' ' '\n' | grep -qx "$group" && return 0
+    # Captured first: `id | tr | grep -q` can fail with SIGPIPE under pipefail.
+    groups_now="$(id -nG "$user" | tr ' ' '\n')"
+    grep -qxF "$group" <<< "$groups_now" && return 0
     sudo usermod -aG "$group" "$user" || return 1
     echo "Added $user to the $group group; log out and back in for it to apply."
 }
@@ -347,6 +349,12 @@ configure_ufw() {
         echo "UFW is already active; its rules are left as they are."
         return 0
     fi
+    # sshd on a non-default port isn't covered by the OpenSSH profile: allow it
+    # first so enabling the firewall can't cut off this session.
+    local port
+    for port in $(sudo sshd -T 2>/dev/null | awk '$1 == "port" && $2 != 22 { print $2 }'); do
+        sudo ufw allow "$port/tcp"
+    done
     sudo ufw default deny incoming
     sudo ufw default allow outgoing
     sudo ufw allow in on tailscale0

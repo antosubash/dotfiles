@@ -275,6 +275,10 @@ reconcile_pinned_tools() {
     [[ "$OS" == "linux" && -f "$setup" ]] || return 0
 
     log_section "Reconciling Pinned Tools"
+    if [[ "$(id -u)" == 0 ]]; then  # setup-ubuntu.sh refuses root
+        log_warning "Running as root; skipping pinned-tool reconcile (run setup-ubuntu.sh as your user to update pinned tools)"
+        return 0
+    fi
     # Upgrade-only: tools this machine never had (pi on a server, say) stay absent.
     SETUP_UPGRADE_ONLY=1 bash "$setup" --only languages,cli,git-tools,k8s,node \
         || { log_warning "some pinned tools failed to update"; return 1; }

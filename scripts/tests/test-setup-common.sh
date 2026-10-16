@@ -383,6 +383,41 @@ test_pinned_downloads_match() {
     teardown_test
 }
 
+test_os_family_and_codename() {
+    setup_test "os family"
+    load_lib
+    local f="$TMPDIR_ROOT/os-release"
+    check() {  # name family codename, with the os-release body on stdin
+        cat > "$f"
+        export OS_RELEASE_FILE="$f"
+        assert_eq "$2" "$(_os_family)" "$1 family"
+        assert_eq "$3" "$(_os_codename)" "$1 codename"
+    }
+    check ubuntu ubuntu noble <<'EOF'
+ID=ubuntu
+ID_LIKE=debian
+VERSION_CODENAME=noble
+UBUNTU_CODENAME=noble
+EOF
+    check mint ubuntu noble <<'EOF'
+ID=linuxmint
+ID_LIKE="ubuntu debian"
+VERSION_CODENAME=wilma
+UBUNTU_CODENAME=noble
+EOF
+    check debian debian bookworm <<'EOF'
+ID=debian
+VERSION_CODENAME=bookworm
+EOF
+    check kali debian kali-rolling <<'EOF'
+ID=kali
+ID_LIKE=debian
+VERSION_CODENAME=kali-rolling
+EOF
+    unset OS_RELEASE_FILE
+    teardown_test
+}
+
 test_every_pin_is_https_with_a_sha256
 test_download_verified_accepts_match_and_rejects_mismatch
 test_install_verified_binary_handles_each_format
@@ -396,6 +431,7 @@ test_add_apt_source_ignores_an_unrelated_broken_repo
 test_add_apt_source_keeps_legacy_list_when_refresh_fails
 test_add_apt_source_removes_a_recreated_list
 test_add_apt_source_needs_a_fingerprint
+test_os_family_and_codename
 test_install_verified_deb
 [ "${VERIFY_DOWNLOADS:-0}" = 1 ] && test_pinned_downloads_match
 
