@@ -66,7 +66,7 @@ alias gcl="git clone"
 
 # Development aliases - Docker
 alias d="docker"
-alias dc="docker-compose"
+alias dc="docker compose"
 alias dps="docker ps"
 alias dpa="docker ps -a"
 alias di="docker images"
@@ -75,8 +75,8 @@ alias dr="docker run"
 alias drm="docker rm"
 alias drmi="docker rmi"
 alias dstop="docker stop"
-alias dup="docker-compose up -d"
-alias ddown="docker-compose down"
+alias dup="docker compose up -d"
+alias ddown="docker compose down"
 
 # Development aliases - Node.js
 alias ns="npm start"
