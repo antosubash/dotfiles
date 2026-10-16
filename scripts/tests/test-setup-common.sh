@@ -193,6 +193,11 @@ teardown_apt_fakes() {
     teardown_test
 }
 
+primary_fprs() {  # primary_fprs KEYRING -> one primary-key fingerprint per line
+    gpg --batch --show-keys --with-colons "$1" 2>/dev/null \
+        | awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }'
+}
+
 make_key() {  # make_key NAME -> armored public key in $FIXTURES/NAME.asc, prints fingerprint
     local home="$TMPDIR_ROOT/gnupg-$1"; mkdir -p "$home"; chmod 700 "$home"
     GNUPGHOME="$home" gpg --batch --quiet --pinentry-mode loopback --passphrase '' \
@@ -210,8 +215,9 @@ test_add_apt_source_accepts_binary_and_multi_key_files() {
     a="$(make_key alpha)"; b="$(make_key beta)"
     cat "$FIXTURES/alpha.asc" "$FIXTURES/beta.asc" > "$FIXTURES/multi.asc"
     add_apt_source multi https://x.test/multi.asc "$b" https://repo.test/deb stable main > /dev/null; assert_eq 0 $? "second key of a multi-key file"
+    assert_eq "$b" "$(primary_fprs "$APT_KEYRINGS_DIR/multi.gpg")" "keyring holds only the pinned key"
     add_apt_source bin https://x.test/alpha.gpg "$a" https://repo.test/deb stable main > /dev/null; assert_eq 0 $? "binary key"
-    assert_eq "$(sha "$FIXTURES/alpha.gpg")" "$(sha "$APT_KEYRINGS_DIR/bin.gpg")" "binary key stored as is"
+    assert_eq "$a" "$(primary_fprs "$APT_KEYRINGS_DIR/bin.gpg")" "binary key's keyring holds the pinned key"
     add_apt_source flat https://x.test/alpha.asc "$a" https://repo.test/deb/amd64 / "" > /dev/null; assert_eq 0 $? "flat repo"
     assert_not_contains "$(cat "$APT_SOURCES_DIR/flat.sources")" "Components:" "flat repo has no Components"
     assert_contains "$(cat "$APT_SOURCES_DIR/flat.sources")" "Suites: /" "flat suite"
@@ -240,6 +246,27 @@ test_add_apt_source_is_quiet_when_unchanged() {
     add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main
     assert_eq 0 $? "second run succeeds"
     assert_eq 1 "$(grep -c '^apt update' "$CALLS")" "second run does not update"
+    teardown_apt_fakes
+}
+
+test_add_apt_source_retries_after_a_failed_update() {
+    setup_test "add_apt_source retries after a failed apt update"
+    setup_apt_fakes
+    # apt update fails the first time only.
+    cat > "$FAKE_BIN/apt" <<EOF
+#!/bin/sh
+echo "apt \$*" >> "$CALLS"
+[ -e "$TMPDIR_ROOT/apt-failed" ] && exit 0
+touch "$TMPDIR_ROOT/apt-failed"
+exit 100
+EOF
+    local a; a="$(make_key alpha)"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main 2>/dev/null
+    assert_eq 1 $? "failed update fails"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main
+    assert_eq 0 $? "re-run succeeds"
+    assert_eq 2 "$(grep -c '^apt update' "$CALLS")" "re-run updates again"
+    assert_eq yes "$([ -e "$APT_SOURCES_DIR/vend.sources" ] && echo yes || echo no)" "source in place"
     teardown_apt_fakes
 }
 
@@ -283,6 +310,7 @@ test_harden_sshd_writes_validates_and_reloads
 test_harden_sshd_backs_out_when_sshd_rejects_config
 test_add_apt_source_accepts_binary_and_multi_key_files
 test_add_apt_source_is_quiet_when_unchanged
+test_add_apt_source_retries_after_a_failed_update
 test_install_verified_deb
 [ "${VERIFY_DOWNLOADS:-0}" = 1 ] && test_pinned_downloads_match
 

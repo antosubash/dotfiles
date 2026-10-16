@@ -46,6 +46,32 @@ test_unknown_section_is_an_error() {
     teardown_test
 }
 
+test_only_and_skip_need_a_value() {
+    setup_test "--only / --skip without a value"
+    load_lib
+    local arg out status
+    for arg in --only --skip --only= --skip=; do
+        out="$(parse_section_args "$arg" 2>&1)"; status=$?
+        assert_eq 2 "$status" "$arg exit status"
+        assert_contains "$out" "needs a comma-separated list" "$arg message"
+    done
+    teardown_test
+}
+
+test_exit_status_3_is_a_failure_not_a_skip() {
+    setup_test "exit status 3 is a failure"
+    load_lib
+    section_four() { (exit 3); }
+    (
+        set -e
+        trap 'printf "%s\n" "${SECTION_RESULTS[@]}" > "$TMPDIR_ROOT/results"' EXIT
+        run_sections four > /dev/null 2>&1
+    )
+    assert_eq 1 "$?" "run_sections status"
+    assert_contains "$(cat "$TMPDIR_ROOT/results")" "four|failed (3)" "recorded as failed"
+    teardown_test
+}
+
 test_failing_command_stops_its_section() {
     setup_test "failing command stops its section"
     load_lib
@@ -125,6 +151,8 @@ test_guards_honour_overrides() {
 test_list_prints_sections_in_order
 test_only_and_skip_select_sections
 test_unknown_section_is_an_error
+test_only_and_skip_need_a_value
+test_exit_status_3_is_a_failure_not_a_skip
 test_failing_command_stops_its_section
 test_run_sections_refuses_a_context_that_ignores_errexit
 test_has_nvidia_gpu_reads_sysfs

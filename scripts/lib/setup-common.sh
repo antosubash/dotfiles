@@ -172,29 +172,37 @@ install_go() {
 # add_apt_source NAME KEY_URL KEY_FINGERPRINT URI SUITE [COMPONENTS]
 # Adds a vendor apt repository signed by the key with KEY_FINGERPRINT, which
 # must be a primary key in the file at KEY_URL (armored or binary; vendors
-# such as Google and GitHub ship several keys in one file). Writes the key as
-# $APT_KEYRINGS_DIR/NAME.gpg and the source as $APT_SOURCES_DIR/NAME.sources;
+# such as Google and GitHub ship several keys in one file). Only that key is
+# written, as $APT_KEYRINGS_DIR/NAME.gpg, so no other key in the vendor's file
+# can sign the repository. The source goes to $APT_SOURCES_DIR/NAME.sources;
 # SUITE "/" with empty COMPONENTS writes a flat repository. A NAME.list left by
 # the vendor's own instructions is removed once the .sources file is in place.
-# Runs `apt update` only when the key or source changed.
+# Runs `apt update` only when the key or source changed; if that update fails,
+# removes the .sources file again so the next run retries it.
 add_apt_source() {
     local name="$1" key_url="$2" fingerprint="$3" uri="$4" suite="$5" components="${6:-}"
     local keyrings="${APT_KEYRINGS_DIR:-/etc/apt/keyrings}" sources="${APT_SOURCES_DIR:-/etc/apt/sources.list.d}"
-    local keyring="$keyrings/$name.gpg" tmp status=0 changed=0
+    local keyring="$keyrings/$name.gpg" tmp status=0 changed=0 listing=""
     tmp="$(mktemp -d)"
+    mkdir -m 0700 "$tmp/gnupg"
+    # A throwaway GNUPGHOME and keyring: the vendor's keys never reach ~/.gnupg.
+    local gpg=(gpg --homedir "$tmp/gnupg" --batch --no-default-keyring --keyring "$tmp/import.gpg")
     if ! curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp/key" "$key_url"; then
         echo "ERROR: could not download the $name signing key from $key_url." >&2
         status=1
-    elif ! gpg --batch --show-keys --with-colons "$tmp/key" 2>/dev/null \
-            | awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }' \
-            | grep -qx "$fingerprint"; then
-        echo "ERROR: $key_url has no $name signing key with fingerprint $fingerprint." >&2
-        status=1
-    elif grep -q -- '-----BEGIN PGP' "$tmp/key"; then
-        gpg --batch --dearmor -o "$tmp/key.gpg" "$tmp/key" || status=1
     else
-        cp "$tmp/key" "$tmp/key.gpg"
+        # Import everything, export just the pinned key (binary), then check the
+        # export is exactly one primary key with that fingerprint: exporting by
+        # a subkey's fingerprint would export its primary key instead.
+        "${gpg[@]}" --import "$tmp/key" > /dev/null 2>&1 || true
+        "${gpg[@]}" --export "$fingerprint" > "$tmp/key.gpg" 2>/dev/null || true
+        listing="$("${gpg[@]}" --show-keys --with-colons "$tmp/key.gpg" 2>/dev/null)" || true
+        if [ "$(awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }' <<< "$listing")" != "$fingerprint" ]; then
+            echo "ERROR: $key_url has no $name signing key with fingerprint $fingerprint." >&2
+            status=1
+        fi
     fi
+    gpgconf --homedir "$tmp/gnupg" --kill all > /dev/null 2>&1 || true
     if [ "$status" -eq 0 ] && ! cmp -s "$tmp/key.gpg" "$keyring"; then
         sudo install -D -o root -g root -m 0644 "$tmp/key.gpg" "$keyring" || status=1
         changed=1
@@ -216,7 +224,12 @@ add_apt_source() {
         sudo rm -f "$sources/$name.list"
         changed=1
     fi
-    [ "$changed" -eq 0 ] || sudo apt update
+    [ "$changed" -eq 0 ] && return 0
+    if ! sudo apt update; then
+        echo "ERROR: apt update failed after adding $name; removed $sources/$name.sources so the next run retries." >&2
+        sudo rm -f "$sources/$name.sources"
+        return 1
+    fi
 }
 
 # install_nodejs: Node.js $NODE_MAJOR.x from NodeSource's apt repository.
@@ -315,14 +328,15 @@ needs_install() {
 # Each section runs in its own subshell under `set -euo pipefail`, so a failure
 # ends that section only; the summary lists every section's outcome.
 
-SKIP_STATUS=3
 SECTION_RESULTS=()
 SELECTED_SECTIONS=()
 
-# skip_section REASON: ends the current section as skipped.
+# skip_section REASON: ends the current section as skipped. It leaves a marker
+# file rather than a special exit status, which a failing command could share.
 skip_section() {
     echo "Skipping: $*"
-    exit "$SKIP_STATUS"
+    if [ -n "${SECTION_SKIP_MARKER:-}" ]; then : > "$SECTION_SKIP_MARKER"; fi
+    exit 0
 }
 
 section_usage() {
@@ -332,6 +346,12 @@ section_usage() {
 
 _in_csv() { [[ ",$2," == *",$1,"* ]]; }
 
+_section_arg_error() {
+    echo "ERROR: $1" >&2
+    section_usage >&2
+    exit 2
+}
+
 # parse_section_args ARGS...: sets SELECTED_SECTIONS from --only/--skip (comma
 # separated); exits after --list or -h, and with status 2 on a bad argument.
 parse_section_args() {
@@ -339,18 +359,20 @@ parse_section_args() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --list) printf '%s\n' "${SECTIONS[@]}"; exit 0 ;;
-            --only) only="${2:-}"; shift ;;
-            --only=*) only="${1#*=}" ;;
-            --skip) skip="${2:-}"; shift ;;
-            --skip=*) skip="${1#*=}" ;;
+            --only|--skip)
+                [ -n "${2:-}" ] || _section_arg_error "$1 needs a comma-separated list of sections"
+                if [ "$1" = --only ]; then only="$2"; else skip="$2"; fi
+                shift ;;
+            --only=*|--skip=*)
+                [ -n "${1#*=}" ] || _section_arg_error "${1%%=*} needs a comma-separated list of sections"
+                if [[ $1 == --only=* ]]; then only="${1#*=}"; else skip="${1#*=}"; fi ;;
             -h|--help) section_usage; exit 0 ;;
-            *) echo "ERROR: unknown option: $1" >&2; section_usage >&2; exit 2 ;;
+            *) _section_arg_error "unknown option: $1" ;;
         esac
         shift
     done
     for name in ${only//,/ } ${skip//,/ }; do
-        _in_csv "$name" "$(IFS=,; echo "${SECTIONS[*]}")" || {
-            echo "ERROR: unknown section: $name" >&2; section_usage >&2; exit 2; }
+        _in_csv "$name" "$(IFS=,; echo "${SECTIONS[*]}")" || _section_arg_error "unknown section: $name"
     done
     SELECTED_SECTIONS=()
     for s in "${SECTIONS[@]}"; do
@@ -366,7 +388,7 @@ parse_section_args() {
 # &&, || or ! list, subshells included, so there a failing command could not
 # stop its section. In that context it refuses to run and returns 2.
 run_sections() {
-    local s start status failed=0 errexit=0
+    local s start status failed=0 errexit=0 markers
     [[ $- == *e* ]] && errexit=1
     set +e  # a failing section must not end the caller
     ( set -e; false; true )
@@ -376,18 +398,22 @@ run_sections() {
         [ "$errexit" -eq 0 ] || set -e
         return 2
     fi
+    markers="$(mktemp -d)"
     for s in "$@"; do
         echo ""
         echo "==> $s"
         start=$SECONDS
-        ( set -euo pipefail; "section_${s//-/_}" )
+        ( export SECTION_SKIP_MARKER="$markers/$s"; set -euo pipefail; "section_${s//-/_}" )
         status=$?
-        case "$status" in
-            0) SECTION_RESULTS+=("$s|ok|$((SECONDS - start))s") ;;
-            "$SKIP_STATUS") SECTION_RESULTS+=("$s|skipped|$((SECONDS - start))s") ;;
-            *) SECTION_RESULTS+=("$s|failed ($status)|$((SECONDS - start))s"); failed=1 ;;
-        esac
+        if [ "$status" -ne 0 ]; then
+            SECTION_RESULTS+=("$s|failed ($status)|$((SECONDS - start))s"); failed=1
+        elif [ -e "$markers/$s" ]; then
+            SECTION_RESULTS+=("$s|skipped|$((SECONDS - start))s")
+        else
+            SECTION_RESULTS+=("$s|ok|$((SECONDS - start))s")
+        fi
     done
+    rm -rf "$markers"
     [ "$errexit" -eq 0 ] || set -e
     print_section_summary
     return "$failed"
