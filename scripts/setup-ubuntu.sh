@@ -17,27 +17,31 @@ SECTIONS=(base editor languages dotnet cli security ssh-firewall vpn shell git-t
 
 # Runs first: later sections need curl, gnupg and ca-certificates for add_apt_source.
 section_base() {
+    local status=0
     # One broken third-party source shouldn't stop the installs below.
     sudo apt update || echo "WARNING: apt update reported errors; continuing with the package lists apt has."
     # In their own call, so a package missing from this release's archive can't hold them back.
-    apt_install_missing curl ca-certificates gnupg
+    apt_install_missing curl ca-certificates gnupg || status=1
     apt_install_missing wget git htop btop vim nano build-essential cmake \
-        net-tools openssl unzip bc sqlite3 shellcheck ffmpeg python-is-python3
+        net-tools openssl unzip bc sqlite3 shellcheck ffmpeg python-is-python3 || status=1
     # fastfetch is only in the archives from Ubuntu 24.10; on 24.04 one unknown
     # name would make apt skip every package in the call above.
     if apt-cache show fastfetch > /dev/null 2>&1; then
-        apt_install_missing fastfetch
+        apt_install_missing fastfetch || status=1
     else
         echo "WARNING: fastfetch isn't in this release's apt archive; skipping it." >&2
     fi
+    return "$status"
 }
 
 section_editor() { apt_install_missing neovim; }
 
 section_languages() {
-    apt_install_missing python3 python3-full default-jdk
-    install_pinned_go
-    install_rust
+    local status=0
+    apt_install_missing python3 python3-full default-jdk || status=1
+    install_pinned_go || status=1
+    install_rust || status=1
+    return "$status"
 }
 
 section_dotnet() { install_dotnet 7.0 8.0 9.0 10.0; }
