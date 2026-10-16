@@ -85,18 +85,37 @@ install_nvidia_container_toolkit() {
     fi
 }
 
+# claude_desktop_skip_package_repo: sets CLAUDE_DESKTOP_ADD_REPO="false" in
+# /etc/default/claude-desktop, leaving the file's other lines alone. Without it
+# the package's postinst re-creates claude-desktop.list (signed by its own
+# keyring) on every install and upgrade, and next to claude-desktop.sources
+# that fails every apt run with "Conflicting values set for option Signed-By".
+claude_desktop_skip_package_repo() {
+    local file="${CLAUDE_DESKTOP_DEFAULT_FILE:-/etc/default/claude-desktop}" line='CLAUDE_DESKTOP_ADD_REPO="false"'
+    local key='^[[:space:]]*(export[[:space:]]+)?CLAUDE_DESKTOP_ADD_REPO='
+    if [ ! -e "$file" ]; then
+        printf '%s\n' "$line" | sudo tee "$file" > /dev/null
+    elif ! grep -qE "$key" "$file"; then
+        printf '%s\n' "$line" | sudo tee -a "$file" > /dev/null
+    elif grep -E "$key" "$file" | grep -qvxF "$line"; then
+        sudo sed -i -E "s/${key}.*/${line}/" "$file"
+    fi
+}
+
 install_desktop_apps() {
-    local status=0
+    local status=0 sources="${APT_SOURCES_DIR:-/etc/apt/sources.list.d}"
     snap_install_missing brave || status=1
     # Chrome's package keeps its own google-chrome.sources up to date (rewriting
     # it on each update), so only bootstrap the repository when it isn't there.
-    if [ ! -e /etc/apt/sources.list.d/google-chrome.sources ] && [ ! -e /etc/apt/sources.list.d/google-chrome.list ]; then
+    if [ ! -e "$sources/google-chrome.sources" ] && [ ! -e "$sources/google-chrome.list" ]; then
         add_apt_source google-chrome https://dl.google.com/linux/linux_signing_key.pub \
             "$GOOGLE_KEY_FINGERPRINT" https://dl.google.com/linux/chrome-stable/deb/ stable main || status=1
     fi
     apt_install_missing google-chrome-stable || status=1
-    add_apt_source claude-desktop https://downloads.claude.ai/claude-desktop/key.asc \
-        "$CLAUDE_DESKTOP_KEY_FINGERPRINT" https://downloads.claude.ai/claude-desktop/apt/stable stable main \
+    # Opt out first: add_apt_source then removes a claude-desktop.list the package wrote.
+    claude_desktop_skip_package_repo \
+        && add_apt_source claude-desktop https://downloads.claude.ai/claude-desktop/key.asc \
+            "$CLAUDE_DESKTOP_KEY_FINGERPRINT" https://downloads.claude.ai/claude-desktop/apt/stable stable main \
         && apt_install_missing claude-desktop || status=1
     return "$status"
 }

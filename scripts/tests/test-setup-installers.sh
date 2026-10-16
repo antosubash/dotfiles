@@ -240,7 +240,41 @@ test_install_docker_keeps_ubuntu_docker_io() {
     end_test
 }
 
+# claude-desktop's postinst re-creates its own claude-desktop.list on every
+# install and upgrade unless /etc/default/claude-desktop opts out; next to our
+# claude-desktop.sources that fails apt with conflicting Signed-By values.
+test_desktop_apps_opt_claude_desktop_out_of_its_own_repo() {
+    setup_test "claude-desktop repo opt-out"
+    setup_fakes
+    export APT_SOURCES_DIR="$TMPDIR_ROOT/sources" CLAUDE_DESKTOP_DEFAULT_FILE="$TMPDIR_ROOT/default/claude-desktop"
+    mkdir -p "$APT_SOURCES_DIR" "$TMPDIR_ROOT/default"
+    printf 'google-chrome-stable\nclaude-desktop\n' > "$INSTALLED"
+    echo brave > "$TMPDIR_ROOT/snaps"
+    # The real add_apt_source removes the package's .list; record what the default file held by then.
+    add_apt_source() {
+        echo "add_apt_source $1" >> "$CALLS"
+        [ "$1" = claude-desktop ] && cp "$CLAUDE_DESKTOP_DEFAULT_FILE" "$TMPDIR_ROOT/default-at-add" 2>/dev/null
+        return 0
+    }
+    local key='CLAUDE_DESKTOP_ADD_REPO="false"'
+    install_desktop_apps > /dev/null 2>&1
+    assert_eq 0 $? "returns 0"
+    assert_contains "$(cat "$TMPDIR_ROOT/default-at-add" 2>/dev/null)" "$key" "opted out before the source is added"
+    install_desktop_apps > /dev/null 2>&1
+    assert_eq 1 "$(grep -c CLAUDE_DESKTOP_ADD_REPO "$CLAUDE_DESKTOP_DEFAULT_FILE")" "re-run does not duplicate the key"
+    # An existing file: other settings stay, another value is switched to false.
+    printf '# admin notes\nOTHER=1\nexport CLAUDE_DESKTOP_ADD_REPO=true # mine\n' > "$CLAUDE_DESKTOP_DEFAULT_FILE"
+    install_desktop_apps > /dev/null 2>&1
+    assert_eq "$(printf '# admin notes\nOTHER=1\n%s' "$key")" "$(cat "$CLAUDE_DESKTOP_DEFAULT_FILE")" "true switched to false, the rest kept"
+    printf 'OTHER=1\n' > "$CLAUDE_DESKTOP_DEFAULT_FILE"
+    install_desktop_apps > /dev/null 2>&1
+    assert_eq "$(printf 'OTHER=1\n%s' "$key")" "$(cat "$CLAUDE_DESKTOP_DEFAULT_FILE")" "key appended to a file without it"
+    unset APT_SOURCES_DIR CLAUDE_DESKTOP_DEFAULT_FILE
+    end_test
+}
+
 test_apt_install_missing_installs_only_missing
+test_desktop_apps_opt_claude_desktop_out_of_its_own_repo
 test_install_docker_keeps_ubuntu_docker_io
 test_snap_install_missing
 test_ensure_user_in_group

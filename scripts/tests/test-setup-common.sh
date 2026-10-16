@@ -241,21 +241,101 @@ test_add_apt_source_is_quiet_when_unchanged() {
     local a; a="$(make_key alpha)"
     echo "deb [signed-by=/x] https://repo.test/deb stable main" > "$APT_SOURCES_DIR/vend.list"
     add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main
-    assert_eq 1 "$(grep -c '^apt update' "$CALLS")" "first run updates"
+    assert_eq 0 $? "first run succeeds"
+    assert_eq 1 "$(grep -c '^apt-get update' "$CALLS")" "first run updates"
     assert_eq no "$([ -e "$APT_SOURCES_DIR/vend.list" ] && echo yes || echo no)" "legacy .list removed"
     add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main
     assert_eq 0 $? "second run succeeds"
-    assert_eq 1 "$(grep -c '^apt update' "$CALLS")" "second run does not update"
+    assert_eq 1 "$(grep -c '^apt-get update' "$CALLS")" "second run does not update"
+    teardown_apt_fakes
+}
+
+# fake_apt_get_update FAIL_WHEN: apt-get logs its arguments and, for an update,
+# exits 100 when FAIL_WHEN is "always" or, for "global", when the update reads
+# every source (a broken unrelated repository) instead of just one file.
+fake_apt_get_update() {
+    cat > "$FAKE_BIN/apt-get" <<EOF
+#!/bin/sh
+echo "apt-get \$*" >> "$CALLS"
+[ "\$1" = update ] || exit 0
+case "$1:\$*" in
+    always:*) exit 100 ;;
+    global:*"Dir::Etc::sourceparts=-"*) exit 0 ;;
+    global:*) exit 100 ;;
+esac
+EOF
+    chmod +x "$FAKE_BIN/apt-get"
+    # A global `apt update` fails the same way.
+    printf '#!/bin/sh\necho "apt $*" >> "%s"\n[ "$1" = update ] && exit 100\nexit 0\n' "$CALLS" > "$FAKE_BIN/apt"
+    chmod +x "$FAKE_BIN/apt"
+}
+
+# One broken third-party repository makes a global apt update exit 100; that
+# must not undo a vendor source whose own refresh works.
+test_add_apt_source_ignores_an_unrelated_broken_repo() {
+    setup_test "add_apt_source with an unrelated broken repo"
+    setup_apt_fakes
+    fake_apt_get_update global
+    local a; a="$(make_key alpha)"
+    echo "deb [signed-by=/x] https://broken.test/deb stable main" > "$APT_SOURCES_DIR/broken.list"
+    echo "deb [signed-by=/x] https://repo.test/deb stable main" > "$APT_SOURCES_DIR/vend.list"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main > "$TMPDIR_ROOT/out" 2>&1
+    assert_eq 0 $? "succeeds"
+    assert_contains "$(cat "$CALLS")" "apt-get update -o Dir::Etc::sourcelist=$APT_SOURCES_DIR/vend.sources -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0" "refreshes only the new source"
+    assert_eq yes "$([ -e "$APT_SOURCES_DIR/vend.sources" ] && echo yes || echo no)" "new source kept"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/vend.list" ] && echo yes || echo no)" "legacy .list replaced"
+    assert_eq "deb [signed-by=/x] https://broken.test/deb stable main" "$(cat "$APT_SOURCES_DIR/broken.list")" "unrelated .list untouched"
+    teardown_apt_fakes
+}
+
+# If the new source itself can't be refreshed, the old working .list stays.
+test_add_apt_source_keeps_legacy_list_when_refresh_fails() {
+    setup_test "add_apt_source keeps the legacy .list when its refresh fails"
+    setup_apt_fakes
+    fake_apt_get_update always
+    local a; a="$(make_key alpha)"
+    echo "deb [signed-by=/x] https://repo.test/deb stable main" > "$APT_SOURCES_DIR/vend.list"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main > "$TMPDIR_ROOT/out" 2>&1
+    assert_eq 1 $? "fails"
+    assert_eq "deb [signed-by=/x] https://repo.test/deb stable main" "$(cat "$APT_SOURCES_DIR/vend.list" 2>/dev/null)" "legacy .list restored"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/vend.sources" ] && echo yes || echo no)" "new source removed"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "kept $APT_SOURCES_DIR/vend.list" "says the old source was kept"
+    teardown_apt_fakes
+}
+
+# The package re-creates its .list on upgrade: the next run removes it again,
+# after checking the unchanged .sources still refreshes.
+test_add_apt_source_removes_a_recreated_list() {
+    setup_test "add_apt_source removes a re-created .list"
+    setup_apt_fakes
+    local a; a="$(make_key alpha)"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main > /dev/null
+    echo "deb [signed-by=/y] https://repo.test/deb stable main" > "$APT_SOURCES_DIR/vend.list"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main > /dev/null
+    assert_eq 0 $? "succeeds"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/vend.list" ] && echo yes || echo no)" "re-created .list removed"
+    assert_eq yes "$([ -e "$APT_SOURCES_DIR/vend.sources" ] && echo yes || echo no)" "source kept"
+    teardown_apt_fakes
+}
+
+test_add_apt_source_needs_a_fingerprint() {
+    setup_test "add_apt_source without a fingerprint"
+    setup_apt_fakes
+    add_apt_source vend https://x.test/alpha.asc "" https://repo.test/deb stable main > "$TMPDIR_ROOT/out" 2>&1
+    assert_eq 1 $? "fails"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "no key fingerprint" "says why"
+    assert_eq "" "$(cat "$CALLS")" "downloads and writes nothing"
     teardown_apt_fakes
 }
 
 test_add_apt_source_retries_after_a_failed_update() {
     setup_test "add_apt_source retries after a failed apt update"
     setup_apt_fakes
-    # apt update fails the first time only.
-    cat > "$FAKE_BIN/apt" <<EOF
+    # The source's refresh fails the first time only.
+    cat > "$FAKE_BIN/apt-get" <<EOF
 #!/bin/sh
-echo "apt \$*" >> "$CALLS"
+echo "apt-get \$*" >> "$CALLS"
+[ "\$1" = update ] || exit 0
 [ -e "$TMPDIR_ROOT/apt-failed" ] && exit 0
 touch "$TMPDIR_ROOT/apt-failed"
 exit 100
@@ -263,9 +343,10 @@ EOF
     local a; a="$(make_key alpha)"
     add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main 2>/dev/null
     assert_eq 1 $? "failed update fails"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/vend.sources" ] && echo yes || echo no)" "source removed for a retry"
     add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main
     assert_eq 0 $? "re-run succeeds"
-    assert_eq 2 "$(grep -c '^apt update' "$CALLS")" "re-run updates again"
+    assert_eq 2 "$(grep -c '^apt-get update' "$CALLS")" "re-run updates again"
     assert_eq yes "$([ -e "$APT_SOURCES_DIR/vend.sources" ] && echo yes || echo no)" "source in place"
     teardown_apt_fakes
 }
@@ -311,6 +392,10 @@ test_harden_sshd_backs_out_when_sshd_rejects_config
 test_add_apt_source_accepts_binary_and_multi_key_files
 test_add_apt_source_is_quiet_when_unchanged
 test_add_apt_source_retries_after_a_failed_update
+test_add_apt_source_ignores_an_unrelated_broken_repo
+test_add_apt_source_keeps_legacy_list_when_refresh_fails
+test_add_apt_source_removes_a_recreated_list
+test_add_apt_source_needs_a_fingerprint
 test_install_verified_deb
 [ "${VERIFY_DOWNLOADS:-0}" = 1 ] && test_pinned_downloads_match
 

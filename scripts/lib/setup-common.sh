@@ -175,14 +175,18 @@ install_go() {
 # such as Google and GitHub ship several keys in one file). Only that key is
 # written, as $APT_KEYRINGS_DIR/NAME.gpg, so no other key in the vendor's file
 # can sign the repository. The source goes to $APT_SOURCES_DIR/NAME.sources;
-# SUITE "/" with empty COMPONENTS writes a flat repository. A NAME.list left by
-# the vendor's own instructions is removed once the .sources file is in place.
-# Runs `apt update` only when the key or source changed; if that update fails,
-# removes the .sources file again so the next run retries it.
+# SUITE "/" with empty COMPONENTS writes a flat repository.
+# When the key or source changed, or a NAME.list (from the vendor's own
+# instructions or package) is present, refreshes just this source, not every
+# repository, so a broken unrelated one can't fail it. Only once that refresh
+# works is NAME.list removed: the two would conflict on Signed-By. If it fails,
+# removes the .sources file again, which leaves any NAME.list as it was and
+# lets the next run retry.
 add_apt_source() {
     local name="$1" key_url="$2" fingerprint="$3" uri="$4" suite="$5" components="${6:-}"
     local keyrings="${APT_KEYRINGS_DIR:-/etc/apt/keyrings}" sources="${APT_SOURCES_DIR:-/etc/apt/sources.list.d}"
     local keyring="$keyrings/$name.gpg" tmp status=0 changed=0 listing=""
+    [ -n "$fingerprint" ] || { echo "ERROR: no key fingerprint given for the $name apt source." >&2; return 1; }
     tmp="$(mktemp -d)"
     mkdir -m 0700 "$tmp/gnupg"
     # A throwaway GNUPGHOME and keyring: the vendor's keys never reach ~/.gnupg.
@@ -220,13 +224,21 @@ add_apt_source() {
     fi
     rm -rf "$tmp"
     [ "$status" -eq 0 ] || return 1
-    if [ -e "$sources/$name.list" ]; then
-        sudo rm -f "$sources/$name.list"
-        changed=1
+    local list="$sources/$name.list"
+    [ "$changed" -eq 0 ] && [ ! -e "$list" ] && return 0
+    if ! sudo apt-get update -o Dir::Etc::sourcelist="$sources/$name.sources" \
+            -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0; then
+        sudo rm -f "$sources/$name.sources"
+        if [ -e "$list" ]; then
+            echo "ERROR: apt could not refresh $name from $sources/$name.sources; removed it and kept $list." >&2
+        else
+            echo "ERROR: apt could not refresh $name; removed $sources/$name.sources so the next run retries." >&2
+        fi
+        return 1
     fi
-    [ "$changed" -eq 0 ] && return 0
-    if ! sudo apt update; then
-        echo "ERROR: apt update failed after adding $name; removed $sources/$name.sources so the next run retries." >&2
+    if [ -e "$list" ] && ! sudo rm -f "$list"; then
+        # Both files at once would fail every apt run on conflicting Signed-By values.
+        echo "ERROR: could not remove $list; removed $sources/$name.sources so the two don't conflict." >&2
         sudo rm -f "$sources/$name.sources"
         return 1
     fi
