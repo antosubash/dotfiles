@@ -11,7 +11,17 @@
 
 _pkg_installed() { [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ]; }
 
-# apt_install_missing PKG...: installs only the packages that aren't installed.
+# skip_new_install NAME: in an upgrade-only run (SETUP_UPGRADE_ONLY=1, which
+# update-all.sh sets) says NAME is skipped and returns 0; otherwise returns 1.
+# Call it where NAME is missing, so an update upgrades what is installed and
+# adds nothing new (no pi, eza or curlie on a server that never had them).
+skip_new_install() {
+    [ "${SETUP_UPGRADE_ONLY:-}" = 1 ] || return 1
+    echo "Skipping $1: not installed, and this run only upgrades what is installed."
+}
+
+# apt_install_missing PKG...: installs only the packages that aren't installed
+# (none in an upgrade-only run; apt upgrades the installed ones).
 apt_install_missing() {
     local pkg missing=()
     for pkg in "$@"; do
@@ -21,6 +31,7 @@ apt_install_missing() {
         echo "Already installed: $*"
         return 0
     fi
+    skip_new_install "${missing[*]}" && return 0
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
 }
 
@@ -68,6 +79,7 @@ install_docker() {
 }
 
 install_gh() {
+    if ! _pkg_installed gh && skip_new_install gh; then return 0; fi
     add_apt_source github-cli https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         "$GH_KEY_FINGERPRINT" https://cli.github.com/packages stable main || return 1
     apt_install_missing gh
@@ -124,6 +136,7 @@ install_desktop_apps() {
 
 install_rust() {
     command -v rustup > /dev/null 2>&1 && { echo "rustup is already installed."; return 0; }
+    skip_new_install rustup && return 0
     local tmp status=0; tmp="$(mktemp -d)"
     # --no-modify-path: the dotfiles rc files already source ~/.cargo/env.
     curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp/rustup.sh" https://sh.rustup.rs \
@@ -154,6 +167,7 @@ install_dotnet() {
 
 install_pnpm() {
     command -v pnpm > /dev/null 2>&1 && { echo "pnpm is already installed."; return 0; }
+    skip_new_install pnpm && return 0
     local tmp status=0 rc i rc_links=()
     # The installer's `pnpm setup` rewrites the rc file of $SHELL, replacing the
     # dotfiles symlink with a regular file. The dotfiles rc files already set
@@ -188,6 +202,7 @@ install_uv() {
 
 install_pi() {
     needs_install "$HOME/.local/bin/pi" "$PI_CODING_AGENT_VERSION" || { echo "pi $PI_CODING_AGENT_VERSION is installed."; return 0; }
+    if [ ! -x "$HOME/.local/bin/pi" ] && skip_new_install pi; then return 0; fi
     # Per-user install into ~/.local (on PATH), not a root-owned global one.
     npm install -g --prefix "$HOME/.local" "@earendil-works/pi-coding-agent@$PI_CODING_AGENT_VERSION"
 }
@@ -229,6 +244,7 @@ install_pinned_go() {
     _pinned_ok Go || return 0
     # The pinned Go lives in /usr/local/go; a distro go elsewhere on PATH doesn't count.
     needs_install /usr/local/go/bin/go "$GO_VERSION" version || return 0
+    if [ ! -x /usr/local/go/bin/go ] && skip_new_install Go; then return 0; fi
     install_go
 }
 
@@ -249,6 +265,7 @@ _install_pinned() {
     local tool="$1" version="$2" url="$3" sha256="$4" member="$5"
     local dest="${PINNED_BIN_DIR:-/usr/local/bin}/$tool"
     shift 5
+    if [ ! -x "$dest" ] && skip_new_install "$tool"; then return 0; fi
     if needs_install "$dest" "$version" "$@"; then
         install_verified_binary "$url" "$sha256" "$dest" "$member" || return 1
     fi

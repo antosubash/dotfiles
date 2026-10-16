@@ -275,7 +275,8 @@ reconcile_pinned_tools() {
     [[ "$OS" == "linux" && -f "$setup" ]] || return 0
 
     log_section "Reconciling Pinned Tools"
-    bash "$setup" --only languages,cli,git-tools,k8s,node \
+    # Upgrade-only: tools this machine never had (pi on a server, say) stay absent.
+    SETUP_UPGRADE_ONLY=1 bash "$setup" --only languages,cli,git-tools,k8s,node \
         || { log_warning "some pinned tools failed to update"; return 1; }
 }
 

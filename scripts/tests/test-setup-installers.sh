@@ -312,7 +312,44 @@ test_pinned_tools_check_their_destination() {
     end_test
 }
 
+# update-all.sh re-runs the pinned-tool sections with SETUP_UPGRADE_ONLY=1:
+# tools that are there get upgraded, tools the machine never had stay absent.
+test_upgrade_only_installs_nothing_new() {
+    setup_test "SETUP_UPGRADE_ONLY=1 installs nothing new"
+    setup_fakes
+    export HOME="$TMPDIR_ROOT/home" PINNED_BIN_DIR="$TMPDIR_ROOT/pinned" SETUP_UPGRADE_ONLY=1
+    mkdir -p "$HOME" "$PINNED_BIN_DIR"
+    fake curl 'echo "curl $*" >> "$CALLS"; exit 1'
+    fake npm 'echo "npm $*" >> "$CALLS"'
+    install_verified_binary() { echo "install $3" >> "$CALLS"; }
+    add_apt_source() { echo "add_apt_source $1" >> "$CALLS"; }
+    echo curl > "$INSTALLED"
+    local out
+    out="$(PATH="$FAKE_BIN:/usr/bin:/bin" SETUP_MACHINE=x86_64 bash -c '
+        . "$1"; . "$2"
+        install_verified_binary() { echo "install $3" >> "$CALLS"; }
+        add_apt_source() { echo "add_apt_source $1" >> "$CALLS"; }
+        apt_install_missing curl eza && install_pinned_yq && install_pinned_git_tools && install_pinned_k8s \
+            && install_pi && install_pnpm && install_rust && install_gh && echo "all returned 0"
+    ' _ "$(dirname "$SCRIPT")/setup-common.sh" "$SCRIPT" 2>&1)"
+    assert_contains "$out" "all returned 0" "every installer returns 0"
+    assert_eq "" "$(cat "$CALLS")" "no installs, downloads or new repos"
+    assert_contains "$out" "Skipping eza: not installed" "apt package skipped with a message"
+    assert_contains "$out" "Skipping yq: not installed" "pinned tool skipped with a message"
+    assert_contains "$out" "Skipping pi: not installed" "pi skipped with a message"
+    # A tool that is there still gets its pin.
+    fake_tool "$PINNED_BIN_DIR" yq 4.0.0
+    install_pinned_yq > /dev/null 2>&1
+    assert_contains "$(cat "$CALLS")" "install $PINNED_BIN_DIR/yq" "an installed tool is upgraded"
+    : > "$CALLS"; printf 'curl\neza\n' > "$INSTALLED"
+    SETUP_UPGRADE_ONLY=0 apt_install_missing curl bat > /dev/null
+    assert_contains "$(cat "$CALLS")" "apt-get install -y bat" "without the flag, missing packages install"
+    unset PINNED_BIN_DIR SETUP_UPGRADE_ONLY
+    end_test
+}
+
 test_apt_install_missing_installs_only_missing
+test_upgrade_only_installs_nothing_new
 test_pinned_tools_check_their_destination
 test_desktop_apps_opt_claude_desktop_out_of_its_own_repo
 test_install_docker_keeps_ubuntu_docker_io

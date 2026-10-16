@@ -116,7 +116,7 @@ test_pinned_tool_failure_is_recorded() {
     setup_test "pinned tools failure"
     export HOME="$TMPDIR_ROOT/home"
     mkdir -p "$HOME/dotfiles/scripts"
-    printf '#!/usr/bin/env bash\necho "$*" > "%s/setup.args"\nexit 1\n' "$TMPDIR_ROOT" \
+    printf '#!/usr/bin/env bash\necho "$* SETUP_UPGRADE_ONLY=${SETUP_UPGRADE_ONLY:-}" > "%s/setup.args"\nexit 1\n' "$TMPDIR_ROOT" \
         > "$HOME/dotfiles/scripts/setup-ubuntu.sh"
     load_update_all
     # shellcheck disable=SC2034  # read by the sourced update-all.sh
@@ -125,6 +125,8 @@ test_pinned_tool_failure_is_recorded() {
     run_step pinned-tools reconcile_pinned_tools > "$TMPDIR_ROOT/out" 2>&1
     assert_eq "pinned-tools" "${FAILED_STEPS[*]-}" "step recorded"
     assert_contains "$(cat "$TMPDIR_ROOT/setup.args")" "--only languages,cli,git-tools,k8s,node" "sections"
+    # Upgrade what's there; never install tools (pi, eza, curlie...) a server never had.
+    assert_contains "$(cat "$TMPDIR_ROOT/setup.args")" "SETUP_UPGRADE_ONLY=1" "upgrade-only run"
     assert_contains "$(cat "$TMPDIR_ROOT/out")" "some pinned tools failed to update" "warns"
     local out
     out="$(generate_summary 2>&1)"

@@ -100,7 +100,36 @@ test_base_section_installs_apt_source_prereqs_first() {
     teardown_test
 }
 
+# update-all.sh runs these sections with SETUP_UPGRADE_ONLY=1 on every machine,
+# servers included: on one that never had the tools, they must install nothing.
+test_update_sections_install_nothing_new_in_upgrade_only_mode() {
+    setup_test "upgrade-only sections on a bare machine"
+    export CALLS="$TMPDIR_ROOT/calls"; : > "$CALLS"
+    local t
+    for t in sudo curl npm go apt-cache; do
+        printf '#!/bin/sh\necho "%s $*" >> "%s"\nexit 1\n' "$t" "$CALLS" > "$FAKE_BIN/$t"
+    done
+    printf '#!/bin/sh\nexit 1\n' > "$FAKE_BIN/dpkg-query"
+    chmod +x "$FAKE_BIN"/*
+    # Only the fakes and what the runner itself needs: no node, curlie, pnpm or rustup.
+    local sys="$TMPDIR_ROOT/sys"
+    mkdir -p "$sys" "$TMPDIR_ROOT/home" "$TMPDIR_ROOT/pinned"
+    for t in mktemp rm; do ln -s "$(command -v "$t")" "$sys/$t"; done
+    # shellcheck disable=SC1090
+    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+    HOME="$TMPDIR_ROOT/home" PATH="$FAKE_BIN:$sys" PINNED_BIN_DIR="$TMPDIR_ROOT/pinned" SETUP_MACHINE=x86_64 \
+        SETUP_UPGRADE_ONLY=1 run_sections cli git-tools k8s node > "$TMPDIR_ROOT/out" 2>&1
+    for t in cli git-tools k8s node; do
+        assert_contains "${SECTION_RESULTS[*]}" "$t|ok" "$t ok"
+    done
+    assert_eq "" "$(grep -v '^apt-cache' "$CALLS")" "no sudo, downloads, npm or go install"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "Skipping curlie: not installed" "curlie skipped"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "Skipping Node.js: not installed" "Node.js skipped"
+    teardown_test
+}
+
 test_list_names_every_section
+test_update_sections_install_nothing_new_in_upgrade_only_mode
 test_every_section_has_a_function
 test_unknown_option_fails
 test_nvidia_section_skips_without_gpu

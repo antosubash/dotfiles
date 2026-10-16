@@ -41,6 +41,8 @@ section_cli() {
     install_cli_extras
     if command -v curlie > /dev/null 2>&1; then
         echo "curlie is already installed."
+    elif skip_new_install curlie; then
+        :
     elif command -v go > /dev/null 2>&1; then
         go install github.com/rs/curlie@v1.6.0
     else
@@ -93,7 +95,7 @@ section_docker() {
 }
 
 section_node() {
-    command -v node > /dev/null 2>&1 || install_nodejs
+    command -v node > /dev/null 2>&1 || skip_new_install Node.js || install_nodejs
     install_pnpm
     install_pi
 }
