@@ -30,8 +30,8 @@ echo "Installing rgb-off.service..."
 sudo tee /etc/systemd/system/rgb-off.service > /dev/null <<'EOF'
 [Unit]
 Description=Turn off all RGB lighting (OpenRGB)
-# i2c-dev must be loaded and the I2C/SMBus devices settled before detection.
-After=systemd-modules-load.service systemd-udev-settle.service
+# i2c-dev must be loaded before detection.
+After=systemd-modules-load.service
 
 [Service]
 # exec, not oneshot: device detection takes ~10 s and nothing should wait on it.

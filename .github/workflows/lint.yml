@@ -44,7 +44,7 @@ jobs:
       - name: Run setup, update and shell tests
         run: |
           set -e
-          for t in test-setup-common test-setup-runner test-setup-installers test-setup-ubuntu \
+          for t in test-setup-common test-setup-runner test-setup-installers test-setup-ubuntu test-setup-dev-tuning \
                    test-no-rc-writes test-update-scripts test-shell-config test-setup-keyboard \
                    test-rgb-off; do
             echo "== $t"; bash "scripts/tests/$t.sh"

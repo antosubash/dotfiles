@@ -220,11 +220,9 @@ fi
 
 # Install productivity CLI tools
 echo "Installing productivity CLI tools..."
-if ! command -v tmux &> /dev/null || ! command -v fzf &> /dev/null || ! command -v rg &> /dev/null || ! command -v fdfind &> /dev/null; then
-    sudo apt install -y tmux fzf ripgrep fd-find
-else
-    echo "Productivity tools are already installed."
-fi
+apt_install_missing tmux fzf
+# ripgrep and fd-find, plus the `fd` link the shell config expects
+install_fd_ripgrep
 if ! command -v zsh &> /dev/null; then
     sudo apt install -y zsh
 else
