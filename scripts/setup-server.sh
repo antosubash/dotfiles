@@ -347,12 +347,6 @@ else
     echo "SpatiaLite is already installed."
 fi
 
-# Start & enable Docker
-if command -v docker &> /dev/null; then
-    echo "Enabling Docker service..."
-    sudo systemctl enable --now docker
-fi
-
 # Display versions
 echo ""
 echo "=========================================="
