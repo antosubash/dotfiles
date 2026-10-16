@@ -34,6 +34,14 @@ EOF
 #!/usr/bin/env bash
 printf 'sudo %s\n' "$*" >> "$CALLS"
 [ "$*" = "mkdir -p /run/sshd" ] && exit 0
+while [[ "$1" == [A-Z_]*=* ]]; do export "${1?}"; shift; done
+if [ "$1" = install ]; then  # drop -o/-g owner flags, which need root
+    args=()
+    while [ $# -gt 0 ]; do
+        case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac
+    done
+    set -- "${args[@]}"
+fi
 "$@"
 EOF
     cat > "$FAKE_BIN/sshd" <<'EOF'
@@ -74,7 +82,7 @@ test_every_pin_is_https_with_a_sha256() {
         assert_eq "yes" "$([[ ${!sha_var:-} =~ ^[0-9a-f]{64}$ ]] && echo yes)" "$sha_var is a sha256"
         count=$((count + 1))
     done
-    assert_eq 8 "$count" "number of pinned downloads"
+    assert_eq 16 "$count" "number of pinned downloads"
     teardown_test
 }
 
@@ -163,6 +171,92 @@ test_harden_sshd_backs_out_when_sshd_rejects_config() {
     teardown_test
 }
 
+# Fake apt and dpkg, and apt paths under $TMPDIR_ROOT. gpg runs in a temporary
+# GNUPGHOME so the tests never touch ~/.gnupg.
+setup_apt_fakes() {
+    setup_fakes
+    export APT_SOURCES_DIR="$TMPDIR_ROOT/sources" APT_KEYRINGS_DIR="$TMPDIR_ROOT/keyrings"
+    export GNUPGHOME="$TMPDIR_ROOT/gnupg"
+    mkdir -p "$APT_SOURCES_DIR" "$APT_KEYRINGS_DIR" "$GNUPGHOME"
+    chmod 700 "$GNUPGHOME"
+    printf '#!/bin/sh\necho "apt $*" >> "%s"\n' "$CALLS" > "$FAKE_BIN/apt"; chmod +x "$FAKE_BIN/apt"
+    printf '#!/bin/sh\necho "apt-get $*" >> "%s"\n' "$CALLS" > "$FAKE_BIN/apt-get"; chmod +x "$FAKE_BIN/apt-get"
+    printf '#!/bin/sh\necho amd64\n' > "$FAKE_BIN/dpkg"; chmod +x "$FAKE_BIN/dpkg"
+}
+
+teardown_apt_fakes() {
+    local home
+    for home in "$GNUPGHOME" "$TMPDIR_ROOT"/gnupg-*; do
+        [ -d "$home" ] && gpgconf --homedir "$home" --kill all 2>/dev/null
+    done
+    unset GNUPGHOME APT_SOURCES_DIR APT_KEYRINGS_DIR
+    teardown_test
+}
+
+make_key() {  # make_key NAME -> armored public key in $FIXTURES/NAME.asc, prints fingerprint
+    local home="$TMPDIR_ROOT/gnupg-$1"; mkdir -p "$home"; chmod 700 "$home"
+    GNUPGHOME="$home" gpg --batch --quiet --pinentry-mode loopback --passphrase '' \
+        --quick-gen-key "$1 <$1@test>" ed25519 sign never 2>/dev/null
+    GNUPGHOME="$home" gpg --batch --armor --export > "$FIXTURES/$1.asc"
+    GNUPGHOME="$home" gpg --batch --export > "$FIXTURES/$1.gpg"
+    GNUPGHOME="$home" gpg --batch --with-colons --list-keys 2>/dev/null | awk -F: '$1=="fpr"{print $10; exit}'
+    gpgconf --homedir "$home" --kill all 2>/dev/null
+}
+
+test_add_apt_source_accepts_binary_and_multi_key_files() {
+    setup_test "add_apt_source key formats"
+    setup_apt_fakes
+    local a b
+    a="$(make_key alpha)"; b="$(make_key beta)"
+    cat "$FIXTURES/alpha.asc" "$FIXTURES/beta.asc" > "$FIXTURES/multi.asc"
+    add_apt_source multi https://x.test/multi.asc "$b" https://repo.test/deb stable main > /dev/null; assert_eq 0 $? "second key of a multi-key file"
+    add_apt_source bin https://x.test/alpha.gpg "$a" https://repo.test/deb stable main > /dev/null; assert_eq 0 $? "binary key"
+    assert_eq "$(sha "$FIXTURES/alpha.gpg")" "$(sha "$APT_KEYRINGS_DIR/bin.gpg")" "binary key stored as is"
+    add_apt_source flat https://x.test/alpha.asc "$a" https://repo.test/deb/amd64 / "" > /dev/null; assert_eq 0 $? "flat repo"
+    assert_not_contains "$(cat "$APT_SOURCES_DIR/flat.sources")" "Components:" "flat repo has no Components"
+    assert_contains "$(cat "$APT_SOURCES_DIR/flat.sources")" "Suites: /" "flat suite"
+    assert_contains "$(cat "$APT_SOURCES_DIR/multi.sources")" "Components: main" "components"
+    assert_contains "$(cat "$APT_SOURCES_DIR/multi.sources")" "Signed-By: $APT_KEYRINGS_DIR/multi.gpg" "signed-by"
+    add_apt_source bad https://x.test/alpha.asc "$b" https://repo.test/deb stable main 2>/dev/null; assert_eq 1 $? "wrong fingerprint rejected"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/bad.sources" ] || [ -e "$APT_KEYRINGS_DIR/bad.gpg" ] && echo yes || echo no)" "nothing written for a wrong key"
+    # A subkey's fingerprint doesn't vouch for the file: only primary keys count.
+    local home="$TMPDIR_ROOT/gnupg-alpha" sub
+    GNUPGHOME="$home" gpg --batch --quiet --pinentry-mode loopback --passphrase '' \
+        --quick-add-key "$a" cv25519 encr never 2>/dev/null
+    GNUPGHOME="$home" gpg --batch --armor --export > "$FIXTURES/alphasub.asc"
+    sub="$(GNUPGHOME="$home" gpg --batch --with-colons --list-keys 2>/dev/null | awk -F: '$1=="sub"{s=1;next} $1=="fpr"&&s{print $10; exit}')"
+    add_apt_source sub https://x.test/alphasub.asc "$sub" https://repo.test/deb stable main 2>/dev/null; assert_eq 1 $? "subkey fingerprint rejected"
+    teardown_apt_fakes
+}
+
+test_add_apt_source_is_quiet_when_unchanged() {
+    setup_test "add_apt_source idempotent"
+    setup_apt_fakes
+    local a; a="$(make_key alpha)"
+    echo "deb [signed-by=/x] https://repo.test/deb stable main" > "$APT_SOURCES_DIR/vend.list"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main
+    assert_eq 1 "$(grep -c '^apt update' "$CALLS")" "first run updates"
+    assert_eq no "$([ -e "$APT_SOURCES_DIR/vend.list" ] && echo yes || echo no)" "legacy .list removed"
+    add_apt_source vend https://x.test/alpha.asc "$a" https://repo.test/deb stable main
+    assert_eq 0 $? "second run succeeds"
+    assert_eq 1 "$(grep -c '^apt update' "$CALLS")" "second run does not update"
+    teardown_apt_fakes
+}
+
+test_install_verified_deb() {
+    setup_test "install_verified_deb"
+    setup_apt_fakes
+    printf 'deb\n' > "$FIXTURES/pkg_1.0_all.deb"
+    install_verified_deb https://x.test/pkg_1.0_all.deb "$(sha "$FIXTURES/pkg_1.0_all.deb")"
+    assert_eq 0 $? "succeeds"
+    assert_contains "$(cat "$CALLS")" "apt-get install -y /" "installs the downloaded file"
+    : > "$CALLS"
+    install_verified_deb https://x.test/pkg_1.0_all.deb "$(printf '0%.0s' {1..64})" 2>/dev/null
+    assert_eq 1 $? "bad hash fails"
+    assert_not_contains "$(cat "$CALLS")" "apt-get" "nothing installed on bad hash"
+    teardown_apt_fakes
+}
+
 test_pinned_downloads_match() {
     setup_test "pinned downloads match their sha256"
     load_lib
@@ -187,6 +281,9 @@ test_install_verified_binary_handles_each_format
 test_harden_sshd_skips_without_authorized_keys
 test_harden_sshd_writes_validates_and_reloads
 test_harden_sshd_backs_out_when_sshd_rejects_config
+test_add_apt_source_accepts_binary_and_multi_key_files
+test_add_apt_source_is_quiet_when_unchanged
+test_install_verified_deb
 [ "${VERIFY_DOWNLOADS:-0}" = 1 ] && test_pinned_downloads_match
 
 summary
