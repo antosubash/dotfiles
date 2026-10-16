@@ -128,7 +128,39 @@ test_update_sections_install_nothing_new_in_upgrade_only_mode() {
     teardown_test
 }
 
+# setup-keyboard.sh does nothing outside a GNOME session, so the section must
+# say it skipped rather than report ok.
+test_keyboard_section_skips_outside_gnome() {
+    setup_test "keyboard section outside GNOME"
+    # shellcheck disable=SC1090
+    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+    DBUS_SESSION_BUS_ADDRESS="" XDG_CURRENT_DESKTOP=GNOME run_sections keyboard > "$TMPDIR_ROOT/out" 2>&1
+    assert_contains "${SECTION_RESULTS[*]}" "keyboard|skipped" "no D-Bus session: skipped"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "not in a GNOME session" "reason"
+    SECTION_RESULTS=()
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/x XDG_CURRENT_DESKTOP=KDE run_sections keyboard > "$TMPDIR_ROOT/out" 2>&1
+    assert_contains "${SECTION_RESULTS[*]}" "keyboard|skipped" "KDE: skipped"
+    teardown_test
+}
+
+# Ubuntu's keyd package installs the binary as keyd.rvaiya.
+test_tool_versions_find_ubuntus_keyd() {
+    setup_test "print_tool_versions finds keyd.rvaiya"
+    printf '#!/bin/sh\necho "keyd v2.5.0"\n' > "$FAKE_BIN/keyd.rvaiya"; chmod +x "$FAKE_BIN/keyd.rvaiya"
+    local sys="$TMPDIR_ROOT/sys"
+    mkdir -p "$sys"; ln -s "$(command -v head)" "$sys/head"
+    # shellcheck disable=SC1090
+    SETUP_UBUNTU_SOURCE_ONLY=1 . "$SCRIPT"
+    local out
+    out="$(PATH="$FAKE_BIN:$sys" print_tool_versions)"
+    assert_contains "$out" "keyd        keyd v2.5.0" "keyd row shows keyd.rvaiya's version"
+    assert_contains "$out" "jq          missing" "absent tools still listed as missing"
+    teardown_test
+}
+
 test_list_names_every_section
+test_keyboard_section_skips_outside_gnome
+test_tool_versions_find_ubuntus_keyd
 test_update_sections_install_nothing_new_in_upgrade_only_mode
 test_every_section_has_a_function
 test_unknown_option_fails

@@ -142,6 +142,10 @@ section_apps() {
 
 section_keyboard() {
     [ -f "$HERE/setup-keyboard.sh" ] || skip_section "setup-keyboard.sh not present"
+    # The same check as setup-keyboard.sh's main, which does nothing outside GNOME.
+    if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] || [[ "${XDG_CURRENT_DESKTOP:-}" != *GNOME* ]]; then
+        skip_section "not in a GNOME session"
+    fi
     bash "$HERE/setup-keyboard.sh"
 }
 
@@ -173,15 +177,18 @@ _version_of() {
 }
 
 print_tool_versions() {
-    local t
+    local name t
     echo ""
     echo "Installed tools:"
-    for t in git nvim python3 java go rustc dotnet node pnpm uv gh docker kubectl helm lazygit \
+    for name in git nvim python3 java go rustc dotnet node pnpm uv gh docker kubectl helm lazygit \
         lazydocker yq jq eza bat zoxide atuin fzf rg fd tmux zsh tailscale psql gdalinfo ollama ulauncher keyd; do
+        t="$name"
+        # Ubuntu's keyd package names the binary keyd.rvaiya.
+        if [ "$t" = keyd ] && ! command -v keyd > /dev/null 2>&1; then t=keyd.rvaiya; fi
         if command -v "$t" > /dev/null 2>&1; then
-            printf '  %-11s %s\n' "$t" "$(_version_of "$t")"
+            printf '  %-11s %s\n' "$name" "$(_version_of "$t")"
         else
-            printf '  %-11s missing\n' "$t"
+            printf '  %-11s missing\n' "$name"
         fi
     done
 }

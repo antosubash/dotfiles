@@ -124,6 +124,14 @@ Optional extras for an always-on Ubuntu desktop (all idempotent, run after
 ./scripts/setup-update.sh
 ```
 
+### Upgrading an existing machine
+
+After pulling these dotfiles on a machine set up with an older version, re-run
+`bash scripts/setup-update.sh`. It regenerates `~/.update_aliases` and replaces
+the old `~/.local/bin/update-manager` helper with `dotfiles-update`. Also note
+that on Linux `install.sh` now runs `setup-terminal.sh`, which uses `sudo` to
+install the fonts and CLI extras (eza, bat, zoxide, atuin).
+
 ## 📁 Structure
 
 ```
