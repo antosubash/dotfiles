@@ -177,8 +177,14 @@ install_tpm() {
 
 install_cli_extras() {
     local pkgs=(eza bat zoxide atuin)
-    # atuin is only in the archives from Ubuntu 25.04 and Debian 13; 24.04 has no package.
-    if ! _pkg_installed atuin && ! apt-cache show atuin > /dev/null 2>&1; then
+    if _pkg_installed atuin; then
+        :
+    elif command -v atuin > /dev/null 2>&1; then
+        # Installed outside apt, e.g. /usr/local/bin/atuin from the old server script.
+        echo "atuin is already installed at $(command -v atuin)."
+        pkgs=(eza bat zoxide)
+    elif ! apt-cache show atuin > /dev/null 2>&1; then
+        # atuin is only in the archives from Ubuntu 25.04 and Debian 13; 24.04 has no package.
         echo "WARNING: atuin isn't in this release's apt archive; skipping it." >&2
         pkgs=(eza bat zoxide)
     fi
@@ -251,7 +257,8 @@ install_fonts() {
     fi
     for name in JETBRAINSMONO FIRACODE; do
         if [ "$name" = JETBRAINSMONO ]; then pattern='*JetBrainsMono*NerdFont*'; else pattern='*FiraCode*NerdFont*'; fi
-        if find "$dir" -maxdepth 1 -type f -name "$pattern" | grep -q .; then continue; fi
+        # No `find | grep -q`: under pipefail, grep exiting early can fail find with SIGPIPE.
+        [ -n "$(find "$dir" -maxdepth 1 -type f -name "$pattern" -print -quit)" ] && continue
         url="NERDFONT_${name}_URL"; sha="NERDFONT_${name}_SHA256"
         tmp="$(mktemp -d)"
         if download_verified "${!url}" "${!sha}" "$tmp/font.zip" \

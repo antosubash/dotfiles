@@ -163,6 +163,48 @@ test_install_cli_extras_links_batcat() {
     end_test
 }
 
+# Sections run under pipefail. `find | grep -q .` there fails with SIGPIPE when
+# grep exits before find has written everything, so many fonts must still count.
+test_install_fonts_many_fonts_under_pipefail() {
+    setup_test "install_fonts with many fonts under pipefail"
+    setup_fakes
+    export HOME="$TMPDIR_ROOT/home"; local dir="$HOME/.local/share/fonts" i pad
+    mkdir -p "$dir"
+    printf 'unzip\nfontconfig\n' > "$INSTALLED"
+    pad="$(printf 'x%.0s' {1..150})"
+    for i in $(seq 1 1500); do
+        : > "$dir/JetBrainsMonoNerdFont-$pad-$i.ttf"; : > "$dir/FiraCodeNerdFont-$pad-$i.ttf"
+    done
+    touch "$dir/MesloLGS NF Regular.ttf" "$dir/MesloLGS NF Bold.ttf" \
+        "$dir/MesloLGS NF Italic.ttf" "$dir/MesloLGS NF Bold Italic.ttf"
+    fake curl 'echo "curl $*" >> "$CALLS"; exit 1'
+    fake fc-cache 'echo "fc-cache $*" >> "$CALLS"'
+    ( set -o pipefail; install_fonts > /dev/null 2>&1 )
+    assert_eq 0 $? "returns 0"
+    assert_eq "" "$(cat "$CALLS")" "no downloads"
+    end_test
+}
+
+# An atuin installed outside apt (the old server script's /usr/local/bin/atuin)
+# counts as installed, so apt doesn't install a second copy.
+test_install_cli_extras_keeps_atuin_on_path() {
+    setup_test "install_cli_extras keeps a non-apt atuin"
+    setup_fakes
+    export HOME="$TMPDIR_ROOT/home"; mkdir -p "$HOME" "$TMPDIR_ROOT/usrbin"
+    printf 'eza\nbat\nzoxide\n' > "$INSTALLED"
+    fake apt-cache 'exit 0'
+    fake bat 'exit 0'
+    local path="$FAKE_BIN:$TMPDIR_ROOT/usrbin" t
+    for t in bash env mkdir ln grep cat readlink dirname; do ln -sf "$(command -v "$t")" "$TMPDIR_ROOT/usrbin/$t"; done
+    PATH="$path" install_cli_extras > /dev/null 2>&1
+    assert_contains "$(cat "$CALLS")" "apt-get install -y atuin" "no atuin anywhere -> apt installs it"
+    : > "$CALLS"; fake atuin 'exit 0'
+    PATH="$path" install_cli_extras > /dev/null 2>&1
+    assert_eq 0 $? "returns 0"
+    assert_not_contains "$(cat "$CALLS")" "atuin" "atuin on PATH -> not installed again"
+    end_test
+}
+
 test_apt_install_missing_installs_only_missing
 test_snap_install_missing
 test_ensure_user_in_group
@@ -172,4 +214,6 @@ test_pinned_tools_skip_on_non_amd64
 test_install_pnpm_restores_rc_symlinks
 test_install_fonts_skips_installed_fonts
 test_install_cli_extras_links_batcat
+test_install_fonts_many_fonts_under_pipefail
+test_install_cli_extras_keeps_atuin_on_path
 summary
