@@ -1,8 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Tune an always-on Ubuntu desktop for development. Idempotent; each step is
 # independent and reversible.
+#
+# Usage: setup-dev-tuning.sh             detect a desktop from the DMI chassis type
+#        setup-dev-tuning.sh --desktop   treat this machine as a desktop anyway
 set -e
+
+desktop=0
+[ "${1:-}" = --desktop ] && desktop=1
 
 # 1. File watchers: the default 65536 watches / 128 instances run out with
 #    VS Code, JetBrains, vite/webpack/jest watchers, and tsserver on big repos.
@@ -92,6 +98,26 @@ EOF
         c=/sys/class/powercap/intel-rapl:0
         echo "  $(cat $c/constraint_${i}_name): $(( $(cat $c/constraint_${i}_power_limit_uw) / 1000000 )) W"
     done
+fi
+
+# 6. Boot chain: docker.service wants network-online.target, which waits ~7.7 s
+#    for NetworkManager-wait-online. A desktop with no network mounts has
+#    nothing that needs the network up first, so skip the wait there. Desktop
+#    SMBIOS chassis types: desktop, low-profile, pizza box, mini tower, tower,
+#    all-in-one, space-saving, lunch box, sealed-case PC, mini PC.
+case "$(cat "${DEV_TUNING_CHASSIS_FILE:-/sys/class/dmi/id/chassis_type}" 2> /dev/null)" in
+    3|4|5|6|7|13|15|16|24|35) desktop=1 ;;
+esac
+if [ "$desktop" = 1 ]; then
+    if systemctl is-enabled --quiet NetworkManager-wait-online.service 2> /dev/null; then
+        echo "Disabling NetworkManager-wait-online (desktop: boot need not wait for the network)..."
+        echo "docker.service boot chain before the change:"
+        systemd-analyze critical-chain docker.service || true
+        sudo systemctl disable NetworkManager-wait-online.service
+        echo "To revert: sudo systemctl enable NetworkManager-wait-online.service"
+    else
+        echo "NetworkManager-wait-online is not enabled (already disabled or not installed)."
+    fi
 fi
 
 echo ""
