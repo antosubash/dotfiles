@@ -113,14 +113,17 @@ else
         # Stage next to the target (root-owned, same filesystem), then swap, so a
         # failed copy never leaves /opt/nvim half-written.
         sudo rm -rf /opt/nvim.new
-        sudo mv "$TMP_NVIM/nvim-linux-${NVIM_ARCH}" /opt/nvim.new \
+        if sudo mv "$TMP_NVIM/nvim-linux-${NVIM_ARCH}" /opt/nvim.new \
             && sudo chown -R root:root /opt/nvim.new \
             && sudo rm -rf /opt/nvim \
-            && sudo mv /opt/nvim.new /opt/nvim
-        sudo ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim
-        # Remove apt-installed nvim to avoid PATH conflicts.
-        if _pkg_installed neovim; then
-            sudo apt purge -y neovim || true
+            && sudo mv /opt/nvim.new /opt/nvim; then
+            sudo ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim
+            # Remove apt-installed nvim to avoid PATH conflicts.
+            if _pkg_installed neovim; then
+                sudo apt purge -y neovim || true
+            fi
+        else
+            echo "Failed to install the Neovim binary; keeping the current nvim." >&2
         fi
     else
         echo "Failed to download Neovim binary; falling back to apt."

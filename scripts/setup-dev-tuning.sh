@@ -25,7 +25,7 @@ if command -v docker &> /dev/null; then
     echo "Configuring Docker log rotation and live-restore..."
     defaults='{"log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}, "live-restore": true}'
     sudo mkdir -p /etc/docker
-    if sudo test -f /etc/docker/daemon.json; then
+    if sudo test -s /etc/docker/daemon.json; then
         merged="$(sudo cat /etc/docker/daemon.json | jq --argjson d "$defaults" '. * $d')"
     else
         merged="$(jq -n --argjson d "$defaults" '$d')"

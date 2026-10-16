@@ -61,7 +61,7 @@ echo "Turning lights off now..."
 if ! sudo QT_QPA_PLATFORM=offscreen /usr/local/sbin/rgb-off; then
     echo "rgb-off could not turn any device off (see its output above)."
 fi
-sudo openrgb --noautoconnect --list-devices 2>/dev/null | grep -E '^[0-9]+: |^ *Type:'
+sudo openrgb --noautoconnect --list-devices 2>/dev/null | grep -E '^[0-9]+: |^ *Type:' || true
 
 echo ""
 echo "Done. Lighting is turned off at every boot by rgb-off.service."
