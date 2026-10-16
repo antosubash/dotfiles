@@ -286,7 +286,10 @@ configure_ufw() {
     has_systemd || { echo "No systemd; leaving the firewall alone."; return 0; }
     apt_install_missing ufw || return 1
     sudo ufw allow OpenSSH > /dev/null
-    if sudo ufw status | grep -q '^Status: active'; then
+    local ufw_status
+    # Captured first: `ufw status | grep -q` can fail with SIGPIPE under pipefail.
+    ufw_status="$(sudo ufw status)" || ufw_status=""
+    if grep -q '^Status: active' <<< "$ufw_status"; then
         echo "UFW is already active; its rules are left as they are."
         return 0
     fi

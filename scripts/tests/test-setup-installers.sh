@@ -205,6 +205,20 @@ test_install_cli_extras_keeps_atuin_on_path() {
     end_test
 }
 
+# The same pipefail trap as install_fonts: `ufw status | grep -q` fails when
+# grep exits before ufw has written everything, and UFW would be re-configured.
+test_configure_ufw_leaves_active_firewall_under_pipefail() {
+    setup_test "configure_ufw with an active firewall under pipefail"
+    setup_fakes
+    mkdir -p "$TMPDIR_ROOT/systemd"; echo ufw > "$INSTALLED"
+    fake ufw '[ "$1" = status ] && { echo "Status: active"; seq 1 200000; exit; }; echo "ufw $*" >> "$CALLS"'
+    ( set -o pipefail; SYSTEMD_RUN_DIR="$TMPDIR_ROOT/systemd" configure_ufw > "$TMPDIR_ROOT/out" 2>&1 )
+    assert_eq 0 $? "returns 0"
+    assert_contains "$(cat "$TMPDIR_ROOT/out")" "already active" "sees it is active"
+    assert_not_contains "$(cat "$CALLS")" "ufw default" "rules left alone"
+    end_test
+}
+
 test_apt_install_missing_installs_only_missing
 test_snap_install_missing
 test_ensure_user_in_group
@@ -216,4 +230,5 @@ test_install_fonts_skips_installed_fonts
 test_install_cli_extras_links_batcat
 test_install_fonts_many_fonts_under_pipefail
 test_install_cli_extras_keeps_atuin_on_path
+test_configure_ufw_leaves_active_firewall_under_pipefail
 summary

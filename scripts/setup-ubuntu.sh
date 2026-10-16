@@ -17,9 +17,12 @@ SECTIONS=(base editor languages dotnet cli security ssh-firewall vpn shell git-t
 
 # Runs first: later sections need curl, gnupg and ca-certificates for add_apt_source.
 section_base() {
-    sudo apt update
-    apt_install_missing curl wget git htop btop fastfetch vim nano build-essential cmake \
-        net-tools openssl unzip bc sqlite3 shellcheck ffmpeg python-is-python3 ca-certificates gnupg
+    # One broken third-party source shouldn't stop the installs below.
+    sudo apt update || echo "WARNING: apt update reported errors; continuing with the package lists apt has."
+    # In their own call, so a package missing from this release's archive can't hold them back.
+    apt_install_missing curl ca-certificates gnupg
+    apt_install_missing wget git htop btop fastfetch vim nano build-essential cmake \
+        net-tools openssl unzip bc sqlite3 shellcheck ffmpeg python-is-python3
 }
 
 section_editor() { apt_install_missing neovim; }
@@ -36,7 +39,14 @@ section_cli() {
     apt_install_missing httpie jq
     install_pinned_yq
     install_cli_extras
-    if ! command -v curlie > /dev/null 2>&1; then go install github.com/rs/curlie@v1.6.0; fi
+    if command -v curlie > /dev/null 2>&1; then
+        echo "curlie is already installed."
+    elif command -v go > /dev/null 2>&1; then
+        go install github.com/rs/curlie@v1.6.0
+    else
+        # No Go on arm64 (the pinned Go is x86_64) or with --only cli on a fresh machine.
+        echo "WARNING: Go not found; skipping curlie (run the languages section first)." >&2
+    fi
 }
 
 section_security() {
