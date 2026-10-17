@@ -1,23 +1,21 @@
-import { access, appendFile, mkdir } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import {
-  createAgentSession,
-  DefaultResourceLoader,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { BACKGROUND_CONTEXT, withCancel } from "@earendil-works/chord/context";
+import type { Models } from "@earendil-works/pi-ai";
+import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { Harness, watchEvents, type Conversation, type Submission } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import type { WorkerConfig } from "./config.js";
-import type { AgentRunResult, VerificationEvidence } from "./types.js";
-import { AGENT_POLICY, headlessPolicyExtension, type VerificationOptions } from "./agent/policy.js";
-import {
-  awaitAgentPromptCompletion,
-  createAgentSettlementWatchdog,
-  extractAssistantText,
-} from "./agent/settlement.js";
+import type { AgentRunResult } from "./types.js";
+import type { VerificationOptions } from "./agent/policy.js";
 import { cgroupController, ownCgroupPath, type CgroupController } from "./agent/cgroup.js";
 import { openIsolation, type Isolation } from "./agent/isolation.js";
 import { activeCommandProcessGroupPath } from "./agent/process-group.js";
+import { IsolatedExecutionEnv } from "./agent/durable/env.js";
+import { createRunEventSink } from "./agent/durable/events.js";
+import { loadWorkerPrompt } from "./agent/durable/prompt.js";
+import { agentTools, createWorkerRegistry } from "./agent/durable/registry.js";
+import { durableSessionPath, settledAnswer, submitPrompt } from "./agent/durable/run.js";
 import { privateQaManifestPath } from "./qa-manifest-source.js";
 
 interface AgentRunOptions {
@@ -37,12 +35,12 @@ interface AgentRunOptions {
 const SECRET_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "FIGMA_TOKEN", "FIGMA_TOKEN_FILE"] as const;
 
 export class PiAgentRunner {
-  private readonly modelRuntimePromise: Promise<ModelRuntime>;
+  private readonly modelRuntimePromise: Promise<Models>;
   private readonly cgroups: CgroupController;
 
-  constructor(private readonly config: WorkerConfig, dependencies: { cgroups?: CgroupController } = {}) {
+  constructor(private readonly config: WorkerConfig, dependencies: { cgroups?: CgroupController; models?: Models } = {}) {
     this.cgroups = dependencies.cgroups ?? cgroupController(ownCgroupPath());
-    this.modelRuntimePromise = ModelRuntime.create({
+    this.modelRuntimePromise = dependencies.models ? Promise.resolve(dependencies.models) : ModelRuntime.create({
       authPath: resolve(config.agentDir, "auth.json"),
       modelsPath: resolve(config.agentDir, "models.json"),
     });
@@ -81,7 +79,9 @@ export class PiAgentRunner {
   private async runWithScrubbedEnvironment(options: AgentRunOptions): Promise<AgentRunResult> {
     await mkdir(options.sessionDir, { recursive: true });
     await mkdir(dirname(options.logFile), { recursive: true });
-    const dockerAccess = options.dockerAccess === true;
+    const log = (line: string) => appendFile(options.logFile, `${new Date().toISOString()} ${line}\n`).catch(() => undefined);
+    const sessionFile = durableSessionPath(options.sessionDir, options.sessionFile);
+    if (options.sessionFile && options.sessionFile !== sessionFile) await log("previous JSONL session left behind; continuing in a durable session");
     const shutdownController = new AbortController();
     const onInterrupt = () => shutdownController.abort();
     process.on("SIGINT", onInterrupt);
@@ -92,135 +92,125 @@ export class PiAgentRunner {
         worktree: options.worktree,
         processGroupFile: activeCommandProcessGroupPath(this.config.dataDir),
         visualVerification: options.visualVerification === true,
-        dockerAccess,
+        dockerAccess: options.dockerAccess === true,
         ...(options.verification ? { verification: options.verification } : {}),
         shutdownSignal: shutdownController.signal,
         cgroups: this.cgroups,
         ...(options.environment ? { environment: options.environment } : {}),
       });
-      const settingsManager = SettingsManager.create(options.worktree, this.config.agentDir);
-      const bashOperations = isolation.bashOperations;
-      const loader = new DefaultResourceLoader({
-        cwd: options.worktree,
-        agentDir: this.config.agentDir,
-        settingsManager,
-        appendSystemPrompt: [AGENT_POLICY, ...(options.verification ? [
-          `Independent verification mode: do not modify source. Read-only access is limited to ${JSON.stringify(options.verification.readPaths)} and writes to ${JSON.stringify(options.verification.evidenceDir)}. Return an independent verdict, never implementation changes.`,
-        ] : [])],
-        noExtensions: true,
-        extensionFactories: [headlessPolicyExtension({
-          worktree: options.worktree,
-          protectedPaths: this.config.protectedPaths,
-          dockerAccess,
-          bashOperations,
-          sandboxed: isolation.sandboxed,
-          credentialPaths: [this.config.agentDir, privateQaManifestPath(this.config)],
-          ...(options.verification ? { verification: options.verification } : {}),
-        })],
-      });
-      await loader.reload({ resolveProjectTrust: async () => false });
-      const hasSession = options.sessionFile
-        ? await access(options.sessionFile).then(() => true).catch(() => false)
-        : false;
-      const sessionManager = hasSession && options.sessionFile
-        ? SessionManager.open(options.sessionFile, options.sessionDir, options.worktree)
-        : SessionManager.create(options.worktree, options.sessionDir);
-      const { session, modelFallbackMessage } = await createAgentSession({
-        cwd: options.worktree,
-        agentDir: this.config.agentDir,
-        modelRuntime: await this.modelRuntimePromise,
-        model: await this.selectedModel(),
-        thinkingLevel: this.config.thinkingLevel,
-        tools: options.planning ? ["read", "grep", "find", "ls"] : ["read", "bash", "edit", "write", "grep", "find", "ls"],
-        resourceLoader: loader,
-        sessionManager,
-        settingsManager,
-      });
-      const settlementWatchdog = createAgentSettlementWatchdog(5 * 60_000);
-      let resolveAgentSettled: (() => void) | undefined;
-      const agentSettled = new Promise<void>((resolveTerminal) => { resolveAgentSettled = resolveTerminal; });
-      const verificationEvidence: VerificationEvidence = { commands: [], readPaths: [] };
-      const toolInputs = new Map<string, { toolName: string; args: { command?: string; path?: string } }>();
-      const unsubscribe = session.subscribe((event) => {
-        settlementWatchdog.progress();
-        if (options.verification && event.type === "tool_execution_start") {
-          toolInputs.set(event.toolCallId, { toolName: event.toolName, args: event.args as { command?: string; path?: string } });
-        }
-        if (options.verification && event.type === "tool_execution_end") {
-          const input = toolInputs.get(event.toolCallId);
-          toolInputs.delete(event.toolCallId);
-          if (!event.isError && input?.toolName === "bash" && typeof input.args.command === "string") {
-            const output = (event.result as { content?: Array<{ type: string; text?: string }> }).content
-              ?.filter((item) => item.type === "text").map((item) => item.text ?? "").join("\n") ?? "";
-            verificationEvidence.commands.push({ command: input.args.command, output: output.slice(-32_000) });
-          } else if (!event.isError && input?.toolName === "read" && typeof input.args.path === "string") {
-            verificationEvidence.readPaths.push(resolve(options.worktree, input.args.path.replace(/^@/, "")));
-          }
-        }
-        if (event.type === "tool_execution_start") {
-          void appendFile(options.logFile, `${new Date().toISOString()} tool ${event.toolName}\n`);
-        } else if (event.type === "agent_end") {
-          void appendFile(options.logFile, `${new Date().toISOString()} agent_end retry=${String(event.willRetry)}\n`);
-          if (!event.willRetry) settlementWatchdog.arm();
-        } else if (event.type === "agent_settled") {
-          settlementWatchdog.settled();
-          void appendFile(options.logFile, `${new Date().toISOString()} agent_settled\n`);
-          resolveAgentSettled?.();
-        }
-      });
-      try {
-        if (modelFallbackMessage) await appendFile(options.logFile, `${modelFallbackMessage}\n`);
-        const prompt = session.prompt(options.prompt);
-        let completion: "prompt" | "agent_settled";
-        try {
-          completion = await awaitAgentPromptCompletion(
-            prompt, agentSettled, this.config.agentTimeoutMinutes * 60_000, 3_000, settlementWatchdog.failure,
-          );
-          settlementWatchdog.close();
-        } catch (error) {
-          settlementWatchdog.close();
-          let abortTimer: NodeJS.Timeout | undefined;
-          let abortSucceeded = false;
-          await Promise.race([
-            session.abort().then(() => { abortSucceeded = true; }),
-            new Promise<void>((_resolve, reject) => { abortTimer = setTimeout(() => reject(new Error("Pi agent abort timed out")), 10_000); }),
-          ]).catch(() => undefined);
-          if (abortTimer) clearTimeout(abortTimer);
-          if (!abortSucceeded) {
-            await appendFile(options.logFile, `${new Date().toISOString()} fatal agent stall; restarting repository worker\n`).catch(() => undefined);
-            process.exit(75);
-          }
-          throw error;
-        }
-        if (completion === "agent_settled") {
-          void prompt.catch(() => undefined);
-          await appendFile(options.logFile, `${new Date().toISOString()} recovered terminal agent result after prompt settlement grace\n`);
-        }
-        const final = extractAssistantText(session.messages);
-        if (final.stopReason === "error" || final.stopReason === "aborted") {
-          throw new Error(final.error || `Pi stopped with ${final.stopReason}`);
-        }
-        if (!session.sessionFile) throw new Error("Pi did not create a persistent session file");
-        return {
-          sessionFile: session.sessionFile,
-          finalText: final.text.trim(),
-          ...(options.verification ? { verificationEvidence } : {}),
-        };
-      } finally {
-        unsubscribe();
-        session.dispose();
-        await settingsManager.flush();
-      }
+      return await this.runDurable(options, isolation, sessionFile, shutdownController.signal, log);
     } finally {
       process.off("SIGINT", onInterrupt);
       process.off("SIGTERM", onInterrupt);
       await isolation?.close();
     }
   }
+
+  private async runDurable(
+    options: AgentRunOptions,
+    isolation: Isolation,
+    sessionFile: string,
+    shutdownSignal: AbortSignal,
+    log: (line: string) => Promise<void>,
+  ): Promise<AgentRunResult> {
+    const context = BACKGROUND_CONTEXT;
+    const model = await this.selectedModel();
+    const settings = SettingsManager.create(options.worktree, this.config.agentDir);
+    const prompt = await loadWorkerPrompt({
+      worktree: options.worktree,
+      agentDir: this.config.agentDir,
+      ...(options.verification ? { verification: options.verification } : {}),
+    });
+    const workers = createWorkerRegistry({
+      worktree: options.worktree,
+      protectedPaths: this.config.protectedPaths,
+      dockerAccess: options.dockerAccess === true,
+      credentialPaths: [this.config.agentDir, privateQaManifestPath(this.config)],
+      ...(options.verification ? { verification: options.verification } : {}),
+    }, prompt);
+    let harness: Harness | undefined;
+    try {
+      harness = await Harness.open(await openNodeSqliteStorage(sessionFile), {
+        models: await this.modelRuntimePromise,
+        registry: workers.registry,
+        env: () => new IsolatedExecutionEnv(options.worktree, isolation.bashOperations),
+        settings: { compaction: settings.getCompactionSettings(model), retry: settings.getRetrySettings() },
+        onReport: (error) => void log(`harness report: ${error instanceof Error ? error.message : String(error)}`),
+      }, context);
+      const sink = createRunEventSink({ log, worktree: options.worktree, collectEvidence: Boolean(options.verification) });
+      const root = await harness.root(context);
+      await root.configure({
+        model: { provider: model.provider, modelId: model.id },
+        thinkingLevel: this.config.thinkingLevel,
+        tools: agentTools(options.planning === true).flatMap((name) => workers.tools.get(name) ?? []),
+        cwd: options.worktree,
+      }, context);
+      const events = await watchEvents(harness, root.id, context);
+      events.start(async (batch) => sink.handle(batch));
+      try {
+        const submission = await submitPrompt(
+          root, options.prompt, context, () => void log("abandoning an unfinished earlier run"), options.sessionFile === sessionFile,
+        );
+        const finalText = await this.waitForAnswer(root, submission, shutdownSignal, log);
+        return { sessionFile, finalText, ...(options.verification ? { verificationEvidence: sink.evidence } : {}) };
+      } finally {
+        await events.stop();
+      }
+    } finally {
+      // The sandbox is created with the registry, before the store opens, so it is closed on every path.
+      try {
+        await harness?.close(context);
+      } finally {
+        await workers.close();
+      }
+    }
+  }
+
+  /**
+   * Waits for the run's answer within the agent timeout. On timeout the run is aborted (a stuck abort restarts the
+   * repository worker, exit 75). On shutdown it is left pending: the next process reopens the store and resumes it.
+   */
+  private async waitForAnswer(
+    root: Conversation,
+    submission: Submission,
+    shutdownSignal: AbortSignal,
+    log: (line: string) => Promise<void>,
+  ): Promise<string> {
+    const { context, cancel } = withCancel(BACKGROUND_CONTEXT);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; cancel(new Error("timeout")); }, this.config.agentTimeoutMinutes * 60_000);
+    const onShutdown = () => cancel(new Error("shutdown"));
+    shutdownSignal.addEventListener("abort", onShutdown, { once: true });
+    // A shutdown that began while the prompt was being submitted would never fire the listener.
+    if (shutdownSignal.aborted) onShutdown();
+    try {
+      return await settledAnswer(root, submission, context);
+    } catch (error) {
+      if (shutdownSignal.aborted) {
+        await log("worker shutting down; the run stays pending and resumes on restart");
+        throw new Error("Pi agent interrupted by worker shutdown", { cause: error });
+      }
+      if (!timedOut) throw error;
+      await log(`agent timed out after ${this.config.agentTimeoutMinutes} minutes; aborting`);
+      let abortTimer: NodeJS.Timeout | undefined;
+      const aborted = await Promise.race([
+        root.abort(BACKGROUND_CONTEXT).then(() => true),
+        new Promise<false>((resolveAbort) => { abortTimer = setTimeout(() => resolveAbort(false), 10_000); }),
+      ]).catch(() => false);
+      if (abortTimer) clearTimeout(abortTimer);
+      if (!aborted) {
+        await log("fatal agent stall; restarting repository worker");
+        process.exit(75);
+      }
+      throw new Error(`Pi agent timed out after ${this.config.agentTimeoutMinutes} minutes`, { cause: error });
+    } finally {
+      clearTimeout(timer);
+      shutdownSignal.removeEventListener("abort", onShutdown);
+    }
+  }
 }
 
 export { commandBlockReason } from "./agent/policy.js";
-export { awaitAgentPromptCompletion, createAgentSettlementWatchdog } from "./agent/settlement.js";
 export { assertVisualSandboxIsolation, removeStaleSandboxTemps, sandboxConfig, sandboxEnvironment } from "./agent/sandbox.js";
 export { ACTIVE_COMMAND_PROCESS_GROUP_FILE, activeCommandProcessGroupPath, createBashOperations, stopTrackedProcessGroup } from "./agent/process-group.js";
 export { cgroupController, ownCgroupPath, type CgroupController } from "./agent/cgroup.js";

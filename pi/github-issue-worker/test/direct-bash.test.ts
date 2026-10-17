@@ -91,10 +91,12 @@ test("direct bash kills leftover background processes and rejects the call", asy
       root,
       { onData: () => undefined, timeout: 30 },
     );
+    // Attach before waiting: under load the call can reject before the pid file is read.
+    const rejected = assert.rejects(execution, /left background processes running/);
     await waitForPath(pidFile);
     const pid = Number.parseInt(await readFile(pidFile, "utf8"), 10);
     if (!Number.isInteger(pid)) throw new Error("Background pid file did not contain a numeric pid");
-    await assert.rejects(execution, /left background processes running/);
+    await rejected;
     await assert.rejects(access(activeFile));
     assert.throws(() => process.kill(pid, 0), (error: any) => error?.code === "ESRCH");
   } finally {

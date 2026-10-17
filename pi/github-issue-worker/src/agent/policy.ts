@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { createBashTool, type BashOperations, type InlineExtension } from "@earendil-works/pi-coding-agent";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isProtectedChange } from "../repository.js";
 
 export interface VerificationOptions {
@@ -18,12 +19,34 @@ Do not edit generated files by hand; use the repository's documented generators.
 Do not modify controller code, project agent configuration, CI workflows, secret files, or .env files.
 Keep evidence under the ignored .qa directory. Never add .qa artifacts to git.
 If requirements are ambiguous or unsafe, make no speculative destructive change and end with BLOCKED plus the reason.
+Use the codemode tool to batch independent work in one script: read or search several files at once, run
+independent checks with Promise.allSettled, and filter long command output down to the failures you need.
+Every call in a script is still subject to these rules. Do not run commands in parallel that write the same
+build output, lock file, or database, and keep an app server and the browser session that uses it in one bash call.
 `;
+
+/**
+ * The absolute path a tool will touch, resolved exactly as pi-durable's tools and NodeExecutionEnv do: a leading `@`
+ * dropped, Unicode spaces made plain, `~`/`~/` expanded to the home directory, and `file://` URLs converted. Checking
+ * any other spelling would let `~/.ssh/id_rsa` or `file:///…` pass as a path inside the worktree.
+ */
+export function toolTargetPath(cwd: string, input: string): string {
+  let path = input.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ").replace(/^@/, "");
+  if (path === "~") path = homedir();
+  else if (path.startsWith("~/")) path = join(homedir(), path.slice(2));
+  else if (path.startsWith("file://")) {
+    try {
+      path = fileURLToPath(path);
+    } catch {
+      // A malformed URL stays an ordinary relative path, as the environment treats it.
+    }
+  }
+  return isAbsolute(path) ? resolve(path) : resolve(cwd, path);
+}
 
 function normalizeToolPath(cwd: string, input: unknown): string | null {
   if (typeof input !== "string" || input.length === 0) return null;
-  const cleaned = input.replace(/^@/, "");
-  const absolute = isAbsolute(cleaned) ? resolve(cleaned) : resolve(cwd, cleaned);
+  const absolute = toolTargetPath(cwd, input);
   let ancestor = absolute;
   let checked: string;
   for (;;) {
@@ -110,61 +133,37 @@ export function commandBlockReason(
   return null;
 }
 
-export function headlessPolicyExtension(options: {
+export interface ToolPolicyOptions {
   worktree: string;
   protectedPaths: readonly string[];
   dockerAccess: boolean;
-  bashOperations: BashOperations;
-  /** Whether `bashOperations` wraps commands in the OS sandbox; only the tool's label depends on it. */
-  sandboxed?: boolean;
   /** Absolute credential locations (the resolved Pi agent directory) bash commands may not reference. */
   credentialPaths?: readonly string[];
   verification?: VerificationOptions;
-}): InlineExtension {
-  return {
-    name: "headless-worker-policy",
-    factory: (pi) => {
-      const bash = createBashTool(options.worktree, {
-        operations: options.bashOperations,
-      });
-      pi.registerTool({ ...bash, label: options.sandboxed === false ? "bash" : "bash (OS sandboxed)" });
-      pi.on("user_bash", () => ({ operations: options.bashOperations }));
-      pi.on("tool_call", (event) => {
-        const input = event.input as { command?: unknown; path?: unknown };
-        if (event.toolName === "bash" && typeof input.command === "string") {
-          const reason = commandBlockReason(input.command, options.protectedPaths, {
-            dockerAccess: options.dockerAccess,
-            ...(options.credentialPaths ? { credentialPaths: options.credentialPaths } : {}),
-          });
-          if (reason) return { block: true, reason, terminate: false };
-        }
-        if (["read", "write", "edit", "grep", "find", "ls"].includes(event.toolName)) {
-          const mutating = ["write", "edit"].includes(event.toolName);
-          const path = input.path ?? (["grep", "find", "ls"].includes(event.toolName) ? "." : undefined);
-          const verification = options.verification;
-          if (verification) {
-            // Tools resolve relative paths against the worktree, not the evidence/reference root.
-            const absolute = typeof path === "string" ? resolve(options.worktree, path.replace(/^@/, "")) : undefined;
-            if (normalizeToolPath(verification.evidenceDir, absolute) !== null) return undefined;
-            if (!mutating && verification.readPaths.some((root) => normalizeToolPath(root, absolute) !== null)) {
-              return undefined;
-            }
-          }
-          const local = normalizeToolPath(options.worktree, path);
-          if (local === null) {
-            return { block: true, reason: "Path is outside the issue worktree", terminate: false };
-          }
-          const sensitive =
-            /appsettings\.secrets\.json$/i.test(local) || /(^|\/)\.env(?:\.|$)/i.test(local);
-          if (sensitive || (mutating && isProtectedChange(local, options.protectedPaths))) {
-            return { block: true, reason: `Protected path: ${local}`, terminate: false };
-          }
-          if (verification && mutating) {
-            return { block: true, reason: "Verifier may write only its evidence directory", terminate: false };
-          }
-        }
-        return undefined;
-      });
-    },
-  };
+}
+
+/** Why the worker refuses this tool call, or null when it may run. Applies to direct and codemode-nested calls. */
+export function toolBlockReason(toolName: string, input: { command?: unknown; path?: unknown }, options: ToolPolicyOptions): string | null {
+  if (toolName === "bash" && typeof input.command === "string") {
+    return commandBlockReason(input.command, options.protectedPaths, {
+      dockerAccess: options.dockerAccess,
+      ...(options.credentialPaths ? { credentialPaths: options.credentialPaths } : {}),
+    });
+  }
+  if (!["read", "write", "edit", "grep", "find", "ls"].includes(toolName)) return null;
+  const mutating = ["write", "edit"].includes(toolName);
+  const path = input.path ?? (["grep", "find", "ls"].includes(toolName) ? "." : undefined);
+  const verification = options.verification;
+  if (verification) {
+    // Tools resolve relative paths against the worktree, not the evidence/reference root.
+    const absolute = typeof path === "string" && path.length > 0 ? toolTargetPath(options.worktree, path) : undefined;
+    if (normalizeToolPath(verification.evidenceDir, absolute) !== null) return null;
+    if (!mutating && verification.readPaths.some((root) => normalizeToolPath(root, absolute) !== null)) return null;
+  }
+  const local = normalizeToolPath(options.worktree, path);
+  if (local === null) return "Path is outside the issue worktree";
+  const sensitive = /appsettings\.secrets\.json$/i.test(local) || /(^|\/)\.env(?:\.|$)/i.test(local);
+  if (sensitive || (mutating && isProtectedChange(local, options.protectedPaths))) return `Protected path: ${local}`;
+  if (verification && mutating) return "Verifier may write only its evidence directory";
+  return null;
 }
