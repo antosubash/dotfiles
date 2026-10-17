@@ -10,6 +10,13 @@ const GREP_LIMIT = 100;
 const FIND_LIMIT = 1000;
 const LS_LIMIT = 500;
 
+/**
+ * Files the tool policy refuses to `read` (`toolBlockReason`), kept out of every `grep` walk as well. A path-only policy
+ * cannot see inside a directory search, and a `glob` argument whitelists files `.gitignore` would otherwise hide (an
+ * ignored `.env` in the worktree), so these exclusions come last: in ripgrep the last matching glob wins.
+ */
+const SECRET_FILE_GLOBS = ["!.env", "!.env.*", "!appsettings.secrets.json"];
+
 type Output = { output: { type: "text"; text: string }[] };
 
 function requireEnv(api: ToolExecutionApi): ExecutionEnv {
@@ -142,6 +149,7 @@ const grep = defineTool({
     if (args.literal) argv.push("--fixed-strings");
     if (contextLines > 0) argv.push("--context", String(contextLines));
     if (args.glob) argv.push("--glob", args.glob);
+    for (const secret of SECRET_FILE_GLOBS) argv.push("--iglob", secret);
     argv.push("--", args.pattern, target.file ?? ".");
     const run = await capture(env, argv, target.dir, context);
     if (run.missing) throw new Error("ripgrep (rg) is not available");

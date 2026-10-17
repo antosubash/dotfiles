@@ -46,12 +46,19 @@ async function endedInFailure(root: Conversation, record: SubmissionRecord, cont
  * past (it reissues the same prompt when it retries), so it is aborted rather than left to run first. A request ID
  * names its submission for good, so a prompt whose earlier run was aborted or ended in an error is submitted again under
  * a fresh ID: the controller's retry gets a new run instead of the old failure.
+ *
+ * An already answered run is reattached only when the controller never recorded this store (`recorded` false): then the
+ * last process died between the answer and the controller saving it. Once the store is recorded the controller has
+ * received every earlier answer, so an identical prompt is a retry (after a BLOCKED answer, or a result a later stage
+ * rejected) and gets a new run instead of the stale answer. A crash between an answer and the controller recording it
+ * for a later round reruns the agent, which is repeated work but never a stale result.
  */
 export async function submitPrompt(
   root: Conversation,
   prompt: string,
   context: Context,
   onAbandon: () => void,
+  recorded = false,
 ): Promise<Submission> {
   const base = promptRequestId(prompt);
   for (let attempt = 0; ; attempt++) {
@@ -65,7 +72,8 @@ export async function submitPrompt(
       await root.abort(context);
       submission = await root.submit(draft, context);
     }
-    if (!(await endedInFailure(root, await submission.status(context), context))) return submission;
+    const record = await submission.status(context);
+    if (!(recorded && record.status === "done") && !(await endedInFailure(root, record, context))) return submission;
   }
 }
 

@@ -132,3 +132,34 @@ describe("durable search tools", () => {
     await assert.rejects(run("ls", { path: "notes.md" }, env), /Not a directory/);
   });
 });
+
+describe("durable search tools and secret files", () => {
+  let dir: string;
+  let env: NodeExecutionEnv;
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), "search-secrets-"));
+    env = new NodeExecutionEnv({ cwd: dir });
+    await mkdir(join(dir, "nested"));
+    await writeFile(join(dir, "app.ts"), "token usage\n");
+    await writeFile(join(dir, ".env"), "token=ENV_SECRET\n");
+    await writeFile(join(dir, ".env.local"), "token=LOCAL_SECRET\n");
+    await writeFile(join(dir, "nested", ".ENV"), "token=UPPER_SECRET\n");
+    await writeFile(join(dir, "nested", "appsettings.secrets.json"), '{"token":"JSON_SECRET"}\n');
+    await writeFile(join(dir, ".ignore"), ".env*\nappsettings.secrets.json\n");
+  });
+
+  after(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  // `read` refuses these files, and a directory search must not return their contents either; an explicit glob
+  // whitelists files the ignore rules hide, which is how an ignored `.env` in a worktree would otherwise be searched.
+  it("grep never returns secret files, whatever its glob", async () => {
+    for (const glob of [undefined, "*", ".env*", "**/*", "nested/**", "appsettings.secrets.json"]) {
+      const output = await run("grep", { pattern: "token", ...(glob ? { glob } : {}) }, env);
+      assert.doesNotMatch(output, /SECRET/, `glob ${glob}`);
+      if (glob === undefined || glob === "*" || glob === "**/*") assert.match(output, /app\.ts:1: token usage/, `glob ${glob}`);
+    }
+  });
+});

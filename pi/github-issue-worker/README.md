@@ -43,7 +43,8 @@ Agent runs use pi's durable runtime (`@earendil-works/pi-durable`): each job kee
 `sessions/issue-<n>/harness.sqlite`, and every model turn and tool call is committed there before it runs.
 If the worker dies mid-run (a stall exit, a supervisor restart, a host reboot), the restarted controller reuses
 the worktree as it was and re-issues the stage's prompt; the runner keys each run by its prompt, so it reattaches
-to the unfinished run instead of starting over. A tool call the crash cut short reaches the model as
+to the unfinished run instead of starting over (an identical prompt after the controller recorded the run's answer,
+such as a retry of a BLOCKED stage, starts a new run instead of replaying that answer). A tool call the crash cut short reaches the model as
 "interrupted", and the supervisor has already stopped the commands it left running. When the re-issued prompt
 differs (an implementation run that captures visual evidence itself gets a fresh timestamped evidence directory),
 the stale run is aborted and the new prompt starts a fresh run in the same conversation, as before. The runner uses the durable `read`,

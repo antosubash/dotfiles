@@ -74,11 +74,24 @@ test("the same prompt reattaches to its answered run; a new prompt continues the
     (context) => fauxAssistantMessage(`saw ${context.messages.filter((message) => message.role === "user").length} prompts`),
   ]);
   const first = await run("first prompt");
-  assert.equal((await run("first prompt", { sessionFile: first.sessionFile })).finalText, "first answer");
+  // The controller never recorded the first run (it died before saving the session), so it asks again.
+  assert.equal((await run("first prompt")).finalText, "first answer");
   assert.equal(faux.state.callCount, 1);
   const second = await run("second prompt", { sessionFile: first.sessionFile });
   assert.equal(second.finalText, "saw 2 prompts");
   assert.equal(second.sessionFile, first.sessionFile);
+}));
+
+test("a retry of a prompt whose answer the controller already recorded runs again instead of replaying the answer", () => withRoot(async (root) => {
+  const { faux, run } = await fauxRunner(root, [
+    fauxAssistantMessage("BLOCKED: no access"),
+    fauxAssistantMessage("fixed it"),
+  ]);
+  const first = await run("implement the issue");
+  assert.equal(first.finalText, "BLOCKED: no access");
+  // The controller saved `first.sessionFile`, rejected the BLOCKED answer, and retries with the identical prompt.
+  assert.equal((await run("implement the issue", { sessionFile: first.sessionFile })).finalText, "fixed it");
+  assert.equal(faux.state.callCount, 2);
 }));
 
 test("a retry after a failed run starts a new run instead of reattaching to the failure", () => withRoot(async (root) => {

@@ -148,7 +148,9 @@ export class PiAgentRunner {
       const events = await watchEvents(harness, root.id, context);
       events.start(async (batch) => sink.handle(batch));
       try {
-        const submission = await submitPrompt(root, options.prompt, context, () => void log("abandoning an unfinished earlier run"));
+        const submission = await submitPrompt(
+          root, options.prompt, context, () => void log("abandoning an unfinished earlier run"), options.sessionFile === sessionFile,
+        );
         const finalText = await this.waitForAnswer(root, submission, shutdownSignal, log);
         return { sessionFile, finalText, ...(options.verification ? { verificationEvidence: sink.evidence } : {}) };
       } finally {

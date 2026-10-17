@@ -5,13 +5,18 @@ import type { VerificationEvidence } from "../../types.js";
 type ToolEnd = Extract<AgentEvent, { type: "tool_execution_end" }>;
 type ToolResultMessage = { isError?: boolean; durationMs?: number; content?: Array<{ type: string; text?: string }> };
 
-/** The tool result an end event carries: the transcript entry of a model call, or the result of a nested call. */
+/**
+ * The tool result an end event carries: the transcript entry of a model call, or the result of a nested call. An end
+ * event with neither means the call never finished (its task faulted, or its run or parent settled first), so it
+ * counts as an error rather than as a successful run with no output.
+ */
 function endResult(event: ToolEnd): { isError: boolean; durationMs: number | undefined; text: string } {
   const message = (event.entry?.model as ToolResultMessage[] | undefined)?.[0];
   if (message) {
     const text = message.content?.filter((item) => item.type === "text").map((item) => item.text ?? "").join("\n") ?? "";
     return { isError: message.isError === true, durationMs: message.durationMs, text };
   }
+  if (event.result === undefined) return { isError: true, durationMs: undefined, text: "" };
   const structured = event.result?.structuredOutput as { output?: unknown } | string | undefined;
   const text = typeof structured === "string" ? structured : typeof structured?.output === "string" ? structured.output : "";
   return { isError: event.result?.isError === true, durationMs: event.result?.durationMs, text };
