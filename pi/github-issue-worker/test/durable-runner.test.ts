@@ -81,6 +81,17 @@ test("the same prompt reattaches to its answered run; a new prompt continues the
   assert.equal(second.sessionFile, first.sessionFile);
 }));
 
+test("a retry after a failed run starts a new run instead of reattaching to the failure", () => withRoot(async (root) => {
+  const { faux, run } = await fauxRunner(root, [
+    fauxAssistantMessage("partial", { stopReason: "error", errorMessage: "provider exploded" }),
+    fauxAssistantMessage("second try"),
+  ]);
+  await assert.rejects(run("flaky prompt"), /provider exploded/);
+  // The controller records no session file for a failed run and reissues the same prompt.
+  assert.equal((await run("flaky prompt")).finalText, "second try");
+  assert.equal(faux.state.callCount, 2);
+}));
+
 test("verifier runs collect bash and read evidence", () => withRoot(async (root) => {
   const evidenceDir = join(root, "evidence");
   const { run, worktree } = await fauxRunner(root, [

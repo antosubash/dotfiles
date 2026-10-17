@@ -128,15 +128,16 @@ export class PiAgentRunner {
       credentialPaths: [this.config.agentDir, privateQaManifestPath(this.config)],
       ...(options.verification ? { verification: options.verification } : {}),
     }, prompt);
-    const harness = await Harness.open(await openNodeSqliteStorage(sessionFile), {
-      models: await this.modelRuntimePromise,
-      registry: workers.registry,
-      env: () => new IsolatedExecutionEnv(options.worktree, isolation.bashOperations),
-      settings: { compaction: settings.getCompactionSettings(model), retry: settings.getRetrySettings() },
-      onReport: (error) => void log(`harness report: ${error instanceof Error ? error.message : String(error)}`),
-    }, context);
-    const sink = createRunEventSink({ log, worktree: options.worktree, collectEvidence: Boolean(options.verification) });
+    let harness: Harness | undefined;
     try {
+      harness = await Harness.open(await openNodeSqliteStorage(sessionFile), {
+        models: await this.modelRuntimePromise,
+        registry: workers.registry,
+        env: () => new IsolatedExecutionEnv(options.worktree, isolation.bashOperations),
+        settings: { compaction: settings.getCompactionSettings(model), retry: settings.getRetrySettings() },
+        onReport: (error) => void log(`harness report: ${error instanceof Error ? error.message : String(error)}`),
+      }, context);
+      const sink = createRunEventSink({ log, worktree: options.worktree, collectEvidence: Boolean(options.verification) });
       const root = await harness.root(context);
       await root.configure({
         model: { provider: model.provider, modelId: model.id },
@@ -154,8 +155,12 @@ export class PiAgentRunner {
         await events.stop();
       }
     } finally {
-      await harness.close(context);
-      await workers.close();
+      // The sandbox is created with the registry, before the store opens, so it is closed on every path.
+      try {
+        await harness?.close(context);
+      } finally {
+        await workers.close();
+      }
     }
   }
 
@@ -174,6 +179,8 @@ export class PiAgentRunner {
     const timer = setTimeout(() => { timedOut = true; cancel(new Error("timeout")); }, this.config.agentTimeoutMinutes * 60_000);
     const onShutdown = () => cancel(new Error("shutdown"));
     shutdownSignal.addEventListener("abort", onShutdown, { once: true });
+    // A shutdown that began while the prompt was being submitted would never fire the listener.
+    if (shutdownSignal.aborted) onShutdown();
     try {
       return await settledAnswer(root, submission, context);
     } catch (error) {
