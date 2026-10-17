@@ -9,7 +9,7 @@ import { config } from "./helpers/worker-fixtures.js";
 
 function fakeInstance(log: string[]): AppInstance {
   return {
-    dir: "/i", runId: "r", fingerprint: "f", endpoints: { frontend: "http://localhost:3005" }, storageState: null, readinessMs: 1,
+    dir: "/i", runId: "r", fingerprint: "f", endpoints: { frontend: "http://localhost:3005" }, storageState: null, roleStorageStates: {}, readinessMs: 1,
     environment: () => ({}),
     ensureCurrent: async () => { log.push("ensure"); return false; },
     stop: async () => { log.push("stop"); },

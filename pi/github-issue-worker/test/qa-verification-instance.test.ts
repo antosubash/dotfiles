@@ -36,7 +36,7 @@ test("verify hands the running instance to the agent's environment and prompt", 
     },
   };
   const instance: AppInstance = {
-    dir: "/i", runId: "r", fingerprint: "f", readinessMs: 1_500, storageState: "/i/storage-state.json",
+    dir: "/i", runId: "r", fingerprint: "f", readinessMs: 1_500, storageState: "/i/storage-state.json", roleStorageStates: {},
     endpoints: { frontend: "http://localhost:3005" },
     environment: () => ({ PI_QA_INSTANCE: "/i", PI_QA_ENDPOINT_FRONTEND: "http://localhost:3005", PI_QA_STORAGE_STATE: "/i/storage-state.json" }),
     ensureCurrent: async () => false,
