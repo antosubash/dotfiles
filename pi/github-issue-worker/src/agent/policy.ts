@@ -1,5 +1,7 @@
 import { realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isProtectedChange } from "../repository.js";
 
 export interface VerificationOptions {
@@ -23,10 +25,28 @@ Every call in a script is still subject to these rules. Do not run commands in p
 build output, lock file, or database, and keep an app server and the browser session that uses it in one bash call.
 `;
 
+/**
+ * The absolute path a tool will touch, resolved exactly as pi-durable's tools and NodeExecutionEnv do: a leading `@`
+ * dropped, Unicode spaces made plain, `~`/`~/` expanded to the home directory, and `file://` URLs converted. Checking
+ * any other spelling would let `~/.ssh/id_rsa` or `file:///…` pass as a path inside the worktree.
+ */
+function toolTargetPath(cwd: string, input: string): string {
+  let path = input.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ").replace(/^@/, "");
+  if (path === "~") path = homedir();
+  else if (path.startsWith("~/")) path = join(homedir(), path.slice(2));
+  else if (path.startsWith("file://")) {
+    try {
+      path = fileURLToPath(path);
+    } catch {
+      // A malformed URL stays an ordinary relative path, as the environment treats it.
+    }
+  }
+  return isAbsolute(path) ? resolve(path) : resolve(cwd, path);
+}
+
 function normalizeToolPath(cwd: string, input: unknown): string | null {
   if (typeof input !== "string" || input.length === 0) return null;
-  const cleaned = input.replace(/^@/, "");
-  const absolute = isAbsolute(cleaned) ? resolve(cleaned) : resolve(cwd, cleaned);
+  const absolute = toolTargetPath(cwd, input);
   let ancestor = absolute;
   let checked: string;
   for (;;) {
@@ -136,7 +156,7 @@ export function toolBlockReason(toolName: string, input: { command?: unknown; pa
   const verification = options.verification;
   if (verification) {
     // Tools resolve relative paths against the worktree, not the evidence/reference root.
-    const absolute = typeof path === "string" ? resolve(options.worktree, path.replace(/^@/, "")) : undefined;
+    const absolute = typeof path === "string" && path.length > 0 ? toolTargetPath(options.worktree, path) : undefined;
     if (normalizeToolPath(verification.evidenceDir, absolute) !== null) return null;
     if (!mutating && verification.readPaths.some((root) => normalizeToolPath(root, absolute) !== null)) return null;
   }

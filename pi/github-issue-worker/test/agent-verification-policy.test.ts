@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { toolBlockReason } from "../src/agent/policy.js";
@@ -37,5 +37,25 @@ test("verifier policy resolves tool-relative paths against the worktree before e
     assert.equal(blocked("grep"), false);
     await symlink(worktree, join(evidenceDir, "escape"));
     assert.equal(blocked("write", join(evidenceDir, "escape", "nested", "new.ts")), true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+// The durable tools resolve paths with NodeExecutionEnv, which expands `~` and `file://` URLs; the policy has to see
+// the same path, or `read ~/.ssh/id_rsa` would pass as `<worktree>/~/.ssh/id_rsa` and read the real key.
+test("policy resolves home and file URL paths the way the tools do", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-policy-home-"));
+  const worktree = join(root, "worktree");
+  await mkdir(worktree);
+  await writeFile(join(worktree, "inside.ts"), "ok");
+  const policy = { worktree, protectedPaths: [], dockerAccess: false };
+  try {
+    for (const path of ["~", "~/.ssh/id_rsa", "@~/.pi/agent/auth.json", "file:///etc/passwd", `file://${homedir()}/.ssh/id_rsa`]) {
+      for (const tool of ["read", "write", "edit", "grep", "find", "ls"]) {
+        assert.equal(toolBlockReason(tool, { path }, policy), "Path is outside the issue worktree", `${tool} ${path}`);
+      }
+    }
+    assert.equal(toolBlockReason("read", { path: `file://${join(worktree, "inside.ts")}` }, policy), null);
+    assert.equal(toolBlockReason("read", { path: "inside copy.ts" }, policy), null);
+    assert.equal(toolBlockReason("read", { path: ".env " }, policy), null);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
