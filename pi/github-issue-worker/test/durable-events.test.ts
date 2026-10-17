@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import { createRunEventSink } from "../src/agent/durable/events.js";
@@ -21,4 +23,14 @@ test("only calls that finished successfully become verifier evidence", () => {
   ]);
   assert.deepEqual(sink.evidence.commands, [{ command: "npm test", output: "ok" }]);
   assert.deepEqual(sink.evidence.readPaths, ["/work/report.txt"]);
+});
+
+test("read receipts name the file the tool read: @, ~/ and file:// spellings resolve like the tools", () => {
+  const sink = createRunEventSink({ log: async () => undefined, worktree: "/work", collectEvidence: true });
+  sink.handle([
+    start("a", "read", { path: "@src/a.ts" }), end("a", "read", nested(false, "")),
+    start("b", "read", { path: "file:///refs/design/reference.png" }), end("b", "read", nested(false, "")),
+    start("c", "read", { path: "~/notes.txt" }), end("c", "read", nested(false, "")),
+  ]);
+  assert.deepEqual(sink.evidence.readPaths, ["/work/src/a.ts", "/refs/design/reference.png", join(homedir(), "notes.txt")]);
 });

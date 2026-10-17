@@ -30,7 +30,7 @@ build output, lock file, or database, and keep an app server and the browser ses
  * dropped, Unicode spaces made plain, `~`/`~/` expanded to the home directory, and `file://` URLs converted. Checking
  * any other spelling would let `~/.ssh/id_rsa` or `file:///…` pass as a path inside the worktree.
  */
-function toolTargetPath(cwd: string, input: string): string {
+export function toolTargetPath(cwd: string, input: string): string {
   let path = input.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ").replace(/^@/, "");
   if (path === "~") path = homedir();
   else if (path.startsWith("~/")) path = join(homedir(), path.slice(2));

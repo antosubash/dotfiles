@@ -1,6 +1,6 @@
-import { resolve } from "node:path";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { VerificationEvidence } from "../../types.js";
+import { toolTargetPath } from "../policy.js";
 
 type ToolEnd = Extract<AgentEvent, { type: "tool_execution_end" }>;
 type ToolResultMessage = { isError?: boolean; durationMs?: number; content?: Array<{ type: string; text?: string }> };
@@ -59,7 +59,8 @@ export function createRunEventSink(options: {
           if (input.toolName === "bash" && typeof input.args.command === "string") {
             evidence.commands.push({ command: input.args.command, output: text.slice(-32_000) });
           } else if (input.toolName === "read" && typeof input.args.path === "string") {
-            evidence.readPaths.push(resolve(options.worktree, input.args.path.replace(/^@/, "")));
+            // Resolved the way the read tool and the tool policy resolve it (`@`, `~/`, `file://`), so the receipt names the file read.
+            evidence.readPaths.push(toolTargetPath(options.worktree, input.args.path));
           }
         } else if (event.type === "run_end") {
           log("agent_settled");
