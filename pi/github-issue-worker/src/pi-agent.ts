@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { BACKGROUND_CONTEXT, withCancel } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { Harness, watchEvents } from "@earendil-works/pi-durable";
+import { Harness, watchEvents, type Conversation, type Submission } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import type { WorkerConfig } from "./config.js";
 import type { AgentRunResult } from "./types.js";
@@ -82,7 +82,6 @@ export class PiAgentRunner {
     const log = (line: string) => appendFile(options.logFile, `${new Date().toISOString()} ${line}\n`).catch(() => undefined);
     const sessionFile = durableSessionPath(options.sessionDir, options.sessionFile);
     if (options.sessionFile && options.sessionFile !== sessionFile) await log("previous JSONL session left behind; continuing in a durable session");
-    const dockerAccess = options.dockerAccess === true;
     const shutdownController = new AbortController();
     const onInterrupt = () => shutdownController.abort();
     process.on("SIGINT", onInterrupt);
@@ -93,7 +92,7 @@ export class PiAgentRunner {
         worktree: options.worktree,
         processGroupFile: activeCommandProcessGroupPath(this.config.dataDir),
         visualVerification: options.visualVerification === true,
-        dockerAccess,
+        dockerAccess: options.dockerAccess === true,
         ...(options.verification ? { verification: options.verification } : {}),
         shutdownSignal: shutdownController.signal,
         cgroups: this.cgroups,
@@ -136,7 +135,7 @@ export class PiAgentRunner {
       settings: { compaction: settings.getCompactionSettings(model), retry: settings.getRetrySettings() },
       onReport: (error) => void log(`harness report: ${error instanceof Error ? error.message : String(error)}`),
     }, context);
-    const sink = createRunEventSink({ logFile: options.logFile, worktree: options.worktree, collectEvidence: Boolean(options.verification) });
+    const sink = createRunEventSink({ log, worktree: options.worktree, collectEvidence: Boolean(options.verification) });
     try {
       const root = await harness.root(context);
       await root.configure({
@@ -165,8 +164,8 @@ export class PiAgentRunner {
    * repository worker, exit 75). On shutdown it is left pending: the next process reopens the store and resumes it.
    */
   private async waitForAnswer(
-    root: Parameters<typeof settledAnswer>[0],
-    submission: Parameters<typeof settledAnswer>[1],
+    root: Conversation,
+    submission: Submission,
     shutdownSignal: AbortSignal,
     log: (line: string) => Promise<void>,
   ): Promise<string> {
@@ -201,8 +200,6 @@ export class PiAgentRunner {
     }
   }
 }
-
-export { agentTools } from "./agent/durable/registry.js";
 
 export { commandBlockReason } from "./agent/policy.js";
 export { assertVisualSandboxIsolation, removeStaleSandboxTemps, sandboxConfig, sandboxEnvironment } from "./agent/sandbox.js";

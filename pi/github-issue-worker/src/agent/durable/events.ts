@@ -1,4 +1,3 @@
-import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { VerificationEvidence } from "../../types.js";
@@ -22,24 +21,23 @@ export interface RunEventSink {
   /** Feeds one committed batch of agent events. */
   handle(events: readonly AgentEvent[]): void;
   readonly evidence: VerificationEvidence;
-  /** Milliseconds since the last event: the stall detector's input. */
-  idleMs(): number;
 }
 
 /**
- * Job-log lines (tool starts, failed or slow tools, run boundaries, retries), the verifier's evidence (successful bash
- * commands with their output tail, and successfully read paths), and a progress clock for the stall detector.
+ * Job-log lines (tool starts, failed or slow tools, run boundaries, retries) and the verifier's evidence (successful
+ * bash commands with their output tail, and successfully read paths).
  */
-export function createRunEventSink(options: { logFile: string; worktree: string; collectEvidence: boolean }): RunEventSink {
+export function createRunEventSink(options: {
+  log: (line: string) => Promise<void>;
+  worktree: string;
+  collectEvidence: boolean;
+}): RunEventSink {
   const evidence: VerificationEvidence = { commands: [], readPaths: [] };
   const inputs = new Map<string, { toolName: string; args: { command?: unknown; path?: unknown } }>();
-  let lastEvent = Date.now();
-  const log = (line: string) => void appendFile(options.logFile, `${new Date().toISOString()} ${line}\n`).catch(() => undefined);
+  const log = (line: string) => void options.log(line);
   return {
     evidence,
-    idleMs: () => Date.now() - lastEvent,
     handle(events) {
-      lastEvent = Date.now();
       for (const event of events) {
         if (event.type === "tool_execution_start") {
           inputs.set(event.toolCallId, { toolName: event.toolName, args: event.args as { command?: unknown; path?: unknown } });

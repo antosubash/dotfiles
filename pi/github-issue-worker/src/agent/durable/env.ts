@@ -4,7 +4,7 @@ import { err, ExecutionError, ok, type Result, type ShellExecOptions, type Shell
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 
 /** POSIX single-quote one argv entry so an argv call keeps its exact arguments through `bash -c`. */
-export function shellQuote(argument: string): string {
+function shellQuote(argument: string): string {
   return /^[A-Za-z0-9_\/.,:=@%+-]+$/.test(argument) ? argument : `'${argument.replaceAll("'", `'\\''`)}'`;
 }
 

@@ -15,8 +15,8 @@ import { workerPromptSections, type WorkerPrompt } from "./prompt.js";
 import { createSearchTools } from "./search-tools.js";
 
 /** Tools a planning run may use: read-only, no bash, so its codemode scripts cannot reach bash either. */
-export const PLANNING_TOOLS = ["read", "grep", "find", "ls", "codemode"] as const;
-export const IMPLEMENTATION_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "codemode"] as const;
+const PLANNING_TOOLS = ["read", "grep", "find", "ls", "codemode"] as const;
+const IMPLEMENTATION_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "codemode"] as const;
 
 export function agentTools(planning: boolean): string[] {
   return [...(planning ? PLANNING_TOOLS : IMPLEMENTATION_TOOLS)];

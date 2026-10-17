@@ -4,7 +4,7 @@ import type { Context } from "@earendil-works/chord";
 import { AssistantEntry, ConversationBusy, type Conversation, type Submission } from "@earendil-works/pi-durable";
 
 /** File name of a job's durable session: one SQLite store holding its root conversation, tasks and usage. */
-export const DURABLE_SESSION_FILE = "harness.sqlite";
+const DURABLE_SESSION_FILE = "harness.sqlite";
 
 /**
  * Where a run keeps its conversation. A previous durable session is reused; anything else (none yet, or a JSONL
@@ -19,7 +19,7 @@ export function durableSessionPath(sessionDir: string, sessionFile: string | nul
  * The request ID of a prompt. The controller re-issues the same prompt after a worker restart, so the same ID
  * reattaches to the run the last process left unfinished (or already answered) instead of starting it twice.
  */
-export function promptRequestId(prompt: string): string {
+function promptRequestId(prompt: string): string {
   return `worker-run:${createHash("sha256").update(prompt).digest("hex").slice(0, 32)}`;
 }
 

@@ -29,5 +29,5 @@ export async function fauxRunner(root: string, responses: FauxResponseStep[]) {
     logFile: join(root, "data", "logs", "issue-1.log"),
     ...extra,
   });
-  return { faux, config, worktree, runner, run };
+  return { faux, worktree, run };
 }
