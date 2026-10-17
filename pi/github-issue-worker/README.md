@@ -39,10 +39,23 @@ QA and design-verification sessions evaluate its output before the controller ca
 9. Every review, conflicting head/base pair, and CI-head event is persisted in SQLite, making handling
    idempotent across restarts. After GitHub reports a tracked PR as merged, the cleanup service removes its clean managed worktree once every local commit is contained in the merged PR head (fetched from `refs/pull/<n>/head`, which survives squash merges and branch deletion); closed-unmerged PRs and dirty or diverged worktrees are preserved.
 
-Every agent session (implementation, verifiers, planner) also gets pi's `codemode` tool, so the model can batch
+Agent runs use pi's durable runtime (`@earendil-works/pi-durable`): each job keeps one conversation in
+`sessions/issue-<n>/harness.sqlite`, and every model turn and tool call is committed there before it runs.
+If the worker dies mid-run (a stall exit, a supervisor restart, a host reboot), the restarted controller reuses
+the worktree as it was and re-issues the stage's prompt; the runner keys each run by its prompt, so it reattaches
+to the unfinished run instead of starting over. A tool call the crash cut short reaches the model as
+"interrupted", and the supervisor has already stopped the commands it left running. When the re-issued prompt
+differs (an implementation run that captures visual evidence itself gets a fresh timestamped evidence directory),
+the stale run is aborted and the new prompt starts a fresh run in the same conversation, as before. The runner uses the durable `read`,
+`write`, `edit` and `bash` tools plus its own read-only `grep`, `find` and `ls`; `bash` (and the argv calls of
+`grep`/`find`) runs through the worker's isolation: process-group tracking, child cgroup, credential scrub and
+optional OS sandbox. The system prompt carries the worker policy and the worktree's `AGENTS.md`; global skills
+are left out because the policy refuses reads outside the worktree.
+
+Every agent session (implementation, verifiers, planner) also gets the `codemode` tool, so the model can batch
 tool calls in one script, run independent checks in parallel, and filter long output before it reaches the
-context. Nested calls go through the same policy hook, cgroup-fenced bash and process-group tracking as direct
-calls (`test/codemode-policy.test.ts`); its `models` API (classifiers, image generation) is disabled so an
+context. The policy is a `beforeTool` hook, which runs for model calls and for every nested call a script makes
+(`test/durable-runner.test.ts`); codemode's `models` API (classifiers, image generation) is disabled so an
 unattended run never spends on it. The job log marks nested calls `(codemode)` and records tool calls that
 fail or run for a minute or more with their duration.
 
@@ -508,9 +521,9 @@ This is **not normal sandboxing**. Docker daemon access can provide host-level c
 Runtime filesystem/network boundaries; command filtering is not a security boundary. Run the worker only
 on a dedicated disposable machine/account with no unrelated credentials or workloads.
 
-Agent runs have two anti-stall safeguards: a final `agent_settled` event releases a Pi SDK prompt that
-fails to settle after a short grace period, and `PI_WORKER_AGENT_TIMEOUT_MINUTES` places a hard ceiling on
-runs that never reach a terminal event. The normal controller path then records the final result, clears
+`PI_WORKER_AGENT_TIMEOUT_MINUTES` places a hard ceiling on every agent run: the run is aborted, and if the
+abort itself hangs the repository worker exits with code 75 so the supervisor restarts it. A worker shutdown
+leaves the run pending in its durable session for the next process to resume. The normal controller path then records the final result, clears
 partial source changes for `BLOCKED` output, and updates GitHub instead of wedging the repository profile.
 
 ## State and recovery
@@ -522,7 +535,7 @@ Each profile stores in a collision-resistant repository-specific default directo
 PI_WORKER_DATA_DIR/
 ├── repository/       # trusted control clone; Pi never runs here
 ├── worktrees/        # issue-<n> and adopted pr-<n> linked worktrees
-├── sessions/         # persistent Pi JSONL sessions
+├── sessions/         # durable Pi sessions (issue-<n>/harness.sqlite)
 ├── logs/             # compact lifecycle logs
 └── state.sqlite      # jobs and processed GitHub event IDs
 ```

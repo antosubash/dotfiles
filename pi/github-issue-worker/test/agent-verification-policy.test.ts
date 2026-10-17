@@ -3,8 +3,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
-import type { ExtensionAPI, BashOperations } from "@earendil-works/pi-coding-agent";
-import { headlessPolicyExtension } from "../src/agent/policy.js";
+import { toolBlockReason } from "../src/agent/policy.js";
 
 test("verifier policy resolves tool-relative paths against the worktree before evidence exceptions", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-verifier-policy-"));
@@ -14,20 +13,12 @@ test("verifier policy resolves tool-relative paths against the worktree before e
   for (const path of [worktree, evidenceDir, reference]) await mkdir(path);
   await writeFile(join(worktree, "source.ts"), "source");
   await writeFile(join(reference, "summary.json"), "{}");
-  type Call = { toolName: string; input: { path?: string } };
-  let guard: ((event: Call) => { block?: boolean } | undefined) | undefined;
-  const extension = headlessPolicyExtension({
+  const policy = {
     worktree, protectedPaths: [".git"], dockerAccess: false,
-    bashOperations: {} as BashOperations,
     verification: { evidenceDir, readPaths: [reference] },
-  });
+  };
   try {
-    const factory = typeof extension === "function" ? extension : extension.factory;
-    await factory({
-      registerTool() {},
-      on(name: string, handler: typeof guard) { if (name === "tool_call") guard = handler; },
-    } as unknown as ExtensionAPI);
-    const blocked = (toolName: string, path?: string) => guard!({ toolName, input: path === undefined ? {} : { path } })?.block === true;
+    const blocked = (toolName: string, path?: string) => toolBlockReason(toolName, path === undefined ? {} : { path }, policy) !== null;
     for (const tool of ["write", "edit"]) {
       assert.equal(blocked(tool, "source.ts"), true, `${tool} relative source`);
       assert.equal(blocked(tool, "nested/new.ts"), true, `${tool} nested new source`);

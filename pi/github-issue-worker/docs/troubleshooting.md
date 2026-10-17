@@ -582,7 +582,7 @@ Per-profile layout:
 PI_WORKER_DATA_DIR/
 ├── repository/
 ├── worktrees/
-├── sessions/
+├── sessions/       # issue-<n>/harness.sqlite: durable Pi sessions (one writer at a time)
 ├── logs/
 ├── state.sqlite
 └── worker.lock
